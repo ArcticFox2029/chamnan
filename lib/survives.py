@@ -59,9 +59,23 @@ def _rel(root, path):
 
 
 def _git(root, args):
-    """(returncode, stdout). `None` when git cannot answer at all."""
+    """(returncode, stdout). `None` when git cannot answer at all, or cannot answer for `root`.
+
+    🐛 [2026-09-22] (self-measured) The full gate caught this: `git -C <root>` without
+    `git_can_speak_for` first runs against whatever repository is ABOVE the directory when `root`
+    is not itself a checkout. The answer then comes from somebody else's history -- a nested
+    checkout would be told its files are ignored, or not, on evidence about its parent. The same
+    defect is recorded twice in `mapper.py` for the same reason, and the suite checks the whole
+    population of `git -C` callers because of it.
+    """
+    if not ws.git_can_speak_for(root):
+        return None, ""
     try:
-        r = subprocess.run(["git", "-C", str(root)] + args, capture_output=True, text=True,
+        # One list literal with `*args` spread into it, never `[...] + args`. A concatenation is
+        # a BinOp, and the sweep that asserts every subprocess call runs git or this interpreter
+        # cannot read the head of a BinOp -- it reports the site as executing something unknown.
+        # `chamnan_skill_pointer.py` carries the same note for the same reason.
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=5)
         return r.returncode, r.stdout
     except ws.git_cannot_answer():

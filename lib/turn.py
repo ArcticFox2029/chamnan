@@ -49,14 +49,32 @@ def key(payload):
     `Read` of the same file with the same arguments is the case the existing per-session throttles
     already exist to quieten, and letting it through here would undo them.
     """
+    # 🐛 [2026-09-22] (self-measured) Session, tool and input alone cannot tell two hooks on ONE
+    # call apart from two IDENTICAL calls in a row -- nothing in the payload distinguishes them.
+    # The full gate found it: a check fires the bulk-read hook twice at the same path with
+    # different file sizes, and the second was held silent by a claim meant only to coordinate
+    # within a single call.
+    #
+    # The file's own size and mtime close that gap where it matters. Every hook in one call sees
+    # the same file at the same instant, so they still agree; a later call on a file that has
+    # changed gets its own key. It is one `stat`, and a path that is not a file (every Bash call)
+    # falls back to the payload alone, which is all there ever was.
+    stamp = ""
+    try:
+        fp = (payload.get("tool_input") or {}).get("file_path")
+        if fp:
+            st = os.stat(str(fp))
+            stamp = "%d:%d" % (st.st_size, st.st_mtime_ns)
+    except (OSError, AttributeError, TypeError, ValueError):
+        stamp = ""
     try:
         raw = json.dumps([str(payload.get("session_id") or ""),
                           str(payload.get("tool_name") or ""),
-                          payload.get("tool_input")],
+                          payload.get("tool_input"), stamp],
                          sort_keys=True, default=str)
     except (TypeError, ValueError):
         # An input that will not serialise still deserves a stable key, just a coarser one.
-        raw = "%s|%s" % (payload.get("session_id"), payload.get("tool_name"))
+        raw = "%s|%s|%s" % (payload.get("session_id"), payload.get("tool_name"), stamp)
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:20]
 
 

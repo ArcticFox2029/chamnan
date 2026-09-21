@@ -10353,14 +10353,17 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # Raised 2026-09-19 from 23 to 24: the PreToolUse discard guard asks `git status --porcelain`
 # before an irreversible command so the warning can name how many files carry uncommitted work.
 # That is a SIXTEENTH purpose, not a repeat of the cached status snapshot, and the README says so.
+# Raised 2026-09-22 from 24 to 25: `survives._git` asks `git check-ignore` before an edit, so the
+# doomed-edit notice can say when git will not keep the change. A SEVENTEENTH purpose -- no other
+# site asks the ignore question, and the README now names it.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 24, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 25, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-four call sites serve sixteen read-only paths"
+      and "Twenty-five call sites serve seventeen read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -37218,6 +37221,359 @@ if _t_ws212 is not None:
               saw="read %d rule(s) from whole_graphemes, expected 5 — the parse found %s"
                   % (len(_t_rules212), sorted(_t_rules212) or "nothing, so every case above was "
                      "skipped and this check proved nothing"))
+# ---- 213_one_notice_reaches_the_model_per_tool_call.py
+# ---- 213_one_notice_reaches_the_model_per_tool_call.py
+# 🐛 [2026-09-22] (self-measured) Three PreToolUse hooks run for a single tool call, each in its own
+# process: an `Edit` reaches `chamnan_file_pointer` and `chamnan_skill_pointer`, a `Read` reaches
+# `chamnan_bulk_read_notice` and `chamnan_file_pointer`. Every one may write
+# `hookSpecificOutput.additionalContext`, none can see the others, and nothing ranked them --
+# whichever process reached stdout first won by accident of code order.
+#
+# Measured on a repository built for it: one `Read` of a large file that other source imports
+# produced TWO notices to the model. With `turn.claim` in place the same fixture produces one.
+#
+# Inside a single hook this was already solved -- `scratch_watch.say`'s docstring records that
+# "exactly one object may be written, which is why every check in main() returns immediately after
+# speaking", and its eight emit sites are mutually exclusive by early return. Across processes an
+# early return cannot reach, which is what `lib/turn.py` is for.
+#
+# The population is DERIVED, not listed: any file under `hooks/` that writes a PreToolUse
+# `additionalContext` must reach it through the claim. A tenth notice added later without one is
+# reported here by name rather than discovered by a user who has learned to scroll past all of them.
+_t_ws213 = owner_workspace("One notice reaches the model per tool call")
+if _t_ws213 is not None:
+    _t_hooks213 = ROOT / "hooks"
+    _t_turn213 = ROOT / "lib" / "turn.py"
+    if not _t_hooks213.is_dir() or not _t_turn213.is_file():
+        skip("  [SKIP] notice coordination — no hooks/ or lib/turn.py")
+    else:
+        # --- the population: every PreToolUse emitter, found by scanning
+        _t_emitters213, _t_unguarded213 = [], []
+        for _t_p213 in sorted(_t_hooks213.glob("*.py")):
+            _t_src213 = _t_p213.read_text(encoding="utf-8", errors="replace")
+            if '"PreToolUse"' not in _t_src213 or "additionalContext" not in _t_src213:
+                continue
+            _t_emitters213.append(_t_p213.name)
+            if "turn.claim" not in _t_src213:
+                _t_unguarded213.append(_t_p213.name)
+
+        check("EVERY PRETOOLUSE NOTICE GOES THROUGH THE ONE-PER-CALL CLAIM",
+              _t_emitters213 and not _t_unguarded213,
+              saw=("no PreToolUse emitter found at all — the scan is broken, not the hooks"
+                   if not _t_emitters213 else
+                   "hook(s) that write a notice without claiming the turn: %s — two notices can "
+                   "reach the model for one tool call, and which one wins is decided by the order "
+                   "the files happen to run in" % ", ".join(_t_unguarded213)))
+        print("      %d PreToolUse emitter(s), %d behind the claim"
+              % (len(_t_emitters213), len(_t_emitters213) - len(_t_unguarded213)))
+
+        # --- the behaviour
+        sys.path.insert(0, str(ROOT / "lib"))
+        import turn as _t213
+        import tempfile as _tf213
+        import pathlib as _pl213
+        import os as _os213
+        import time as _tm213
+
+        _t_wsdir213 = _pl213.Path(_tf213.mkdtemp()) / ".chamnan"
+        _t_call213 = {"session_id": "c213", "tool_name": "Edit",
+                      "tool_input": {"file_path": "/a/b.py"}}
+        _t_other213 = {"session_id": "c213", "tool_name": "Edit",
+                       "tool_input": {"file_path": "/a/c.py"}}
+        _t_first213 = _t213.claim(_t_call213, _t_wsdir213)
+        _t_second213 = _t213.claim(_t_call213, _t_wsdir213)
+        check("...and the second hook on the same call is held silent",
+              _t_first213 is True and _t_second213 is False,
+              saw="first=%r second=%r — both speaking is the defect this exists for"
+                  % (_t_first213, _t_second213))
+        check("...while the NEXT tool call may speak again",
+              _t213.claim(_t_other213, _t_wsdir213) is True,
+              saw="a claim that outlives its own tool call silences everything after it")
+
+        # --- fails open, which is the entire safety argument
+        check("...and a claim that cannot be made lets the notice through",
+              _t213.claim(_t_call213, None) is True
+              and _t213.claim(_t_call213, _pl213.Path("/proc/nope-213")) is True,
+              saw="the coordinator went silent instead of failing open — a plugin that says "
+                  "nothing looks exactly like a plugin with nothing to say")
+
+        # --- a dead process must not hold the next call silent for ever
+        _t_f213 = _t_wsdir213 / "logs" / "turn" / _t213.key(_t_call213)
+        if _t_f213.is_file():
+            _os213.utime(str(_t_f213), (_tm213.time() - _t213.STALE_SECONDS - 5,) * 2)
+            check("...and a stale claim from a crashed hook is not honoured",
+                  _t213.claim(_t_call213, _t_wsdir213) is True,
+                  saw="a process that died mid-call would keep every later call silent")
+
+        check("...and the claim key is the same in every hook that sees one call",
+              _t213.key(_t_call213) == _t213.key(dict(_t_call213))
+              and _t213.key(_t_call213) != _t213.key(_t_other213),
+              saw="hooks would claim different keys for the same call and all speak anyway")
+
+        # --- and the hooks OBEY it, which a source scan cannot see.
+        #
+        # The scan above finds the literal `turn.claim`; it cannot tell whether the result is acted
+        # on. So this drives the real hook scripts, in the order hooks.json declares, over a
+        # repository built to make two of them want to speak at once.
+        #
+        # It first runs each hook ALONE against a fresh claim directory to count how many WOULD
+        # speak. If that count is below two the fixture has stopped being contentious -- a stale
+        # fixture that quietly proves nothing is the failure this guards against, so it reports
+        # rather than passing. Measured at ~1.8s.
+        import json as _js213
+        import subprocess as _sp213
+        import shutil as _sh213
+
+        _t_git213 = _sh213.which("git")
+        if not _t_git213:
+            skip("  [SKIP] notice obedience — no git, and the fixture needs a repository")
+        else:
+            _t_fix213 = _pl213.Path(_tf213.mkdtemp()) / "repo"
+            (_t_fix213 / "src").mkdir(parents=True)
+            _t_big213 = _t_fix213 / "src" / "engine.py"
+            _t_big213.write_text('"""The engine."""\n\n\ndef run(x):\n    return x\n'
+                                 + "# filler\n" * 4000, encoding="utf-8")
+            (_t_fix213 / "src" / "caller.py").write_text(
+                '"""Calls the engine."""\nfrom src.engine import run\n\n\n'
+                'def go():\n    return run(1)\n', encoding="utf-8")
+            for _t_cmd213 in (["git", "init", "-q"], ["git", "add", "-A"],
+                              ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                               "commit", "-qm", "fixture"]):
+                _sp213.run(_t_cmd213, cwd=str(_t_fix213), capture_output=True)
+            _sp213.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                       cwd=str(_t_fix213), capture_output=True)
+
+            _t_order213 = [g["hooks"][0]["command"].rsplit("/", 1)[-1].rstrip('"')
+                           for g in _js213.loads(
+                               (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
+                           )["hooks"]["PreToolUse"]]
+            _t_turndir213 = _t_fix213 / ".chamnan" / "logs" / "turn"
+
+            def _t_fire213(name, session):
+                # 🐛 The two passes below MUST use different session ids. Every one of these hooks
+                # carries its own per-session throttle (`pointer.already_pointed`, the doc nudge),
+                # so running one pass first leaves the next silent for reasons that have nothing to
+                # do with the claim. Measured: the alone-pass first left the sequence pass at zero,
+                # which reads exactly like the claim over-suppressing.
+                _t_r213 = _sp213.run(
+                    [sys.executable, str(ROOT / "hooks" / name)],
+                    input=_js213.dumps({"session_id": session, "tool_name": "Read",
+                                        "tool_input": {"file_path": str(_t_big213)},
+                                        "cwd": str(_t_fix213),
+                                        "transcript_path": str(_t_fix213 / "t.jsonl")}),
+                    capture_output=True, text=True, cwd=str(_t_fix213))
+                return "additionalContext" in (_t_r213.stdout or "")
+
+            # The measurement that matters runs FIRST, on virgin state.
+            _t_did213 = [n for n in _t_order213 if _t_fire213(n, "obey213-seq")]
+
+            # Then each hook alone, each in its own session, to show the fixture is contentious.
+            _t_would213 = []
+            for _t_i213, _t_n213 in enumerate(_t_order213):
+                _sh213.rmtree(str(_t_turndir213), ignore_errors=True)
+                if _t_fire213(_t_n213, "obey213-solo-%d" % _t_i213):
+                    _t_would213.append(_t_n213)
+
+            check("...and the fixture still makes two hooks want to speak at once",
+                  len(_t_would213) >= 2,
+                  saw="only %d hook(s) had anything to say on the fixture (%s) — the fixture has "
+                      "gone stale, so the sequence below would prove nothing"
+                      % (len(_t_would213), ", ".join(_t_would213) or "none"))
+            if len(_t_would213) >= 2:
+                check("...AND THE HOOKS OBEY IT — %d wanted to speak, one did" % len(_t_would213),
+                      len(_t_did213) == 1,
+                      saw="%d notice(s) reached the model for one Read: %s. The claim is present "
+                          "in the source and not acted on."
+                          % (len(_t_did213), ", ".join(_t_did213) or "none"))
+            _sh213.rmtree(str(_t_fix213.parent), ignore_errors=True)
+# ---- 214_an_edit_that_will_not_survive_is_named.py
+# ---- 214_an_edit_that_will_not_survive_is_named.py
+# 🐛 [2026-09-22] (self-measured) chamnan already knew which files are generated and used it only to
+# shape MAP.md. `mapper.py:663` records the exact failure that knowledge prevents, about chamnan's
+# own commenter: "advice writes a comment under a DO NOT EDIT line, which the next `protoc` run
+# discards." The lesson was learned for one agent and never passed to the one the user is running.
+#
+# Two ways an edit is thrown away, one sentence to the person making it: the file is generated, or
+# git is ignoring it and not tracking it.
+#
+# The cases below are the ones that make it wrong rather than the ones that make it work. The two
+# that matter most are false positives, because the advice is "do not edit this" and following it
+# wrongly blocks real work:
+#   * a file inside an ignored directory that the repository really TRACKS -- git keeps it
+#   * a file the repository explicitly declares `-linguist-generated` -- somebody wrote that
+#     because they DO edit it despite its header
+#
+# 🐛 And the bug this fixture found on its first run: `os.path.relpath` on the raw strings returned
+# `../../../..` for every file in a temporary directory on macOS, because `/var` is a symlink to
+# `/private/var`, the hook resolves the root and the harness does not resolve the file path. The
+# module was silently inert -- every case "passed" by saying nothing. Both sides are resolved now,
+# and `src/app.py` staying silent is only meaningful because the others speak.
+_t_ws214 = owner_workspace("An edit that will not survive is named")
+if _t_ws214 is not None:
+    import subprocess as _sp214
+    import tempfile as _tf214
+    import pathlib as _pl214
+    import shutil as _sh214
+
+    _t_mod214 = ROOT / "lib" / "survives.py"
+    if not _t_mod214.is_file():
+        skip("  [SKIP] doomed-edit notice — no lib/survives.py")
+    elif not _sh214.which("git"):
+        skip("  [SKIP] doomed-edit notice — no git, and every case needs a repository")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import survives as _s214
+
+        _t_r214 = _pl214.Path(_tf214.mkdtemp()) / "repo"
+        for _d214 in ("build", "src", "src/scratch", "gen"):
+            (_t_r214 / _d214).mkdir(parents=True, exist_ok=True)
+
+        def _t_w214(rel, text):
+            (_t_r214 / rel).write_text(text, encoding="utf-8")
+
+        _t_w214(".gitignore", "build/\n*.log\n")
+        _t_w214("src/.gitignore", "scratch/\n")
+        _t_w214("src/scratch/notes.py", "x = 1\n")
+        _t_w214("src/app.py", '"""Hand written."""\nx = 1\n')
+        _t_w214("build/out.js", "console.log(1)\n")
+        _t_w214("build/tracked.js", "// a build file this repository really tracks\n")
+        _t_w214("gen/thing_pb2.py",
+                "# Generated by the protocol buffer compiler.  DO NOT EDIT!\nx = 1\n")
+        _t_w214("gen/keep.py", "# hand written, and it lives in gen/\nx = 1\n")
+        _t_w214(".gitattributes",
+                "gen/marked.py linguist-generated\ngen/unmarked.py -linguist-generated\n")
+        _t_w214("gen/marked.py", "x = 1\n")
+        _t_w214("gen/unmarked.py", "# Code generated by a tool. DO NOT EDIT.\nx = 1\n")
+        for _t_c214 in (["git", "init", "-q"],
+                        ["git", "add", "-f", "build/tracked.js"],
+                        ["git", "add", "-A"],
+                        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                         "commit", "-qm", "fixture"]):
+            _sp214.run(_t_c214, cwd=str(_t_r214), capture_output=True)
+
+        def _t_v214(rel):
+            return _s214.verdict(_t_r214, _t_r214 / rel)
+
+        # --- the fixture has to be able to speak at all, or every silence below proves nothing
+        _t_speaks214 = [r for r in ("gen/thing_pb2.py", "gen/marked.py", "build/out.js",
+                                    "src/scratch/notes.py") if _t_v214(r)]
+        check("THE DOOMED-EDIT FIXTURE STILL SPEAKS",
+              len(_t_speaks214) == 4,
+              saw="only %d of 4 doomed paths were named (%s) — every 'stays silent' case below "
+                  "would pass on a module that had stopped working entirely, which is how this "
+                  "fixture failed the first time it ran"
+                  % (len(_t_speaks214), ", ".join(_t_speaks214) or "none"))
+
+        check("...a generated file is named by the marker in its own first lines",
+              "generated" in _t_v214("gen/thing_pb2.py"),
+              saw=repr(_t_v214("gen/thing_pb2.py")[:100]))
+        check("...and by `.gitattributes` alone, with nothing in the file to read",
+              "generated" in _t_v214("gen/marked.py"),
+              saw="a path rule must answer without opening the file — it is the only thing that "
+                  "can answer for a file being CREATED")
+        check("...an ignored, untracked file says git will not keep it",
+              "git will not keep" in _t_v214("build/out.js"))
+        check("...including one ignored by a NESTED .gitignore",
+              "git will not keep" in _t_v214("src/scratch/notes.py"),
+              saw="catalogs.py carries the defect from reading only the root .gitignore; this asks "
+                  "git, which answers for every level at once")
+
+        # --- the false positives, which cost more than the misses
+        check("...but a TRACKED file inside an ignored directory is left alone",
+              _t_v214("build/tracked.js") == "",
+              saw="git keeps a tracked file whatever .gitignore says: %r"
+                  % _t_v214("build/tracked.js")[:100])
+        check("...and `-linguist-generated` beats the file's own header",
+              _t_v214("gen/unmarked.py") == "",
+              saw="the repository declared this file NOT generated and was overruled by its own "
+                  "text: %r" % _t_v214("gen/unmarked.py")[:100])
+        check("...and ordinary source is silent",
+              _t_v214("src/app.py") == "" and _t_v214("gen/keep.py") == "",
+              saw="app.py=%r keep.py=%r" % (_t_v214("src/app.py")[:60],
+                                            _t_v214("gen/keep.py")[:60]))
+        # 🐛 [2026-09-22] (self-measured) The module leans on ONE git behaviour, so it is asserted
+        # assumed: `git check-ignore` consults the index, and therefore reports a TRACKED file
+        # inside an ignored directory as NOT ignored. An explicit `ls-files` guard was written
+        # first and removed after a mutation deleting it changed no verdict in this fixture --
+        # git was already doing it. The evidence it is deliberate is that `--no-index` exists to
+        # turn it off. If a git version ever changes it, this fails here instead of telling a user
+        # not to edit a file git is perfectly happy to keep.
+        _t_ci214 = _sp214.run(["git", "check-ignore", "-q", "--", "build/tracked.js"],
+                              cwd=str(_t_r214), capture_output=True)
+        _t_ls214 = _sp214.run(["git", "ls-files", "--error-unmatch", "--", "build/tracked.js"],
+                              cwd=str(_t_r214), capture_output=True)
+        check("...and git itself is still the one applying tracked-beats-ignored",
+              _t_ci214.returncode != 0 and _t_ls214.returncode == 0,
+              saw="check-ignore exit=%d (expected non-zero: tracked, so NOT ignored), "
+                  "ls-files exit=%d (expected 0: tracked). This version of git no longer consults "
+                  "the index, so the one call the module makes is not enough."
+                  % (_t_ci214.returncode, _t_ls214.returncode))
+
+        check("...and a path outside the repository is not judged at all",
+              _s214.verdict(_t_r214, "/etc/hosts") == "",
+              saw="a file outside the root is not this repository's to describe")
+
+        _sh214.rmtree(str(_t_r214.parent), ignore_errors=True)
+# ---- 215_a_shipped_skill_names_a_command_that_exists.py
+# ---- 215_a_shipped_skill_names_a_command_that_exists.py
+# 🐛 [2026-09-22] (self-measured) The shipped skills tell the session which commands to run --
+# `chamnan-map` ten times across them, and `chamnan-report`, `chamnan-impact`, `chamnan-promote`,
+# `chamnan-recall` besides. Nothing checked that the commands they name still exist.
+#
+# That is the same rot 1.30 is building a feature to find in a USER's instruction files, aimed back
+# at our own: a renamed or retired command leaves a skill confidently telling the agent to run
+# something that is not there, and the agent believes instructions absolutely. A wrong instruction
+# costs more than a missing one.
+#
+# Derived, not listed: every `chamnan-*` token in every shipped SKILL.md is checked against `bin/`.
+# A tenth skill added later is covered without anyone remembering this file exists, and so is a
+# command renamed in `bin/` without a sweep of the prose that names it.
+_t_ws215 = owner_workspace("A shipped skill names a command that exists")
+if _t_ws215 is not None:
+    import re as _re215
+
+    _t_sk215 = ROOT / "skills"
+    _t_bin215 = ROOT / "bin"
+    if not _t_sk215.is_dir() or not _t_bin215.is_dir():
+        skip("  [SKIP] shipped-skill references — no skills/ or bin/")
+    else:
+        _t_have215 = {p.name for p in _t_bin215.iterdir()
+                      if p.is_file() and p.name.startswith("chamnan-")
+                      and not p.name.endswith(".cmd")}
+        _t_named215 = {}
+        for _t_p215 in sorted(_t_sk215.glob("*/SKILL.md")):
+            _t_t215 = _t_p215.read_text(encoding="utf-8", errors="replace")
+            for _t_c215 in set(_re215.findall(r"chamnan-[a-z][a-z-]*", _t_t215)):
+                _t_named215.setdefault(_t_c215, set()).add(_t_p215.parent.name)
+
+        _t_missing215 = sorted((c, sorted(w)) for c, w in _t_named215.items()
+                               if c not in _t_have215)
+
+        check("EVERY COMMAND A SHIPPED SKILL NAMES IS A COMMAND THAT SHIPS",
+              _t_named215 and not _t_missing215,
+              saw=("no shipped skill names any chamnan command — the scan is broken, not the skills"
+                   if not _t_named215 else
+                   "; ".join("`%s` named by %s but not in bin/" % (c, ", ".join(w))
+                             for c, w in _t_missing215)))
+        print("      %d command(s) named across %d shipped skill(s), all present in bin/"
+              % (len(_t_named215), len(list(_t_sk215.glob("*/SKILL.md")))))
+
+        # The other direction is NOT asserted, deliberately: a command no skill mentions is fine.
+        # `chamnan-peek` and `chamnan-env` are reached by a person or by a hook, not by prose, and
+        # demanding prose for each would be a rule that produces filler rather than accuracy.
+
+        # Every shipped skill has to be loadable at all: the frontmatter is what the host reads to
+        # decide whether a description matches, and a skill whose frontmatter does not parse is a
+        # file nobody will ever see.
+        _t_bad215 = [p.parent.name for p in sorted(_t_sk215.glob("*/SKILL.md"))
+                     if not p.read_text(encoding="utf-8", errors="replace").startswith("---\n")
+                     or "description:" not in
+                     p.read_text(encoding="utf-8", errors="replace").split("\n---\n", 1)[0]]
+        check("...and every one carries frontmatter the host can read",
+              not _t_bad215,
+              saw="skill(s) with no parseable `description:` frontmatter: %s — the host matches on "
+                  "that description, so one without it can never be selected"
+                  % ", ".join(_t_bad215))
 # ---- 21_a_name_may_open_with_a_digit_and_a_tool_has_one_name.py
 # ------------------------------------------- two defects found by USING a store nobody had filled
 # 🐛 [2026-09-09] `.chamnan/environments.md` — the store whose module docstring calls it "the
