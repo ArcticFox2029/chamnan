@@ -19,6 +19,49 @@ already reports the last released number while running newer code.
 
 ---
 
+## Unreleased
+
+**A resume stops paying for a block the session already has.** Resuming a conversation re-sent the
+whole workspace block even though every word of it was already in the transcript. The hook now
+recognises its own block by the fence it wrote, and a resume that finds one sends a single line
+instead. Measured on this machine's transcripts: 13 of 17 resumes shortened.
+
+**Thai content past the first 4,000 characters of an entry could not be found at all.** Thai has no
+word boundaries, so substring matching is the only path Thai has into `chamnan-recall` — and the
+substring text was truncated at 4,000 characters per entry. Everything after that was invisible.
+Found in use, not in a test: three of five Thai queries about entries that exist returned nothing.
+The cap is gone. It was protecting the rule that the index must be smaller than the corpus it
+indexes, and that rule had room: measured by building the real index both ways over the same
+corpus, 57.8% with the cap against 67.7% without. Nothing about the session block changes — the
+index is never read into it, and an A/B of the block with and without the cap is identical to the
+byte in all four workspaces here.
+
+**Two credential shapes walked past the redactor.** `api_key = os.environ["X"]` and `os.getenv("X")`
+name where a secret lives rather than the secret, and were being redacted as though they were one;
+and a base64 value inside a URL carries a `/`, which was ending the match early and leaving the tail
+in plain text. Both were found by generating carriers rather than writing cases by hand — one
+template per word cannot reach them.
+
+**A multi-line command signed only its first line.** The shell splitter did not treat a newline as a
+separator, so a script written across several lines was recorded as one step and everything after
+line one vanished from the command ledger that `chamnan-candidates` and the repeat hint are built
+on. `cd /tmp` then `git status` then `git commit` recorded as nothing at all. Found by reading the
+ledgers of two real repositories, where Python and Ruby source had been signed as shell commands.
+
+**A section cut down to its names now leaves a trace.** The block's headline number said how much
+was sent and never that something arrived as a name only, so a reader could not tell a short block
+from a trimmed one.
+
+**The README advertised a repository that no longer exists**, beside its own table saying otherwise —
+chamnan connects to those hosts itself now, and there is no separate repository to clone.
+
+**For anyone reading the logs:** every field `block_shape.jsonl` can carry is now documented beside
+the code that writes it, including which one is *not* the staleness pass. A wrong reading of that
+file produced a wrong conclusion about a real repository here, and the retraction cost more than
+the comment.
+
+---
+
 ## What's new in 1.28.1
 
 **A fix for something 1.28.0 shipped: `chamnan-setup` reported files it does not own, and offered
