@@ -296,10 +296,54 @@ def block_is_still_in_context(payload):
         return False
     # This session's own fence, so another repository's chamnan block in the same transcript --
     # a subagent's, or a different project's -- cannot answer for this one.
-    at = tail.rfind(OPEN_MARK)
+    #
+    # 🐛 [2026-09-21] (owner) Measured after a real resume. The fence is derived from the session id, and a RESUME is
+    # usually handed a new one: 13 distinct ids across 18 firings in one repository. So on almost
+    # every resume this looked for a fence that had never been written, could not prove anything,
+    # and the whole ~8.5 KB block went in again on top of a conversation that already carried it --
+    # 16 of 17 resumes there. Where the id happened to repeat it worked exactly as designed: one
+    # session fired five times and shortened three of them to nothing.
+    #
+    # The transcript is the identity that survives the id change, so the fences THIS WORKSPACE
+    # recorded against this transcript are tried too. Only ours: loosening what counts as a fence
+    # would let a file in the repository suppress the block, which is the one thing the
+    # unguessable marker exists to prevent.
+    marks = [OPEN_MARK] + [m for m in _fences_recorded_for(path) if m != OPEN_MARK]
+    at = max((tail.rfind(m) for m in marks), default=-1)
     if at < 0:
         return False
     return not any(mark in tail[at:] for mark in _COMPACT_MARKS)
+
+
+def _fences_recorded_for(transcript_path, limit=40):
+    """Fences this workspace wrote for `transcript_path`, newest first. Never raises.
+
+    Read from `block_shape.jsonl`, which is one of the files housekeeping never sweeps, so the
+    answer survives as long as the transcript does. A missing or unreadable log means "cannot
+    prove", which is the same answer this function's caller gives for everything else it cannot
+    establish.
+    """
+    if not transcript_path:
+        return []
+    try:
+        root = ws.find_root(Path.cwd())
+        log = Path(root) / ".chamnan" / "logs" / "block_shape.jsonl"
+        if not log.is_file():
+            return []
+        tail_key = str(transcript_path)[-120:]
+        out = []
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines()[-400:]:
+            if '"nc"' not in line or '"tr"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("tr") == tail_key and rec.get("nc"):
+                out.append("[repo:%s]" % rec["nc"])
+        return list(reversed(out))[:limit]
+    except Exception:
+        return []
 
 
 def why_this_session(payload):
@@ -2562,6 +2606,13 @@ def main():
                         # opened; this records what that session's block dropped. Neither could
                         # answer "was a dropped section reopened later in the same session" alone.
                         session=(payload.get("session_id") if isinstance(payload, dict) else None),
+                        # 🐛 [2026-09-21] (owner) The pair that makes the "is my block still here"
+                        # proof survive a session id change — see blocklog.shape's note and
+                        # `block_is_still_in_context` below. The transcript is the identity that
+                        # holds across a resume; the nonce is the fence this firing actually wrote.
+                        transcript=(payload.get("transcript_path") if isinstance(payload, dict)
+                                    else None),
+                        nonce=NONCE,
                         dropped=[t for t, _src in dropped],
                         # The other way a section fails to arrive whole: reduced to its names
                         # because the full text would not fit. Recorded beside `dropped` because

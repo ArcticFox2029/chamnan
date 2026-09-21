@@ -35930,6 +35930,88 @@ check("...and a value spelled exactly like its key is still redacted, as that ru
       len(_kept198) <= 5,
       saw="%d of %d words stopped being redacted: %s"
           % (len(_kept198), len(_WORDS198), ", ".join(_kept198[:8])))
+# ---- 199_a_resume_does_not_pay_for_a_block_it_already_has.py
+# ---- 199_a_resume_does_not_pay_for_a_block_it_already_has.py
+# 🐛 [2026-09-21] (owner) From real use: a morning session in another repository was resumed and one
+# prompt cost 20% of the window. chamnan was not the cause — that transcript is 152 MB and resuming
+# it replays the conversation — but measuring it found a real one beside it.
+#
+# `block_is_still_in_context` proves the block is already in the conversation by finding THIS
+# session's fence in the transcript tail. The fence is derived from the session id, and a resume is
+# usually handed a NEW id: 13 distinct ids across 18 firings in that repository. So on almost every
+# resume it searched for a fence that had never been written, proved nothing, and the whole ~8.5 KB
+# block went in again on top of a conversation that already carried it — 16 of 17 resumes there,
+# about 56,000 tokens of duplicate. Where the id did repeat it worked exactly as designed: one
+# session fired five times and shortened three of them to nothing.
+#
+# The transcript is the identity that survives an id change, so the fences THIS WORKSPACE recorded
+# against this transcript are tried as well. Only ours, and that restraint is the point: loosening
+# what counts as a fence would let a file in the repository suppress the block by printing one,
+# which is the single thing the unguessable marker exists to prevent.
+#
+# A compaction after the fence must still force the full block — that is the case the shortening is
+# forbidden to touch, and the third assertion below is the one that would catch a "fix" that
+# shortened everything.
+_t_ws199 = owner_workspace("the resume-shortening proof")
+if _t_ws199 is not None:
+    import pathlib as _t_pl199
+    import tempfile as _t_tmp199
+
+    _t_hook199 = ROOT / "hooks" / "chamnan_session_start.py"
+    if not _t_hook199.is_file():
+        skip("  [SKIP] the resume-shortening proof — no session-start hook")
+    else:
+        sys.path.insert(0, str(ROOT / "hooks"))
+        sys.path.insert(0, str(ROOT / "lib"))
+        import workspace as _t_ws_mod199
+        import chamnan_session_start as _t_h199
+
+        _t_old199 = _t_ws_mod199.nonce_for("SESSION-ONE")
+        _t_new199 = _t_ws_mod199.nonce_for("SESSION-TWO")
+        check("a new session id really does produce a different fence, which is the whole problem",
+              _t_old199 != _t_new199, saw="both ids produced %r" % _t_old199)
+
+        _t_dir199 = _t_pl199.Path(_t_tmp199.mkdtemp())
+        _t_tr199 = _t_dir199 / "t.jsonl"
+        _t_body199 = ('{"x":1}\n' * 50
+                      + '{"text":"[repo:%s] block [/repo:%s]"}\n' % (_t_old199, _t_old199)
+                      + '{"x":2}\n' * 50)
+        _t_tr199.write_text(_t_body199, encoding="utf-8")
+
+        _t_saveN199, _t_saveO199 = _t_h199.NONCE, _t_h199.OPEN_MARK
+        _t_saveF199 = _t_h199._fences_recorded_for
+        _t_h199.NONCE = _t_new199
+        _t_h199.OPEN_MARK = "[repo:%s]" % _t_new199
+        _t_payload199 = {"transcript_path": str(_t_tr199)}
+        try:
+            _t_h199._fences_recorded_for = lambda _p, limit=40: []
+            _t_blind199 = _t_h199.block_is_still_in_context(_t_payload199)
+            _t_h199._fences_recorded_for = lambda _p, limit=40: ["[repo:%s]" % _t_old199]
+            _t_sees199 = _t_h199.block_is_still_in_context(_t_payload199)
+            _t_tr199.write_text(_t_body199 + '{"isCompactSummary":true}\n', encoding="utf-8")
+            _t_after199 = _t_h199.block_is_still_in_context(_t_payload199)
+        finally:
+            _t_h199.NONCE, _t_h199.OPEN_MARK = _t_saveN199, _t_saveO199
+            _t_h199._fences_recorded_for = _t_saveF199
+
+        check("A RESUME UNDER A NEW ID STILL FINDS THE BLOCK THIS WORKSPACE ALREADY SENT",
+              _t_sees199 is True,
+              saw="the recorded fence was not used; the full block would be sent again")
+        check("...and without that record it cannot prove anything, which is today's behaviour",
+              _t_blind199 is False,
+              saw="it claimed proof from a fence nobody recorded")
+        check("...and a compaction AFTER the fence still forces the whole block",
+              _t_after199 is False,
+              saw="shortened across a compaction boundary — the block would be gone from context")
+
+        # The record has to carry both halves, or the lookup above has nothing to read. Asserted by
+        # building one, not by reading the source for the field names.
+        sys.path.insert(0, str(ROOT / "lib"))
+        import blocklog as _t_bl199
+        _t_rec199 = _t_bl199.shape("### A\nbody\n", transcript="/x/y/t.jsonl", nonce="deadbeef")
+        check("...and a block record carries the transcript and the fence it wrote",
+              _t_rec199.get("tr") and _t_rec199.get("nc") == "deadbeef",
+              saw=repr({k: _t_rec199.get(k) for k in ("tr", "nc")}))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
@@ -38160,8 +38242,14 @@ if _t_rr44.is_file():
             # claim: a reword that escapes every pattern FAILS here rather than passing silently,
             # which is the failure mode above.
             _t_claims44 = 0
+            # 🐛 [2026-09-21] (owner) The number had no LEFT boundary, so `base64 secret` read as a
+            # corpus of 64 — the failure fired on prose that says nothing about the corpus at all,
+            # the moment a release note mentioned base64. A digit run is only a count when a word
+            # character does not run into it, which is the same boundary the right-hand side
+            # already had.
             for _t_m44 in _re44.finditer(
-                    r"(\d+)[- ]secret\b(?![ -]key)|(\d+) secret(?:s)? (?:shapes|and personal-data)",
+                    r"(?<![A-Za-z0-9])(\d+)[- ]secret\b(?![ -]key)"
+                    r"|(?<![A-Za-z0-9])(\d+) secret(?:s)? (?:shapes|and personal-data)",
                     _t_txt44):
                 _t_claims44 += 1
                 _t_n44 = _t_m44.group(1) or _t_m44.group(2)

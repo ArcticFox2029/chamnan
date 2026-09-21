@@ -33,7 +33,7 @@ _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
 def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-          index_behind=None, session=None, short=()):
+          index_behind=None, session=None, short=(), transcript=None, nonce=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
@@ -61,6 +61,19 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     #
     # Costs one short string per record. `source` cost the same and is now the dimension this log
     # is most often grouped by.
+    # 🐛 [2026-09-21] (owner) Measured on a 152 MB transcript. The proof that a block is still in
+    # this session's context looked for THIS session's fence, and the fence is derived from the
+    # session id. A resume is usually handed a NEW session id -- 13 distinct ids across 18 firings
+    # in one repository -- so the fence it searched for had never been written, the proof failed,
+    # and the whole ~8.5 KB block was injected again on top of a conversation that already carried
+    # it. Where the id DID repeat the proof worked: one session fired five times and shortened
+    # three of them to nothing.
+    #
+    # So the fence has to be findable across an id change, and the only safe way is to remember the
+    # ones WE emitted rather than to loosen what counts as a fence -- a repository file that could
+    # forge one could suppress the block, which is the attack the unguessable marker exists to
+    # stop. Keyed by transcript rather than by session because the transcript is what survives the
+    # id change.
     rec = {"bytes": len(body.encode("utf-8")), "sec": sections,
            # The hook catches every exception and ends the block with this sentence rather than
            # failing, which is right — and is exactly why the truncation went unseen for hours.
@@ -81,6 +94,10 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
         rec["src"] = source
     if session:
         rec["session"] = session
+    if transcript:
+        rec["tr"] = str(transcript)[-120:]
+    if nonce:
+        rec["nc"] = str(nonce)
     if not resent:
         # A firing that proved the previous block is still in the transcript and printed a pointer
         # instead. There is no block to measure; the record exists so the log counts the session.
@@ -115,7 +132,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
 
 
 def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-           index_behind=None, session=None, short=()):
+           index_behind=None, session=None, short=(), transcript=None, nonce=None):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -127,7 +144,7 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     # here first, and a second caller (the Agent-result hook) would have made it the eighth function
     # body in this package written in more than one file, in the package that counts them.
     return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
-                                            index_behind, session, short), KEEP)
+                                            index_behind, session, short, transcript, nonce), KEEP)
 
 
 

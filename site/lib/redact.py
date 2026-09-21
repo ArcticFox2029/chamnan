@@ -111,6 +111,38 @@ def _is_a_default_credential(value):
     return (value or "").strip().strip("\"'").strip(",;:)]}\"' ").lower() in _DEFAULT_CREDENTIALS
 
 
+_A_DOTTED_REFERENCE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]{0,23}(?:\.[A-Za-z_][A-Za-z0-9_]{0,23})+\(?\)?$")
+
+
+def _names_where_it_lives(value):
+    """True when the value names WHERE the secret is kept rather than being the secret.
+
+    🐛 [2026-09-21] (R30 acc1, 2026-09-21) `api_key = os.environ["X"]`, `os.getenv("X")` and
+    `os.environ.get("X")` were all kept already — a bracket in the value answers this question for
+    them further up. `api_key = os.environ` was redacted, and so were `z.infer<typeof schema>` and
+    `$(command -v true)`: the same claim written without brackets. One decision, landed on the
+    members of the set that happen to carry a bracket, missing in the ones that do not.
+
+    The indirection is the point: when a line says where the value lives, the value is not on the
+    line, and redacting it destroys the only thing the line says while hiding nothing. That is the
+    reasoning already written beside `api_key_env`, for the NAME side of the same idea.
+
+    Bounded, because a JWT is also `a.b.c`: every segment is capped at 24 characters and the whole
+    value at 64, which no base64 run of a real token fits inside.
+    """
+    value = (value or "").strip().rstrip(",;")
+    if len(value) > 64:
+        return False
+    if value[:2] in ("$(", "${"):
+        return True
+    # A generic, a call or a subscript may open right after the path and the unquoted rule captures
+    # only as far as the next space -- `z.infer<typeof schema>` arrives here as `z.infer<typeof`.
+    # The reference is the head; what opens after it does not stop being one.
+    head = re.split(r"[<(\[]", value, 1)[0]
+    return bool(_A_DOTTED_REFERENCE.match(head))
+
+
 def _is_a_plain_word(value):
     """True when the captured value reads as prose rather than as a credential.
 
@@ -126,6 +158,22 @@ def _is_a_plain_word(value):
     # rather than in the rule that found it, because all five assignment rules ask this same
     # question and `password = <redacted>` was being redacted by every one of them.
     if bool(_PLAIN_WORD.match(value)) or value[:1] in "([{<":
+        return True
+    # 🐛 [2026-09-21] (R30 acc1, 2026-09-21) `api_key = os.environ["X"]`, `os.getenv("X")` and
+    # `os.environ.get("X")` were all already kept — their brackets hit the line above — while
+    # `api_key = os.environ` was redacted. The same decision, applied to the three members of the
+    # set that carry a bracket and forgotten in the one that does not, which is this repository's
+    # most frequent defect. A generator over the credential words found it across four carriers at
+    # once; the hand-written check beside it tested only the bracketed form.
+    #
+    # A dotted path of short identifiers names WHERE the value lives, which is the whole point of
+    # the indirection — the secret is not on the line. Segments are capped at 24 characters and the
+    # whole at 64 for one reason: a JWT is also `a.b.c`, and its segments are long base64 runs. The
+    # cap is what keeps `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.…` on the redacted side of this.
+    if _A_DOTTED_REFERENCE.match(value):
+        return True
+    # `$(cmd)` and `${VAR}` are the shell's own indirection, the same claim as the dotted path.
+    if value[:2] in ("$(", "${"):
         return True
     # 🐛 [2026-09-13] R12.26: the prose guard was ASCII-only, so an ordinary translated word
     # beside a credential label was treated as the value itself. The R7 external corpus caught
@@ -2619,7 +2667,23 @@ def _reads_like_a_credential(value):
     off to `_looks_like_a_passphrase`, which asks the narrower question a space cannot answer by
     itself: content words, none of them a function word, on their own.
     """
-    value = (value or "").strip()
+    # 🐛 [2026-09-21] (R30 acc1, 2026-09-21) `type="password" autocomplete="off"` came back as
+    # `type="password"<REDACTED>"off"` — an attribute NAME eaten and the quotes left unbalanced.
+    # DELIMITED_AFTER_SECRET_WORD had taken the quote CLOSING the password attribute for one
+    # OPENING a value, so the "value" it captured was the text between two attributes: a space, a
+    # name, and the `=` that opens the next one. Stripped, that reads as letters mixed with
+    # punctuation, which is exactly the shape this function is looking for, so the guard waved it
+    # through. It fired on every attribute name of six characters or more — `readonly`, `required`,
+    # `placeholder` — and needed no credential word in the markup at all.
+    #
+    # The signal is in the bytes the strip throws away. A quoted secret begins at the opening quote;
+    # text that begins with whitespace AND ends with the `=` of the next assignment began at a
+    # CLOSING one. Both halves are required together, so a passphrase with a leading space and a
+    # base64 value with `=` padding are each still judged on their merits.
+    raw = value or ""
+    if raw[:1].isspace() and raw.rstrip().endswith("="):
+        return False
+    value = raw.strip()
     if len(value) < 6:
         return False
     if " " in value or "\t" in value:
@@ -2845,6 +2909,7 @@ def scrub(text, windowed=True, *, _unmask=True):
         or _is_documented_field_name(m)
         or _is_documented_prose(m)
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
+        or _names_where_it_lives(m.group(2))
         # The tail is appended only when the whole value became a PLACEHOLDER. When
         # `_redact_literals_in` rewrites the value instead, what it returns already CONTAINS that
         # tail -- appending it again duplicated the bracket, which the same idempotence relation

@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **3,701 of 3,701** <!-- live: map_claim_check -->; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **3,706 of 3,706** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
@@ -121,7 +121,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.28.1](#whats-new-in-1281) · [Commands](#commands)
+[What's new in 1.28.2](#whats-new-in-1282) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -526,7 +526,27 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
-## What's new in 1.28.1
+## What's new in 1.28.2
+
+**Three things the redactor got wrong on ordinary code, and a resume that stopped paying twice.**
+
+`type="password" autocomplete="off"` came back as `type="password"<REDACTED>"off"` — an attribute
+name eaten and the quotes left unbalanced. It fired on every attribute name of six characters or
+more and needed no credential word in the markup at all. `api_key = os.environ` was redacted while
+`os.environ["X"]`, `os.getenv("X")` and `os.environ.get("X")` were kept, so a line whose whole point
+is that the secret is *not* in the file lost the only thing it said. And a base64 secret containing
+a slash inside a URL went out in the clear.
+
+All three were found by generating the cases rather than writing them: 336 generated lines of
+ordinary code against a credential-shaped name, where the hand-written check beside it had built one
+line per word. Recall, precision and the metamorphic suite are unchanged across every fix —
+99.0%, 100.0%, and 263 of 263.
+
+Separately, a resumed session was being handed the whole session block again on top of a
+conversation that already carried it, because the proof that it was still there looked for a fence
+derived from the session id and a resume is usually given a new one.
+
+### The release it follows — 1.28.1
 
 **A fix for something 1.28.0 shipped.** `chamnan-setup` was globbing `.claude/agents/*.md` and
 calling those files stale — they are Claude Code subagent definitions, your own files, which
@@ -1160,7 +1180,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **3,701 of 3,701** <!-- live: map_claim_check --> rather than asserted.
+claims about the tree are checked at **3,706 of 3,706** <!-- live: map_claim_check --> rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1421,7 +1441,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **3,701 of 3,701** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
+searched for, and its claims about the tree check out at **3,706 of 3,706** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.
