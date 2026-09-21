@@ -337,7 +337,11 @@ def _fences_recorded_for(transcript_path, limit=40):
                 continue
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
+                # RecursionError, not only ValueError: a line nested past the interpreter's limit
+                # raises RuntimeError's subclass, which `except ValueError` walks straight past. The
+                # outer `except Exception` below did catch it -- and returned [], throwing away every
+                # marker found before the bad line. Named here so one torn line costs one line.
                 continue
             if rec.get("tr") == tail_key and rec.get("nc"):
                 out.append("[repo:%s]" % rec["nc"])

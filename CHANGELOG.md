@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1281), and every one of these is on the
+[README](README.md#whats-new-in-1290), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -19,7 +19,22 @@ already reports the last released number while running newer code.
 
 ---
 
-## Unreleased
+## What's new in 1.29.0
+
+**A cut through Thai deleted the tone mark it landed after.** `whole_graphemes` is the guard every
+other cutter in the package goes through, and it removed the last character whenever that character
+was a combining mark, a variation selector or a skin-tone modifier. All three follow their base, so
+a cut can never orphan one — whatever the cut removed came after them. It was deleting complete
+clusters: `ไม่` came back as `ไม`, a different word, and 👍🏽 came back without its skin tone.
+Measured over the Thai lines of this workspace's own memory and skills, at the eleven limits the
+code actually cuts at: 318 of 5,290 cuts lost a complete mark, 6.0%. Zero now. The two rules that
+were right are untouched — half a flag is still half a flag, and a dangling ZWJ still goes.
+
+**A log line nested past the interpreter's recursion limit threw away every line before it.** The
+session-start hook reads `block_shape.jsonl` to recognise a block it has already sent. One torn
+line was meant to cost one line, and `except ValueError` does not catch the `RecursionError` that
+deep nesting raises — so it fell to the function's outer handler, which returns nothing at all.
+Named where it happens now.
 
 **A resume stops paying for a block the session already has.** Resuming a conversation re-sent the
 whole workspace block even though every word of it was already in the transcript. The hook now

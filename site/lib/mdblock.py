@@ -153,8 +153,8 @@ def whole_graphemes(text):
     while text:
         c = text[-1]
         o = ord(c)
-        if (unicodedata.combining(c) or c == _ZWJ_CHAR
-                or o in _VARIATION or o in _SKIN_TONE):
+        # A trailing ZWJ always dangles: it joins to something the cut removed.
+        if c == _ZWJ_CHAR:
             text = text[:-1]
             continue
         # A regional indicator is only a flag in a pair; an odd one left at the end is half of one.
@@ -165,6 +165,24 @@ def whole_graphemes(text):
             if run % 2:
                 text = text[:-1]
                 continue
+            break
+        # 🐛 [2026-09-21] (self-measured) These three FOLLOW their base, so a prefix cut can never
+        # orphan one -- whatever the cut removed came after them, and the base is still in the text.
+        # Stripping them unconditionally deleted complete clusters: `whole_graphemes("ไม่")` returned
+        # `"ไม"`, which is a different Thai word, and 👍🏽 lost its skin tone. Measured over the Thai
+        # lines of `.chamnan/memory` and `.chamnan/skills` at the eleven limits this codebase
+        # actually cuts at: 318 of 5,290 cuts (6.0%) lost a complete mark. Strip only when the run
+        # of them reaches the start of the text and so has no base to belong to.
+        if unicodedata.combining(c) or o in _VARIATION or o in _SKIN_TONE:
+            run = 0
+            while run < len(text):
+                p = text[-1 - run]
+                if not (unicodedata.combining(p) or ord(p) in _VARIATION
+                        or ord(p) in _SKIN_TONE):
+                    break
+                run += 1
+            if run == len(text):
+                return ""
         break
     return text
 

@@ -5436,11 +5436,29 @@ check("...and the name that no longer exists is gone from the ranking",
 _rmtree(_rn.parent, ignore_errors=True)
 
 # Slicing by character count is not slicing by what a reader sees.
-check("a skin-tone modifier is not left dangling", _mp._clip("👍🏽 tail text here", 3) == "👍…")
+#
+# 🐛 [2026-09-21] (self-measured) The first and third of these asserted the OPPOSITE of their
+# own names for as long as they have existed. "Not left dangling" and "not separated from its base"
+# both describe a mark that LOST its base -- and in both fixtures the base is present and the
+# cluster is complete, so what they demanded was that a complete cluster be broken. `_clip` had to
+# delete the skin tone from a whole 👍🏽, and `café` had to come back as `cafe`.
+# The cutter underneath them did exactly that, and on Thai it changes the word: ไม่ became ไม, on
+# 318 of 5,290 cuts (6.0%) measured over this workspace's own Thai. A prefix cut cannot orphan a
+# mark -- the base comes first, so whatever the cut removed came AFTER the mark. Both now assert
+# the name, and each is paired with the case the name is really about: a run of marks reaching the
+# start of the text, which has no base anywhere and is the one time dropping them is right.
+check("a skin-tone modifier stays on the base the cut kept",
+      _mp._clip("👍🏽 tail text here", 3) == "👍🏽…")
+check("...and a skin-tone modifier with no base at all is still dropped",
+      _mp._clip("🏽" + "x" * 40, 2) == "…")
 check("a regional-indicator pair is kept whole or dropped whole",
       _mp._clip("🇯🇵🇺🇸 tail text here", 4) == "🇯🇵…")
+check("...and half a pair is still dropped",
+      _mp._clip("🇯" + "x" * 40, 2) == "…")
 check("a combining mark is not separated from its base",
-      not unicodedata.combining(_mp._clip("cafe\u0301" + "x" * 40, 6).rstrip("…")[-1]))
+      _mp._clip("cafe\u0301" + "x" * 40, 6) == "cafe\u0301…")
+check("...and a combining mark with no base at all is still dropped",
+      _mp._clip("\u0301" + "x" * 40, 2) == "…")
 check("plain text is unaffected by the grapheme guard",
       _mp._clip("plain ascii sentence long enough to clip", 20).endswith("…"))
 
@@ -34875,8 +34893,21 @@ else:
         check("EVERY 🐛 RECORD DATED ON OR AFTER %s NAMES WHERE IT CAME FROM (A ROUND, OR A STATED "
               "NON-RESEARCH SOURCE)" % (_RULE_STARTED_186.isoformat(),),
               _t_offenders186 == [],
+              # 🐛 [2026-09-21] (R92 acc4, 2026-09-21) This said only that a record "names
+              # neither", and a reader who had just written `(self-measured, from two real
+              # repositories)` could not see what was wrong with it. `STATED_SOURCE` matches
+              # exactly `(self-measured)`, `(agent)` or `(owner)` and nothing else inside the
+              # parens — I got that wrong twice in one hour and paid two fold rounds for it, and
+              # the same shape is already recorded from an earlier `(owner, measured)`. R92
+              # measured the cost of a format like this: exact-format fields produce 18.5-25.7%
+              # wrong-format entries, and the remedy its own evidence points at is naming the
+              # accepted shape at the point of failure rather than only the fact of it.
               saw="%d of %d record(s) since the floor name neither (%d cite a round, %d state a "
-                  "non-research source): %s — %s"
+                  "non-research source): %s — %s\n"
+                  "        A source is either a round — `(R12 agent 2, 2026-09-12)`, `R16.2`, "
+                  "`AUDIT-8` — or EXACTLY one of `(self-measured)`, `(agent)`, `(owner)`. "
+                  "Nothing else may sit inside those parens: `(self-measured, because …)` does "
+                  "not match. Put the detail after the closing bracket."
                   % (len(_t_offenders186), _t_recent186, _t_round_cited186, _t_other_cited186,
                      _t_offenders186[:5], _t_below_note186))
 # ---- 187_a_narrow_map_cannot_replace_a_whole_one.py
@@ -36964,6 +36995,229 @@ for _t_f_20 in sorted((ROOT / "hooks").glob("*.py")) + sorted((ROOT / "bin").glo
         _t_reaching.append(_t_f_20.name)
 check("...and nothing outside workspace.py reaches into the private table to find it",
       not _t_reaching, saw=", ".join(_t_reaching) or None)
+# ---- 210_a_newline_ends_a_command_and_a_heredoc_does_not.py
+# ---- 210_a_newline_ends_a_command_and_a_heredoc_does_not.py
+# 🐛 [2026-09-21] (self-measured) The two defects this guards were found by reading the command
+# ledgers of two real work repositories, not by any test. `_split_unquoted` split on `;`, `&&`,
+# `||` and `|` and NOT on a newline, so a multi-line script came back as one part and
+# `signatures()` signed only its first line -- `cd /tmp\ngit status\ngit commit -m x` signed as
+# NOTHING, an entire workflow invisible to the ledger that `repeated()` and `chamnan-candidates`
+# are built on. A real session writes multi-line scripts: 32 of them in one Network session.
+#
+# Fixing that exposed an older one. When a heredoc closed, the code advanced past only the newline
+# BEFORE the delimiter line, leaving `PY`/`EOF` and its trailing newline to be reprocessed as
+# ordinary command text. Harmless while nothing split on newlines -- it silently glued the
+# delimiter onto the next line -- and a spurious part the moment they did.
+#
+# Five fixtures in `run_tests.py` then disagreed and ALL FIVE were right only by accident, which is
+# why this check asserts the boundaries rather than a count somebody can re-derive: the ledger is
+# only worth reading if a command's parts are its real parts.
+_t_ws210 = owner_workspace("a newline ends a command and a heredoc does not")
+if _t_ws210 is not None:
+    import importlib.util as _iu210
+
+    _t_wf210 = ROOT / "lib" / "workflows.py"
+    if not _t_wf210.is_file():
+        skip("  [SKIP] shell splitting — no lib/workflows.py")
+    else:
+        _t_spec210 = _iu210.spec_from_file_location("_t_wf210m", str(_t_wf210))
+        _t_w210 = _iu210.module_from_spec(_t_spec210)
+        _t_spec210.loader.exec_module(_t_w210)
+
+        _t_nl210 = chr(10)
+        # 1. the defect that was found in the field: a multi-line workflow must not vanish
+        _t_lost210 = _t_w210.signatures("cd /tmp%sgit status%sgit commit -m x" % (_t_nl210, _t_nl210))
+        check("A MULTI-LINE WORKFLOW REACHES THE LEDGER AT ALL",
+              _t_lost210 == ["git status", "git commit"],
+              saw="signed %r — this returned [] in the field, losing a whole git workflow because "
+                  "a newline was not a separator" % (_t_lost210,))
+
+        # 2. every line's program is signed, not only the first
+        _t_all210 = _t_w210.signatures("set -u%star -xf a.tar%spython3 parse.py"
+                                       % (_t_nl210, _t_nl210))
+        check("...and every line's program is signed, not only line one",
+              len(_t_all210) == 3 and _t_all210[0] == "set" and _t_all210[1] == "tar",
+              saw="signed %r — want three parts beginning set, tar" % (_t_all210,))
+
+        # 3. a newline inside quotes is text, not a boundary
+        _t_q210 = _t_w210.signatures('git commit -m "a%sb"' % _t_nl210)
+        check("...and a newline inside quotes is not a separator",
+              _t_q210 == ["git commit"],
+              saw="signed %r — a commit message spanning two lines is one command" % (_t_q210,))
+
+        # 4. the heredoc body is one part and its terminator is CONSUMED rather than re-read.
+        # 🐛 [2026-09-21] (self-measured) The first version of this used `…PY\nls` and passed with
+        # the fix reverted, because with nothing separator-shaped after the terminator both
+        # versions give the same two parts. The shape that discriminates is the one the real
+        # fixtures use: a `&&` AFTER the terminator. Unconsumed, `PY` glues onto `git add a` and
+        # the trailing pair splits into two; consumed, the heredoc is its own part and the pair is
+        # two more. A mutation that changes nothing proves nothing.
+        _t_hd210 = _t_w210._split_unquoted(
+            "python3 - <<PY%simport x; print(1)%sPY%sgit add a && git commit"
+            % (_t_nl210, _t_nl210, _t_nl210))
+        check("...and a heredoc terminator is consumed, not re-read as command text",
+              len(_t_hd210) == 3 and _t_hd210[0].rstrip().endswith("PY")
+              and "PY" not in _t_hd210[1],
+              saw="split into %d part(s): %r — want three: the heredoc whole, then `git add a` and "
+                  "`git commit`, with no `PY` glued to the first of them"
+                  % (len(_t_hd210), _t_hd210))
+
+        # 5. the separators that were always there still separate
+        _t_old210 = _t_w210.signatures("cd /srv && ls && pytest tests/")
+        check("...and the original separators are untouched",
+              _t_old210 == ["pytest"],
+              saw="signed %r — `cd` and `ls` are NOISE and pytest is the step" % (_t_old210,))
+# ---- 211_thai_is_findable_past_the_first_four_thousand.py
+# ---- 211_thai_is_findable_past_the_first_four_thousand.py
+# 🐛 [2026-09-21] (self-measured) `_non_ascii_lines` kept the first 4,000 characters of the lines
+# that need substring matching and dropped the rest. Thai has no word boundaries, so `terms()` is
+# ASCII-only by design and substring matching is the ONLY way Thai content is findable — everything
+# past the cap was invisible to `chamnan-recall`. Found in use, not in a test: three of five Thai
+# queries about entries that exist returned nothing, in a session where the work repository being
+# used was full of Thai filenames and Thai documents.
+#
+# The cap protected the property stated in the suite: the index must not be larger than the corpus
+# it indexes. Measured by BUILDING the real index both ways over that property's own corpus —
+# capped 1,268,439 bytes (57.8%), uncapped 1,487,242 bytes (67.7%). Nine points spent against
+# thirty points of headroom.
+#
+# This asserts the BEHAVIOUR on planted text rather than on this workspace's own corpus, so it
+# holds in a repository that has no Thai at all, and then checks the property that the cap existed
+# to protect is still true here.
+_t_ws211 = owner_workspace("Thai is findable past the first four thousand characters")
+if _t_ws211 is not None:
+    import importlib.util as _iu211
+    import json as _js211
+
+    _t_rc211 = ROOT / "lib" / "recall.py"
+    if not _t_rc211.is_file():
+        skip("  [SKIP] Thai substring reach — no lib/recall.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import recall as _r211
+
+        # A Thai line deliberately placed past where the old cap ended.
+        _t_pad211 = ("การทดสอบ " * 700)   # ~5,600 chars
+        _t_needle211 = "เข็มทิศใต้"  # a distinct word
+        _t_doc211 = _t_pad211 + "\n" + _t_needle211 + " อยู่ท้าย"
+        _t_kept211 = _r211._non_ascii_lines(_t_doc211)
+
+        check("A THAI LINE PAST THE FIRST 4,000 CHARACTERS IS STILL KEPT",
+              _t_needle211 in _t_kept211,
+              saw="%d chars kept from a %d-char document and the needle is not among them — Thai "
+                  "past the cut cannot be found at all, because substring matching is the only "
+                  "path Thai has" % (len(_t_kept211), len(_t_doc211)))
+        check("...and the whole of it is kept, not a prefix",
+              len(_t_kept211) >= len(_t_doc211) - 2,
+              saw="kept %d of %d chars — a prefix is what the cap did" % (len(_t_kept211),
+                                                                          len(_t_doc211)))
+
+        # The filter that matters is NOT what changed: punctuation and emoji must still be dropped,
+        # or the index goes back to 130% of the corpus, which is the defect that put it there.
+        check("...and lines with no non-ASCII LETTER are still dropped",
+              _r211._non_ascii_lines("an em dash — and a bullet · and \U0001f41b") == "",
+              saw="a line of punctuation was kept — `_needs_substring` is the filter that stopped "
+                  "the index reaching 130%% of the corpus and it must not have changed")
+
+        # 🐛 [2026-09-21] (self-measured) A fourth assertion rebuilt the whole index here to
+        # re-check `index_size <= corpus_size`. It cost 45 seconds and `run_tests.py` already
+        # asserts exactly that, on the same corpus, a few thousand lines further down. Two copies
+        # of one question is the defect this repository records by name, and the slow copy was the
+        # one adding nothing. The property is still guarded; it is just not guarded twice.
+# ---- 212_a_cut_keeps_the_mark_that_has_a_base.py
+# ---- 212_a_cut_keeps_the_mark_that_has_a_base.py
+# 🐛 [2026-09-21] (self-measured) `whole_graphemes` is the one cutter every other cutter in the
+# package goes through, and it stripped the trailing character whenever that character was a
+# combining mark, a variation selector or a skin-tone modifier. All three FOLLOW their base, so a
+# prefix cut can never orphan one -- whatever the cut removed came after them and the base is still
+# in the text. It was deleting complete clusters: `whole_graphemes("ไม่")` returned `"ไม"`, which is
+# a different Thai word, and 👍🏽 came back without its skin tone.
+#
+# Measured over the Thai lines of `.chamnan/memory` and `.chamnan/skills` at the eleven limits this
+# codebase actually cuts at: 318 of 5,290 cuts (6.0%) lost a complete mark. Zero after the fix.
+#
+# The function's own reproduction case was a flag emoji cut in half, and THAT rule is right: a lone
+# regional indicator really is half a pair, and a trailing ZWJ really does join to something the cut
+# removed. Two of the five rules were sound; three were not, and the three were never separated
+# because one case stood in for the whole set -- this repository's commonest defect by record.
+#
+# So this derives the set of strip rules FROM THE SOURCE and asserts one case per rule, rather than
+# listing the rules here. A sixth rule added to `whole_graphemes` without a case beside it is
+# reported by name, which is the direction this has to fail in.
+_t_ws212 = owner_workspace("A cut keeps the mark that has a base")
+if _t_ws212 is not None:
+    import re as _re212
+
+    _t_md212 = ROOT / "lib" / "mdblock.py"
+    if not _t_md212.is_file():
+        skip("  [SKIP] grapheme cutter — no lib/mdblock.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import mdblock as _m212
+
+        # The population, read out of the function rather than typed here.
+        _t_src212 = _t_md212.read_text(encoding="utf-8")
+        _t_body212 = _t_src212.split("def whole_graphemes", 1)[-1].split("\ndef ", 1)[0]
+        _t_rules212 = set()
+        for _name, _pat in (("combining", r"unicodedata\.combining"),
+                            ("zwj", r"_ZWJ_CHAR"),
+                            ("variation", r"_VARIATION"),
+                            ("skin_tone", r"_SKIN_TONE"),
+                            ("regional", r"_REGIONAL")):
+            if _re212.search(_pat, _t_body212):
+                _t_rules212.add(_name)
+
+        # base + mark, for every rule whose character follows its base. `covered` is what pairs the
+        # two halves: a rule present in the source with no case here fails the population check.
+        _t_keep212 = {
+            "combining": ("ไม่", "a Thai word ending in a tone mark"),
+            "variation": ("❤️", "a variation selector on its base"),
+            "skin_tone": ("\U0001F44D\U0001F3FD", "a skin-tone modifier on its base"),
+        }
+        for _rule, (_txt, _what) in sorted(_t_keep212.items()):
+            if _rule not in _t_rules212:
+                continue
+            check("A COMPLETE CLUSTER SURVIVES A CUT — %s" % _what,
+                  _m212.whole_graphemes(_txt) == _txt,
+                  saw="%r came back as %r: the cluster was complete, the cut removed what came "
+                      "AFTER it, and the base is still there — stripping it changes the word"
+                      % (_txt, _m212.whole_graphemes(_txt)))
+
+        # ...and the two rules that ARE right keep doing their job.
+        if "zwj" in _t_rules212:
+            check("...and a ZWJ left dangling by the cut is still removed",
+                  _m212.whole_graphemes("\U0001F469‍") == "\U0001F469",
+                  saw="a trailing ZWJ joins to something the cut took away and must go")
+            check("...and a skin tone behind that ZWJ is kept, not taken with it",
+                  _m212.whole_graphemes("\U0001F469\U0001F3FD‍") == "\U0001F469\U0001F3FD",
+                  saw="stripping the ZWJ must not cascade into the complete cluster before it")
+        if "regional" in _t_rules212:
+            check("...and half a flag is still removed",
+                  _m212.whole_graphemes("\U0001F1F9") == "",
+                  saw="a lone regional indicator is half a pair — this is the case the function "
+                      "was written for and it must not be lost to the fix")
+            check("...and a whole flag is still kept",
+                  _m212.whole_graphemes("\U0001F1F9\U0001F1ED") == "\U0001F1F9\U0001F1ED")
+            check("...and a whole flag followed by half of one loses only the half",
+                  _m212.whole_graphemes("\U0001F1F9\U0001F1ED\U0001F1EF")
+                  == "\U0001F1F9\U0001F1ED")
+
+        # A mark with NO base is the one case where stripping is right for all three.
+        check("...and marks with no base at all are removed, because they have nothing to belong to",
+              _m212.whole_graphemes("่้") == "",
+              saw="a run of marks reaching the start of the text has no base and is not a cluster")
+
+        # The population check: every rule in the source has a case above.
+        _t_cased212 = set(_t_keep212) | {"zwj", "regional"}
+        check("...and every strip rule in the function has a case here",
+              _t_rules212 <= _t_cased212,
+              saw="rule(s) in `whole_graphemes` with nothing asserting their behaviour: %s"
+                  % ", ".join(sorted(_t_rules212 - _t_cased212)))
+        check("...and the rules this reads out of the source are the ones it thinks are there",
+              len(_t_rules212) == 5,
+              saw="read %d rule(s) from whole_graphemes, expected 5 — the parse found %s"
+                  % (len(_t_rules212), sorted(_t_rules212) or "nothing, so every case above was "
+                     "skipped and this check proved nothing"))
 # ---- 21_a_name_may_open_with_a_digit_and_a_tool_has_one_name.py
 # ------------------------------------------- two defects found by USING a store nobody had filled
 # 🐛 [2026-09-09] `.chamnan/environments.md` — the store whose module docstring calls it "the
