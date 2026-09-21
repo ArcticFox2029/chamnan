@@ -121,13 +121,16 @@ def _split_unquoted(text):
         #
         # The body ends at a line that is exactly the delimiter — optionally indented when the
         # operator was `<<-`, which is what that dash means.
-        # 🐛 [2026-09-21] (self-measured) Found in two real repositories' command ledgers.
-        # `i += 1` only used to advance past the newline BEFORE the delimiter
-        # line, leaving the delimiter's own text (`PY`, `EOF`, …) and its trailing newline to be
-        # reprocessed as ordinary command text. That was invisible while nothing split on
-        # newlines; once newlines became a separator above, the leftover newline turned the
-        # delimiter line into a spurious extra part. A latent defect exposed by a correct change
-        # is still a defect, so the terminator line is now consumed here instead of left behind.
+        # 🐛 [2026-09-21] (self-measured) A CHANGE WAS MADE HERE AND REVERTED, and the reason is
+        # worth more than the change was. `i += 1` advances past only the newline BEFORE the
+        # delimiter line, leaving `PY`/`EOF` and its trailing newline to be reprocessed as ordinary
+        # text, which reads like a defect and was written up as one. It is not observable: those
+        # characters enter `buf` one at a time and the newline AFTER the delimiter is itself a
+        # separator now, so the part comes out byte-identical either way. Measured on six heredoc
+        # shapes -- quoted, unquoted, `<<-`, terminator at end of input, `&&` after it, `|` after
+        # it -- with the consumption present and absent: ZERO differences. It was found only
+        # because a mutation test refused to fail. Do not "fix" this again without first showing a
+        # shape that tells the two apart.
         if heredoc is not None:
             buf.append(ch)
             if ch == "\n":
@@ -135,9 +138,6 @@ def _split_unquoted(text):
                 line = text[i + 1:j if j != -1 else n]
                 if (line.strip() if heredoc[1] else line) == heredoc[0]:
                     heredoc = None
-                    buf.append(line)
-                    i = j if j != -1 else n
-                    continue
             i += 1
             continue
         # `$(( … ))` is arithmetic: `<<` inside it is a left shift, and reading it as a redirect
