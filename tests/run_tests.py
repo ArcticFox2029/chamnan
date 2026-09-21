@@ -35840,6 +35840,96 @@ if _t_ws197 is not None:
                   saw="%d staged pair(s) are already dismissed: %s"
                       % (len(_t_bad197), ", ".join("%s<->%s" % (r.get("rule"), r.get("other"))
                                                    for r in _t_bad197[:3])))
+# ---- 198_ordinary_code_under_a_credential_name_stays_readable.py
+# ---- 198_ordinary_code_under_a_credential_name_stays_readable.py
+# 🐛 [2026-09-21] (R30 acc1, 2026-09-21) Check 115 makes this same property and builds ONE line per
+# credential word per shape. R30's measurement is that a property fed by a generator kills about 50x
+# the mutants of a hand-written case, and that 76% of what it will ever catch arrives in the first
+# twenty inputs — so the generator does not have to be large to be worth having.
+#
+# Run once against the shipped redactor, the generated carriers found three defects that 115's
+# single template could not see, all of them the same shape — a decision landed on the members of a
+# set that carry a bracket and missed in the ones that do not:
+#
+#   type="password" autocomplete="off"      ->  type="password"<REDACTED>"off"   (an attribute NAME
+#                                               eaten, quotes left unbalanced; no credential word
+#                                               needed anywhere in the markup)
+#   api_key = os.environ                    ->  api_key = <REDACTED>   while os.environ["X"],
+#                                               os.getenv("X") and os.environ.get("X") were kept
+#   export type apikey = z.infer<typeof …>  ->  the type expression redacted
+#
+# 67 ordinary lines were rewritten before those fixes and 13 after, and the 13 are one documented
+# decision rather than a defect: a value spelled exactly like its key is a weak credential, which
+# `_value_is_the_key_itself` says in full. That shape is asserted here as REDACTED, so this check
+# pins the policy as well as the property and a later softening has to argue with it.
+#
+# The three measurements that guard the other direction did not move across any of it: recall 99.0%,
+# precision 100.0%, metamorphic 263/263.
+import random as _rnd198
+
+import redact as _rd198
+
+_WORDS198 = sorted(_rd198._CREDENTIAL_END_WORDS)
+check("the generated-carrier sweep has a non-trivial word population: %d" % len(_WORDS198),
+      len(_WORDS198) >= 12, saw=repr(_WORDS198))
+
+# Ordinary source text whose value is plainly not a secret: a type, a column, a boolean, a
+# reference to where the value actually lives. If `scrub` rewrites one of these it has taken code
+# for a credential.
+_CARRIERS198 = (
+    "field_{w}: String!",
+    "  {w}: Optional[str] = None",
+    "const {w}: &'static str = TYPE_NAME;",
+    "COMMENT ON COLUMN users.{w} IS 'stored elsewhere';",
+    "| `{w}` | string | the column name |",
+    "{w}_length = 32",
+    "-- {w} is rotated by the operator, never stored here",
+    "{w}: null",
+    "self.{w} = None  # set by the caller",
+    "{w} = os.environ",
+    "{w} = os.environ[\"X\"]",
+    "{w} = os.getenv(\"X\")",
+    "export type {w} = z.infer<typeof schema>;",
+    "{w}=$(command -v true)",
+    "{w} = ${VAULT_PATH}",
+    "* @param {w} the name of the header to read",
+    "<input name=\"{w}\" type=\"password\" autocomplete=\"off\">",
+    "type=\"password\" {w}complete=\"off\"",
+)
+
+_bad198 = []
+_trials198 = 0
+for _w198 in _WORDS198:
+    for _c198 in _CARRIERS198:
+        _line198 = _c198.replace("{w}", _w198)
+        _trials198 += 1
+        if _rd198.scrub(_line198) != _line198:
+            _bad198.append((_line198, _rd198.scrub(_line198)))
+
+# R30 #3: varying WHICH carriers meet each other is where the extra kills come from, and a fixed
+# seed is what keeps a failure reproducible.
+_rng198 = _rnd198.Random(20260921)
+for _w198 in _WORDS198:
+    _a198, _b198 = _rng198.sample(list(_CARRIERS198), 2)
+    _line198 = _a198.replace("{w}", _w198) + "  " + _b198.replace("{w}", _w198)
+    _trials198 += 1
+    if _rd198.scrub(_line198) != _line198:
+        _bad198.append((_line198, _rd198.scrub(_line198)))
+
+print("      %d generated line(s) of ordinary code, %d rewritten" % (_trials198, len(_bad198)))
+check("NO ORDINARY LINE UNDER A CREDENTIAL-SHAPED NAME IS REWRITTEN",
+      not _bad198,
+      saw="\n        ".join("%s\n          -> %s" % (a, b) for a, b in _bad198[:4]) or None)
+
+# The other direction, in the same sweep: a value spelled exactly like its key IS redacted, which
+# `_value_is_the_key_itself` documents as deliberate — that is where a password nobody chose lives.
+# Asserted so that softening the rule above cannot quietly take this with it.
+_kept198 = [_w198 for _w198 in _WORDS198
+            if _rd198.scrub('case %s = "%s"' % (_w198, _w198)) == 'case %s = "%s"' % (_w198, _w198)]
+check("...and a value spelled exactly like its key is still redacted, as that rule intends",
+      len(_kept198) <= 5,
+      saw="%d of %d words stopped being redacted: %s"
+          % (len(_kept198), len(_WORDS198), ", ".join(_kept198[:8])))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
