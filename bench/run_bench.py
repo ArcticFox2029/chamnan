@@ -327,6 +327,7 @@ def _report_spread(data, trials):
         return
     print(f"\n{'cell':<44}{'median ctx':>12}{'min':>9}{'max':>9}{'spread':>9}")
     print("-" * 83)
+    cells = {}
     for key, runs in sorted(data["runs"].items()):
         vals = sorted(r["context_total"] for r in runs
                       if isinstance(r, dict) and "error" not in r and r.get("context_total"))
@@ -335,6 +336,55 @@ def _report_spread(data, trials):
         med = vals[len(vals) // 2]
         spread = (vals[-1] - vals[0]) / med * 100 if med else 0
         print(f"{key:<44}{med:>12,}{vals[0]:>9,}{vals[-1]:>9,}{spread:>8.1f}%")
+        cells[key] = vals
+    _report_separable(cells)
+
+
+def _report_separable(cells):
+    """Name every arm-to-arm difference the trials cannot actually separate.
+
+    🐛 [2026-09-21] (R45 acc4, 2026-09-21) The table above prints each cell's spread and then
+    leaves the comparison to the reader's eye, which is how this project published 845 ms from a
+    three-run sample and re-measured the same thing at 1,106 and 1,228. The change that number
+    justified cost ten tested properties and was reverted. Printing the spread was never the gap:
+    nothing said whether the DIFFERENCE being read off the table was larger than it.
+
+    R45 #9 (pyperf) states the rule the other way round -- report that the evidence is insufficient
+    rather than accept a measurement -- and #10 (Barrett et al., at most 43.5% of VM/benchmark pairs
+    reach a steady state) is why a handful of trials is not assumed to have settled. Both cite an
+    outside implementation that already does it; neither is a scoring change, and no arm's number
+    moves. Only the sentence under the table is new.
+    """
+    from collections import defaultdict
+    by_q = defaultdict(dict)
+    for key, vals in cells.items():
+        qid, _, arm = key.partition("::")
+        by_q[qid][arm] = vals
+    unseparable = []
+    for qid, arms in sorted(by_q.items()):
+        names = sorted(arms)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                va, vb = arms[a], arms[b]
+                if len(va) < 2 or len(vb) < 2:
+                    continue
+                gap = abs(_med(va) - _med(vb))
+                # The widest single-cell range is the smallest difference this sample could call
+                # real. A gap inside it is a reading of the noise, whichever way it points.
+                noise = max(va[-1] - va[0], vb[-1] - vb[0])
+                if gap <= noise:
+                    unseparable.append((qid, a, b, gap, noise))
+    if not unseparable:
+        return
+    print("\n  NOT SEPARABLE BY THIS SAMPLE — do not publish these as a difference")
+    for qid, a, b, gap, noise in unseparable:
+        print(f"    {qid:24} {a} vs {b}: gap {gap:,} within a single cell's range of {noise:,}")
+    print("    Run more trials, or report them as the same. A gap inside the noise is a reading of")
+    print("    the noise; this project published one once and reverted the change it justified.")
+
+
+def _med(vals):
+    return vals[len(vals) // 2]
 
 
 if __name__ == "__main__":
