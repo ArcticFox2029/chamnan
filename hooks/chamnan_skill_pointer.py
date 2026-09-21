@@ -334,6 +334,55 @@ def _long_read_notice(payload):
         return ""
 
 
+def _edit_will_not_survive(payload):
+    """One sentence when an edit to this path is going to be thrown away, else "".
+
+    Ranked above everything else this hook says, and above everything the other two PreToolUse
+    hooks say, because it is the only notice where the whole edit is wasted rather than merely
+    duplicated or under-informed. `hooks.json` puts this hook first for that reason.
+
+    Once per (session, path). A file being edited repeatedly is the normal shape of work, and a
+    notice on every edit of it is the one people learn to scroll past -- the lesson
+    `_environment_notice` already records about `kubectl --context prod`.
+
+    Deliberately NOT a gate. chamnan does not block; see `chamnan_scratch_watch._environment_notice`
+    on why `permissionDecision` is not trusted here. Somebody editing a generated file on purpose,
+    to test what the generator will overwrite, is doing something legitimate.
+    """
+    raw = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not raw:
+        return ""
+    root = ws.hook_root(payload)
+    wsdir = ws.workspace(root)
+    if not wsdir.is_dir():
+        return ""
+    session = str(payload.get("session_id") or "")
+    entry = _nudge_read(wsdir, session)
+    seen = entry.setdefault("doomed", [])
+    key = str(raw).replace("\\", "/")
+    if key in seen:
+        return ""
+    # 🐛 [2026-09-22] (self-measured) The path is recorded whatever the verdict, not only when it
+    # is bad. Recording only the bad ones left the COMMON case -- an ordinary file, edited
+    # repeatedly, which is the normal shape of work -- paying a `git check-ignore` subprocess on
+    # every single Edit: median 33.5 ms against 0.5 ms for a file answered by its own header. The
+    # expensive path was the one taken most often, which is backwards.
+    #
+    # The trade, stated rather than hidden: a file that BECOMES ignored mid-session is not
+    # re-judged. That needs somebody to edit `.gitignore` and then keep editing the same file, and
+    # the case that actually matters -- a new file created under an ignored directory -- is a new
+    # path and is judged normally.
+    try:
+        import survives
+        why = survives.verdict(root, key)
+    except Exception:
+        return ""
+    seen.append(key)
+    del seen[:-400]
+    _nudge_write(wsdir, session, entry)
+    return ("chamnan: " + why) if why else ""
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -343,6 +392,11 @@ def main():
     global _CALL
     _CALL = payload
     _tool = payload.get("tool_name") or ""
+    if _tool in ("Edit", "Write", "NotebookEdit"):
+        _doomed = _edit_will_not_survive(payload)
+        if _doomed:
+            _emit(_doomed)
+            return 0
     if _tool == "Write":
         _already = _what_this_repo_already_has(payload)
         if _already:
