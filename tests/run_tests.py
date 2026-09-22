@@ -38220,6 +38220,138 @@ if _t_ws221 is not None:
                   "400,000 cached tokens" in _t_src221,
                   saw="'this is expensive' is not a reason; the median request on real sessions "
                       "carrying over 400,000 cached tokens is")
+# ---- 222_where_the_last_sitting_stopped_is_read_not_paid_for.py
+# ---- 222_where_the_last_sitting_stopped_is_read_not_paid_for.py
+# 🐛 [2026-09-22] (self-measured) Resuming a conversation re-sends the whole transcript, and on a
+# resume the prompt cache has expired -- so every token is billed at the cache_WRITE price, 12.5x
+# cache_read. Three real resumes of one repository cost 843,816, 849,857 and 859,794 tokens on their
+# FIRST request, before the user had typed anything, to re-transmit a 161 MB transcript that had
+# never left the disk. The thing those tokens buy that the reader actually wanted -- which files the
+# work was in the middle of -- was already in `logs/edits.jsonl`, written by a hook, free to read.
+#
+# `coedit.sitting_line` reports it in 37 tokens. The properties below are the ones that make that
+# claim true rather than merely cheap: the sitting has to END at a real break (a check that only
+# proves the break passes equally on a function that always returns one record, so the inside of the
+# gap is asserted too), it has to say nothing on a repository chamnan has never seen, and it has to
+# write nothing -- `coedit` already records these edits, and a read-only notice that creates a file
+# breaks the block's own promise that nothing is written unless you ask.
+#
+# It also has to stay free of advice. An earlier version told the reader to start fresh instead of
+# resuming; that was rejected because people return to working in the repository whatever they are
+# told. The `fullmatch` below is how "no advice" is enforced mechanically: nothing can be appended
+# to the line without failing it.
+_t_ws222 = owner_workspace("Where the last sitting stopped is read, not paid for")
+if _t_ws222 is not None:
+    import json as _j222
+    import re as _re222
+    import tempfile as _tf222
+    import time as _tm222
+    from pathlib import Path as _P222
+
+    if not (ROOT / "lib" / "coedit.py").is_file():
+        skip("  [SKIP] last sitting — no lib/coedit.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import coedit as _c222
+
+        _t_now222 = 1_700_000_000
+        _H222 = 3600
+
+        def _t_log222(tmp, rows):
+            """Write a ledger of (hours_before_now, path) and return the workspace dir."""
+            wsd = _P222(tmp) / ".chamnan"
+            (wsd / "logs").mkdir(parents=True, exist_ok=True)
+            (wsd / "logs" / "edits.jsonl").write_text(
+                "".join(_j222.dumps({"at": int(_t_now222 - h * _H222), "fp": fp}) + "\n"
+                        for h, fp in rows), encoding="utf-8")
+            return wsd
+
+        # --- the gap ends the sitting, and does not end it early -------------------------------
+        with _tf222.TemporaryDirectory() as _t_d222:
+            # 1h and 3h are one sitting (2h apart, inside the gap); 40h is a different day.
+            _t_w222 = _t_log222(_t_d222, [(40, "old/yesterday.py"),
+                                          (3, "a/second.py"),
+                                          (1, "a/newest.py")])
+            _t_files222, _t_ago222 = _c222.last_sitting(_t_w222, now=_t_now222)
+
+        check("A break longer than the sitting gap ends the sitting",
+              "old/yesterday.py" not in _t_files222,
+              saw="a file from 40h ago was reported as where the work just stopped — the reader "
+                  "goes back to the wrong file, which is worse than being told nothing: %r"
+                  % (_t_files222,))
+        check("...and a break shorter than the gap does NOT end it",
+              "a/second.py" in _t_files222,
+              saw="only %d file(s) survived, so this would pass on a function that always returns "
+                  "the single newest record and proves nothing about the gap" % len(_t_files222))
+        check("...and the newest file is named first",
+              _t_files222[:1] == ["a/newest.py"],
+              saw="order was %r — the file the work stopped in is the one the reader wants first"
+                  % (_t_files222,))
+        check("...and the age reported is the age of the newest edit",
+              _t_ago222 == 1 * _H222,
+              saw="reported %ds ago against a newest edit %ds old" % (_t_ago222, 1 * _H222))
+
+        # --- a file touched twice in one sitting is one file ------------------------------------
+        with _tf222.TemporaryDirectory() as _t_d222:
+            _t_w222 = _t_log222(_t_d222, [(3, "a/same.py"), (2, "a/other.py"), (1, "a/same.py")])
+            _t_dup222, _ = _c222.last_sitting(_t_w222, now=_t_now222)
+        check("...and a file edited twice in the sitting is named once",
+              _t_dup222.count("a/same.py") == 1,
+              saw="named %d times in %r — the cap on files is spent on repeats instead of on what "
+                  "else was touched" % (_t_dup222.count("a/same.py"), _t_dup222))
+
+        # --- stale, and the day-one repository ---------------------------------------------------
+        with _tf222.TemporaryDirectory() as _t_d222:
+            _t_w222 = _t_log222(_t_d222, [(_c222.SITTING_MAX_AGE_DAYS * 24 + 24, "long/ago.py")])
+            _t_stale222 = _c222.sitting_line(_t_w222, now=_t_now222)
+        check("...and a sitting older than the age bound says nothing",
+              _t_stale222 == "",
+              saw="reported %r — last month's work is not where you left off, and a notice that is "
+                  "usually wrong teaches the reader to skip it" % _t_stale222)
+
+        with _tf222.TemporaryDirectory() as _t_d222:
+            _t_bare222 = _P222(_t_d222) / ".chamnan"
+            (_t_bare222 / "logs").mkdir(parents=True)
+            _t_empty222 = _c222.sitting_line(_t_bare222, now=_t_now222)
+            # The day-one test: no ledger at all, which is every repository on its first session.
+            _t_none222 = _c222.sitting_line(_P222(_t_d222) / "nothing-here", now=_t_now222)
+        check("...and a repository with no edit ledger is silent, not broken",
+              _t_empty222 == "" and _t_none222 == "",
+              saw="emitted %r / %r on a first session — inventing a hand-off from an absent log is "
+                  "the confident guess this package refuses" % (_t_empty222, _t_none222))
+
+        # --- it reads; it must not write ---------------------------------------------------------
+        with _tf222.TemporaryDirectory() as _t_d222:
+            _t_w222 = _t_log222(_t_d222, [(2, "a/one.py"), (1, "a/two.py")])
+            _t_before222 = sorted((str(p.relative_to(_t_w222)), p.stat().st_mtime_ns)
+                                  for p in _t_w222.rglob("*") if p.is_file())
+            _c222.sitting_line(_t_w222, now=_t_now222)
+            _t_after222 = sorted((str(p.relative_to(_t_w222)), p.stat().st_mtime_ns)
+                                 for p in _t_w222.rglob("*") if p.is_file())
+        check("...and reading where you left off writes nothing at all",
+              _t_before222 == _t_after222,
+              saw="the workspace changed: %r -> %r. The session block promises nothing is written "
+                  "unless you ask, and this notice is not asked for"
+              % (_t_before222, _t_after222))
+
+        # --- no advice: the whole line must be the template, so nothing can be appended ----------
+        with _tf222.TemporaryDirectory() as _t_d222:
+            _t_w222 = _t_log222(_t_d222, [(2, "a/one.py"), (1, "a/two.py")])
+            _t_line222 = _c222.sitting_line(_t_w222, now=_t_now222)
+        _t_shape222 = _re222.compile(r"_Last edited \d+[mhd] ago: `[^`]+`(?:, `[^`]+`)*_\Z")
+        check("...and the line states where the work was and nothing else",
+              bool(_t_shape222.fullmatch(_t_line222)),
+              saw="line was %r. A sentence appended here becomes advice, and advice was rejected: "
+                  "people go back to working in the repository whatever they are told"
+                  % _t_line222)
+
+        # --- and the hook that carries it actually calls it --------------------------------------
+        _t_hook222 = ROOT / "hooks" / "chamnan_session_start.py"
+        _t_hsrc222 = _t_hook222.read_text(encoding="utf-8-sig", errors="replace")
+        check("...and the session block reaches it",
+              "coedit.sitting_line(" in _t_hsrc222,
+              saw="nothing in the SessionStart hook calls it, so the reader never sees it and the "
+                  "saving is zero however cheap the line is")
 # ---- 22_a_second_entry_does_not_overwrite_the_first.py
 # ------------------------------------------- one of four stores had the guard
 # 🐛 [2026-09-09] Every store here builds a filename by truncating an ASCII reduction of the title —

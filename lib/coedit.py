@@ -173,3 +173,97 @@ def line(wsdir, path, display=str):
     parts = ", ".join(f"`{mdblock.as_quoted(display(b))}` ({p * 100:.0f}%)"
                      for b, _, p in rows)
     return f"_You usually change {parts} right after this one._"
+
+
+# How long a quiet gap has to be before the next edit belongs to a different sitting. Four hours is
+# not tuned, and cannot be: nothing the hooks receive marks where one session ended, because the
+# record below carries only `at` and `fp`. What four hours buys is that it is longer than any break
+# taken mid-task and shorter than a night, which is the only distinction this needs to make. Adding
+# a session id to the record would be exact, but it would also make this feature dead until enough
+# new records accumulated, and the point of it is that the data is ALREADY on disk.
+SITTING_GAP = 4 * 3600
+# A sitting older than this is not "where you left off", whatever the gap says.
+SITTING_MAX_AGE_DAYS = 7
+SITTING_MAX_FILES = 5
+
+
+def last_sitting(wsdir, now=None):
+    """(files, seconds_ago) for the most recent unbroken run of edits, newest file first.
+
+    Why this exists, measured rather than assumed. Resuming a long conversation re-sends the whole
+    transcript, and on a resume the cache has expired -- so every token is charged at the
+    cache_WRITE price, which is 12.5x cache_read. Three real resumes of one repository cost 843,816,
+    849,857 and 859,794 tokens on their FIRST request, before the user had said anything. The
+    transcript those tokens re-transmit is 161 MB sitting on the same disk as this ledger.
+
+    So the expensive part of a resume is not the knowledge, it is the transport. What somebody
+    resumes a session FOR -- which files they were in the middle of -- is already recorded here, and
+    reading it locally costs no tokens at all. This returns it so a fresh session can start knowing
+    what a resumed one would have paid ~860,000 tokens to be told.
+
+    Cost, measured rather than extrapolated: 0.59 ms median on this repository's 218-line ledger
+    and 60.6 ms at `MAX_LINES`, once per session, against a session start of 2,133 ms. The whole
+    file is read even though the sitting is always at its end, and that is a deliberate trade: a
+    tail read would buy back those 60 ms and add a torn-first-line case plus a silent wrong answer
+    whenever a sitting ran longer than the window chosen for it.
+
+    It deliberately reports files and nothing else. The reasoning behind an edit is not in this log,
+    and inventing a summary of intent from a list of paths would be the kind of confident guess that
+    is worse than saying less.
+    """
+    now = time.time() if now is None else now
+    cutoff = now - SITTING_MAX_AGE_DAYS * 86400
+    rows = []
+    try:
+        with (wsdir / LOG).open(encoding="utf-8-sig", errors="replace") as fh:
+            for raw in fh:
+                try:
+                    rec = json.loads(raw)
+                except (ValueError, RecursionError):
+                    continue          # a torn append is one lost edit, not a broken feature
+                if not (isinstance(rec, dict) and rec.get("fp")):
+                    continue
+                at = rec.get("at") or 0
+                if at >= cutoff and at <= now:
+                    rows.append((at, rec["fp"]))
+    except OSError:
+        return [], 0
+    if not rows:
+        return [], 0
+    # The log is appended to under a lock, so it is in order -- but a clock that stepped backwards
+    # would otherwise silently truncate the sitting to one record, so sort rather than trust it.
+    rows.sort()
+    newest = rows[-1][0]
+    keep = [rows[-1]]
+    for at, fp in reversed(rows[:-1]):
+        if keep[-1][0] - at > SITTING_GAP:
+            break
+        keep.append((at, fp))
+    files = []
+    for _, fp in keep:                # keep is newest-first; dedupe keeps the newest mention
+        if fp not in files:
+            files.append(fp)
+    return files[:SITTING_MAX_FILES], int(now - newest)
+
+
+def _ago(seconds):
+    """"13h", "2d" -- the coarsest unit that is still true, because precision here is noise."""
+    if seconds < 3600:
+        return "%dm" % max(1, seconds // 60)
+    if seconds < 36 * 3600:
+        return "%dh" % (seconds // 3600)
+    return "%dd" % (seconds // 86400)
+
+
+def sitting_line(wsdir, now=None):
+    """One line naming where the last sitting stopped, or "" when the log cannot say.
+
+    No advice and nothing asked of the reader: a warning here was rejected on the grounds that
+    people go back to working in the repository regardless of what they are told, which is correct.
+    This is the information a resume would have carried, not a suggestion to resume differently.
+    """
+    files, ago = last_sitting(wsdir, now=now)
+    if not files:
+        return ""
+    parts = ", ".join("`%s`" % mdblock.as_quoted(fp) for fp in files)
+    return "_Last edited %s ago: %s_" % (_ago(ago), parts)

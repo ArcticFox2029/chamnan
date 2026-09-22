@@ -1400,6 +1400,23 @@ def main():
                                     if _drifted.startswith("chamnan: ") else _drifted))
     except Exception:
         pass
+    # Where the last sitting stopped, from the edit ledger that is already on disk. This is the one
+    # thing a resume is actually wanted FOR, and a resume pays for it by re-transmitting the entire
+    # conversation: measured at 843,816-859,794 cache_WRITE tokens on the first request of three
+    # real resumes, at 12.5x the cache_read price, to re-send a transcript that never left the
+    # machine. The line below carries the same fact for 37 tokens.
+    #
+    # It states where the work was and stops there. An earlier version of this advised the reader to
+    # start fresh instead of resuming, and that was rejected on the grounds that people return to
+    # working in the repository whatever they are told -- so there is no advice here and nothing is
+    # asked of anyone. Nothing is written either: `coedit` records these edits already.
+    try:
+        import coedit
+        _sitting = coedit.sitting_line(wsdir)
+        if _sitting:
+            out.append(redact.scrub(_sitting) + "\n")
+    except Exception:
+        pass
     # Set before the guard below, not inside it: the emit step needs all three, and a failure part
     # way through must still be able to print what was built rather than dying on a name.
     header = "## chamnan\n"
