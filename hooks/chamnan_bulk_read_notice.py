@@ -242,12 +242,35 @@ def _document_notice(path, root, session_id, size):
 
     import mdblock  # deferred; see the import block
     name = mdblock.as_quoted(path.name)
+
+    # 🐛 [2026-09-22] (self-measured) This named `.chamnan/tools/read_agent_report.py`,
+    # `local_assist.ask()` and a rule file by path -- three things that exist in the repository
+    # chamnan was developed in and in no other install. Every user who is not the author was told,
+    # on every long document, to run a script they do not have. That is worse than the sibling
+    # defect fixed the same day in `chamnan_skill_pointer`, which merely went silent: this one is
+    # loud and wrong, and a reader who follows it gets an error from chamnan's own advice.
+    #
+    # What is always true goes first, and names a command that ships with the plugin. What is
+    # local is named only when it is actually there.
+    extra = ""
+    try:
+        agent_report = ws.workspace(root) / "tools" / "read_agent_report.py"
+        if agent_report.is_file():
+            extra = f" `python3 .chamnan/tools/read_agent_report.py {path}` is set up here."
+    except Exception:
+        extra = ""
+    rule = ""
+    try:
+        r = ws.workspace(root) / "memory" / "rules" / "the-local-model-reads-long-things-first.md"
+        if r.is_file():
+            rule = (" This repository has written that down: "
+                    "`memory/rules/the-local-model-reads-long-things-first.md`.")
+    except Exception:
+        rule = ""
     return (
-        f"chamnan: `{name}` is a long document (~{size:,} bytes) -- "
-        "\"About to read a document over ~5,000 characters to pull a list out of it? Ask the "
-        "local model first.\" (memory/rules/the-local-model-reads-long-things-first.md) "
-        f"-- `python3 .chamnan/tools/read_agent_report.py {path}` for an agent report, "
-        "`local_assist.ask(instruction, body)` for anything else. "
+        f"chamnan: `{name}` is a long document (~{size:,} bytes). Pulling a list or an answer out "
+        f"of it does not need all of it in context -- `chamnan-peek {path}` gives its shape, and a "
+        f"cheaper reader can be asked for the rest.{rule}{extra} "
         "(said up to 3 times per session per file -- now, and again past %d and %d calls)"
         % NUDGE_AGAIN_AT)
 
