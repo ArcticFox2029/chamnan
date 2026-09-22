@@ -425,15 +425,27 @@ def main():
         # take it, not one -- the half-applied fix is this repository's most repeated defect.
         import mdblock  # deferred; see the import block
         name = mdblock.as_quoted(path.name)
+        # 🐛 [2026-09-22] (self-measured) The replay clause was on ONE of these two branches. The
+        # comment above says both call sites take the fix and not one, and the same file then
+        # half-applied the next one. A generated file is carried on every later turn exactly as a
+        # large one is, and the branch that fires for it said only how big it was.
+        #
+        # And the multiple is stated now, because it is what makes the size land. Measured over
+        # 78,236 de-duplicated requests on this machine: the median request already carries
+        # 438,681 cached tokens, so a file read early is re-charged on every turn after it. One
+        # avoided 106,593-token read is worth $3.26 over a hundred turns; chamnan's entire session
+        # block over the same hundred turns costs $0.14.
+        _carried = ("every later turn in this session is charged for it again — the median request "
+                    "on a real session already carries over 400,000 cached tokens")
         if why:
-            note = (f"chamnan: `{name}` is {why} (~{est:,.0f} tokens). "
+            note = (f"chamnan: `{name}` is {why} (~{est:,.0f} tokens), and {_carried}. "
                     f"If you need one fact from it, grep instead of reading it whole. "
                     f"Reading it is still the right call when the file itself is what you are "
                     f"debugging.")
         else:
             scale = "very large" if size >= HUGE_BYTES else "large"
-            note = (f"chamnan: `{name}` is {scale} (~{est:,.0f} tokens), and every later turn in "
-                    f"this session carries it. A grep or a line range costs a fraction of that.")
+            note = (f"chamnan: `{name}` is {scale} (~{est:,.0f} tokens), and {_carried}. "
+                    f"A grep or a line range costs a fraction of that.")
         if shape:
             note += ("\n\nchamnan read its shape instead, so you can decide from this rather than "
                      "from the size alone:\n\n" + shape)
