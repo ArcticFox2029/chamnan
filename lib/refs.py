@@ -194,9 +194,24 @@ def _interp_ranges(span, lang):
             a = span.find(opener, at)
             if a < 0:
                 break
-            depth, k = 0, a + len(opener) - 1
-            # Start the count on the bracket that the opener ENDS with, so `${` and `{` and `$(`
-            # all enter the loop already inside one level.
+            # Start the count ON the opening bracket, so the scan enters the loop already inside
+            # one level. Its position is READ from the opener rather than assumed, which is the
+            # whole of the fix below.
+            #
+            # 🐛 [audit-qa 2026-09-22] This was `a + len(opener) - 1` -- the bracket assumed to be
+            # the LAST character of the opener, true of `${`, `#{`, `$(`, `\(` and the bare `{`.
+            # PHP's `{$` is the one member of the table where the bracket comes FIRST, so the count
+            # started on the `$`, the closing `}` took depth to -1 instead of 0, and the scan fell
+            # out of the balanced loop unbalanced: every `"{$obj->target()}"` was blanked with the
+            # literal around it. That is the same false ABSENCE the comment above this table was
+            # written to record, reintroduced in the table's own reader -- and it is the twentieth
+            # instance of this repository's most-recorded defect, a rule landing on one member of a
+            # set and missing the one beside it that is spelled differently.
+            # An opener that does not carry the bracket at all is entered one level deep from just
+            # after it, so a third spelling cannot bring the same defect back a third time.
+            at_bracket = opener.find(opn)
+            depth, k = ((0, a + at_bracket) if at_bracket >= 0
+                        else (1, a + len(opener)))
             while k < len(span):
                 if span[k] == opn:
                     depth += 1

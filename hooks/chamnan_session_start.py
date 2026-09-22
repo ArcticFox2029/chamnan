@@ -637,7 +637,15 @@ def rebuild_map_after_upgrade(root, wsdir, pkg_root, indexed):
                 "this one can. It is big enough that rebuilding is your call: run `chamnan-map`.")
     exe = Path(pkg_root) / "bin" / "chamnan-map"
     if not exe.is_file():
-        return ""
+        # 🐛 [audit-qa 2026-09-22] This returned "", and "" is the caller's word for SUCCESS -- it
+        # is what makes the caller print "has been rebuilt ... Nothing else was changed". So an
+        # installation missing its own `bin/` told the session the index had been rebuilt when
+        # nothing had run, and the `times=1` latch was already spent by then, so it never said
+        # anything different again. The two failure branches immediately below both return a line;
+        # this was the one member of the set that did not, and it is the only one whose silence
+        # turns into a false claim rather than a missing one.
+        return ("this index was built by an older chamnan and `chamnan-map` could not be found to "
+                "rebuild it. Run `chamnan-map` when you can.")
     try:
         r = subprocess.run([sys.executable, str(exe)], cwd=str(root), capture_output=True,
                            text=True, timeout=MAP_AUTO_REBUILD_MAX_SECONDS + 15)

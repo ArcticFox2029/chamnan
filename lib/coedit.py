@@ -194,6 +194,12 @@ SITTING_MAX_FILES = 5
 # would have aged out.
 SITTING_GIT_COMMITS = 60
 
+# The byte a commit timestamp is emitted behind, so that no PATH can be mistaken for one. Git
+# C-quotes any path containing a control character whatever `core.quotePath` says -- measured, a
+# file named "\x011234567890" comes back as `"\0011234567890"` -- so a path line can never begin
+# with this however the file is named. A bare timestamp had no such guarantee; see the parse below.
+_STAMP = "\x01"
+
 
 def _git_edits(root, now, cutoff):
     """[(at, path)] for files touched by recent commits, or [] when git cannot answer.
@@ -219,8 +225,14 @@ def _git_edits(root, now, cutoff):
             # put chamnan's own housekeeping at the top of a line whose whole job is to remind
             # somebody what THEY were doing. `_map_is_current_by_git` already excludes the same
             # directory for the same reason, and this is that convention rather than a new idea.
-            ["git", "-C", str(root), "log", "-n", str(SITTING_GIT_COMMITS),
-             "--since=%d" % int(cutoff), "--name-only", "--pretty=format:%ct",
+            # 🐛 [audit-qa 2026-09-22] `core.quotePath` defaults to true, so git C-quotes every
+            # byte above ASCII: a Thai or Japanese filename arrived here as
+            # `"\340\270\243\340\270\262..."` and was handed straight to the hand-off line, which
+            # is prose somebody reads. chamnan ships into other people's repositories, where a
+            # non-English filename is ordinary rather than exotic.
+            ["git", "-c", "core.quotePath=false", "-C", str(root),
+             "log", "-n", str(SITTING_GIT_COMMITS),
+             "--since=%d" % int(cutoff), "--name-only", "--pretty=format:" + _STAMP + "%ct",
              "--", ".", ":(exclude).chamnan"],
             capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
@@ -232,10 +244,17 @@ def _git_edits(root, now, cutoff):
         line = line.strip()
         if not line:
             continue
-        # A commit timestamp is a 10-digit epoch on its own line; anything else is a path. A path
-        # that is all digits is possible, which is why the length is checked and not just isdigit().
-        if len(line) == 10 and line.isdigit():
-            at = int(line)
+        # A commit timestamp arrives behind _STAMP; anything else is a path.
+        #
+        # 🐛 [audit-qa 2026-09-22] The timestamp used to be bare, told apart from a path by being
+        # ten digits long -- and the comment here said the LENGTH was the safeguard against an
+        # all-digit path. It is not: an epoch is exactly ten digits, so a file named `1234567890`
+        # is not an unlikely collision but an exact one. Reproduced: one such file at the root of a
+        # commit was read as a timestamp of February 2009, and every path AFTER it in that commit
+        # then failed the window test and vanished. One bad name silently cost the rest of the
+        # commit, which is the false absence this line is supposed to prevent.
+        if line.startswith(_STAMP) and line[1:].isdigit():
+            at = int(line[1:])
             continue
         if at is not None and cutoff <= at <= now:
             rows.append((at, line))
