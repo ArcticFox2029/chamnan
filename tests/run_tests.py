@@ -38071,6 +38071,155 @@ for _t_f_21 in sorted(_t_tools_21.glob("*")) if _t_tools_21.is_dir() else []:
         _t_wrong_name.append(f"{_t_f_21.name} tells the reader to run {_t_twin}")
 check("...and no tool tells the reader to run a filename that does not exist",
       not _t_wrong_name, saw="\n".join(_t_wrong_name[:4]) or None)
+# ---- 220_a_terse_instruction_never_shortens_the_exact_part.py
+# ---- 220_a_terse_instruction_never_shortens_the_exact_part.py
+# 🐛 [2026-09-22] (self-measured) `reply_style` told the model to drop preamble, prefer tables and
+# use sentence fragments -- and never told it what must NOT be shortened. An instruction to be brief
+# with no exact-part rule is the one way a style instruction does damage: an abbreviated identifier,
+# a reworded error string or a rounded number is worse than the padding it replaced, because the
+# reader cannot tell it happened.
+#
+# The technique came from the terse-output plugins now in the market, and the two rules they get
+# right are the two this had missing: keep code, identifiers, paths, commands, error text and
+# numbers verbatim, and do not re-print what a tool already returned.
+#
+# The second is the larger saving in an agent session and is in none of them as a rule. Measured
+# on this machine, 78,212 de-duplicated requests: output is 7.7% of spend against the input side's
+# 92.3%, so this is tuning a real but minor lever -- which is exactly why it must not cost
+# correctness to pull.
+#
+# Derived over the SET: every style this hook can inject is checked, so a fourth added later cannot
+# be the one that ships without the exact-part rule.
+_t_ws220 = owner_workspace("A terse instruction never shortens the exact part")
+if _t_ws220 is not None:
+    import importlib.util as _iu220
+
+    _t_h220 = ROOT / "hooks" / "chamnan_session_start.py"
+    if not _t_h220.is_file():
+        skip("  [SKIP] reply styles — no chamnan_session_start.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        _t_s220 = _iu220.spec_from_file_location("ss220", str(_t_h220))
+        _t_m220 = _iu220.module_from_spec(_t_s220)
+        _t_s220.loader.exec_module(_t_m220)
+        import workspace as _ws220
+        import tokens as _tk220
+
+        _t_styles220 = getattr(_t_m220, "REPLY_STYLES", {})
+        check("EVERY REPLY STYLE SAYS WHAT MUST NOT BE SHORTENED",
+              _t_styles220 and all("Never abbreviate" in v for v in _t_styles220.values()),
+              saw="style(s) with no exact-part rule: %s — an instruction to be brief that does not "
+                  "protect code, identifiers, paths, errors and numbers is the one way a style "
+                  "instruction causes harm"
+                  % sorted(k for k, v in _t_styles220.items() if "Never abbreviate" not in v))
+        check("...and each names the categories rather than gesturing at them",
+              all(all(w in v for w in ("identifiers", "paths", "error", "numbers"))
+                  for v in _t_styles220.values()),
+              saw="'keep technical things exact' is advice; the list is a rule")
+        check("...and each forbids re-printing what a tool already returned",
+              all("re-print what a tool" in v for v in _t_styles220.values()),
+              saw="in an agent session that echo is a larger saving than any adjective, and it is "
+                  "in none of the market's styles as a rule")
+
+        # The lever stays OFF by default. Imposing a voice on every user of a context tool is not
+        # this package's call, and the existing check at another site pins the same thing -- this
+        # one is here so the two cannot drift apart silently.
+        check("...and the lever is still off unless somebody asks for it",
+              _ws220.DEFAULT_CONFIG.get("reply_style") == "off",
+              saw="defaulting a style on changes the voice of every session without being asked")
+
+        # Cost, stated rather than assumed: this is injected once per session when set.
+        _t_cost220 = {k: _tk220.estimate(v) for k, v in _t_styles220.items()}
+        check("...and no style costs more than a small fraction of the block",
+              all(c <= 400 for c in _t_cost220.values()),
+              saw="injected cost per style: %s — the block's own ceiling is what this competes with"
+                  % {k: round(c) for k, c in _t_cost220.items()})
+        print("      %d style(s), injected cost %s tokens"
+              % (len(_t_styles220), {k: round(c) for k, c in _t_cost220.items()}))
+# ---- 221_both_bulk_read_branches_name_the_replay.py
+# ---- 221_both_bulk_read_branches_name_the_replay.py
+# 🐛 [2026-09-22] (self-measured) The long-read notice has two branches -- one for a file that looks
+# generated, one for a file that is merely large -- and only the second said that every later turn
+# in the session is charged for the file again. The comment directly above them says "Both call
+# sites take it, not one -- the half-applied fix is this repository's most repeated defect", and
+# the very next change to the same function half-applied itself.
+#
+# The replay fact is the only part of that notice that changes a decision. A size alone reads as
+# advice about tidiness; "you will pay this on every turn from here" is a cost.
+#
+# Measured over 78,236 de-duplicated requests on this machine, which is what the wording now
+# quotes: the median request already carries 438,681 cached tokens, 43.8% of requests carry over
+# 500,000, and those are 70.2% of all cache_read -- 81.6% of spend. One avoided 106,593-token read
+# is worth $3.26 over a hundred turns; chamnan's whole session block over the same hundred turns
+# costs $0.14. The lever that matters is not the size of the block.
+#
+# Derived over the branches rather than asserted on one: the notice is built once and both strings
+# are checked, so a third branch added later cannot be the one that ships without the cost in it.
+_t_ws221 = owner_workspace("Both bulk-read branches name the replay")
+if _t_ws221 is not None:
+    import ast as _ast221
+
+    _t_p221 = ROOT / "hooks" / "chamnan_bulk_read_notice.py"
+    if not _t_p221.is_file():
+        skip("  [SKIP] bulk-read notice — no chamnan_bulk_read_notice.py")
+    else:
+        _t_src221 = _t_p221.read_text(encoding="utf-8", errors="replace")
+        try:
+            _t_tree221 = _ast221.parse(_t_src221)
+        except SyntaxError:
+            _t_tree221 = None
+
+        if _t_tree221 is None:
+            check("the bulk-read notice parses", False, saw="cannot judge an unparseable hook")
+        else:
+            # Every f-string assigned to `note`, which is the variable the emitted text comes from.
+            _t_notes221 = []
+            for _t_n221 in _ast221.walk(_t_tree221):
+                if not isinstance(_t_n221, _ast221.Assign):
+                    continue
+                if not any(isinstance(t, _ast221.Name) and t.id == "note"
+                           for t in _t_n221.targets):
+                    continue
+                # A branch that DELEGATES (`note = _document_notice(...)`) is that function's
+                # business, not this sweep's -- it is a different notice about a different concern
+                # and it carries its own advice. Only the branches that BUILD the text here are
+                # judged. The first version of this check flagged the delegating one and was
+                # over-reaching, which is the same false-positive shape it exists to prevent.
+                if isinstance(_t_n221.value, _ast221.Call):
+                    continue
+                # 🐛 The first version of this collected only `Constant` strings out of the
+                # f-string, and `{_carried}` is a FormattedValue holding a Name -- so every branch
+                # read as missing the clause it actually interpolates. The SOURCE segment is what
+                # shows an interpolation at all.
+                _t_seg221 = _ast221.get_source_segment(_t_src221, _t_n221.value) or ""
+                _t_notes221.append(_t_seg221)
+
+            check("THE NOTICE HAS MORE THAN ONE BRANCH, WHICH IS WHY THIS IS A SWEEP",
+                  len(_t_notes221) >= 2,
+                  saw="found %d assignment(s) to `note` — if the scan finds one, it is broken "
+                      "rather than the hook being simple" % len(_t_notes221))
+
+            # The replay clause is built once and interpolated, so the branches cannot disagree.
+            # Either every branch carries the literal, or every branch carries the same variable.
+            _t_missing221 = [i for i, t in enumerate(_t_notes221)
+                             if "later turn" not in t and "{_carried}" not in t
+                             and "_carried" not in t]
+            check("...AND EVERY BRANCH SAYS THE FILE IS CHARGED AGAIN ON EVERY LATER TURN",
+                  not _t_missing221,
+                  saw="branch(es) %s report a size and no cost — a size reads as advice about "
+                      "tidiness, and the replay is the only part that changes a decision"
+                      % _t_missing221)
+
+            check("...and the clause exists in one place, so two branches cannot drift apart",
+                  _t_src221.count("_carried = (") == 1,
+                  saw="the wording is repeated per branch, which is how one of them ends up "
+                      "without it — the defect this check was written after")
+
+            # And it names a number rather than gesturing at scale.
+            check("...and it quotes a measured figure, not an adjective",
+                  "400,000 cached tokens" in _t_src221,
+                  saw="'this is expensive' is not a reason; the median request on real sessions "
+                      "carrying over 400,000 cached tokens is")
 # ---- 22_a_second_entry_does_not_overwrite_the_first.py
 # ------------------------------------------- one of four stores had the guard
 # 🐛 [2026-09-09] Every store here builds a filename by truncating an ASCII reduction of the title —
