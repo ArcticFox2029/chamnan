@@ -75,8 +75,16 @@ procedure giving up — and pretending to a number you could not count is the on
 A threshold nobody has tested is a guess with a number on it.
 
 Find a case where the answer is already known and check the band lands right. Where there is no
-such case, **plant one**: a repository that has the defect, a file that names a path that has gone,
-a credential in a corpus. Then break it the other way and confirm the band moves.
+such case, **build one**: a repository that has the defect, a file that names a path that has gone.
+Then break it the other way and confirm the band moves.
+
+**A credential-shaped fixture is the one case with a hard boundary, and it is not a style rule.**
+Build it in a throwaway directory outside any repository, or in a corpus repository that exists for
+the purpose — **never in a tracked file, and never anything that can be pushed.** GitHub's secret
+scanning forwards a live-looking key to the provider within minutes of it reaching a remote, and the
+account that owns it is marked. A test fixture is not worth that, and the damage is not yours to
+undo. If a threshold can only be tested with a real-looking key, test it against a corpus somebody
+built for testing rather than against the repository you are working in.
 
 > A threshold that has never been seen to reject anything has not been tested, only run.
 

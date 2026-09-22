@@ -8,10 +8,12 @@ forgotten in the identical ones beside it. A plain text search gives every line 
 name -- the docstring, the import, a string literal, a comment, a method of the same name, a local
 variable that shadows it -- and the ones that matter are somewhere in that list.
 
-**Python only, and it says so.** A declaration has a fixed shape and the adapters read twenty-two
-languages of them; a call site does not, and a pattern sweep for one across twenty-two languages is
-a false-positive machine. Files it could not judge are COUNTED, because a silent omission is how a
-partial answer becomes a wrong one.
+**Exact for Python, lexical for twenty more, and every answer says which.** Python has a parser.
+The others get their comments and string literals removed and then a word-boundary match, which is
+not a parser and is measurably better than a text search: 34.6% of a text search's lines on a
+530-file, 21-language corpus were comment or string text. Interpolated code is kept, because
+`"${target()}"` is a real use. Files it could not judge are COUNTED, because a silent omission is
+how a partial answer becomes a wrong one.
 
 🐛 [2026-09-22] (self-measured) A `--grep` flag printed the same query's plain-text hit count beside
 the answer, which made the difference vivid. It is gone: the README tells an auditor that this
@@ -36,6 +38,18 @@ TAKES_VALUE = ()
 TAKES_REST = ()
 
 
+def _scope(how):
+    """One sentence saying how the answer was reached, in the reader's terms rather than ours."""
+    exact, lex = how.get("exact", 0), how.get("lexical", 0)
+    if lex and exact:
+        return (f"{exact} Python file(s) read by a parser; {lex} file(s) in other languages by a "
+                f"lexical scan — comments and strings excluded, declarations not distinguished.")
+    if lex:
+        return (f"{lex} file(s) read by a lexical scan — comments and strings excluded, "
+                f"declarations not distinguished. Not a parser.")
+    return f"{exact} Python file(s), read by a parser."
+
+
 def main(argv):
     if ws.wants_version(argv):
         print(ws.version_line())
@@ -51,9 +65,13 @@ def main(argv):
 
     symbol = argv[0]
     root = ws.find_root() or Path(os.getcwd())
-    hits, unjudged = refs.find(root, symbol)
+    hits, unjudged, how = refs.find(root, symbol)
+    # Which method reached the answer is part of the answer, and it is said whether or not anything
+    # was found: "no use, and every file was read by a parser" and "no use, and 400 files were read
+    # by a scanner that cannot see through a heredoc" are different claims.
+    scope = _scope(how)
     if not hits:
-        print(f"chamnan: no use of `{symbol}` in any Python file under {Path(root).name}/.")
+        print(f"chamnan: no use of `{symbol}` under {Path(root).name}/. {scope}")
         if unjudged:
             print(f"  {unjudged} file(s) could not be judged, so this is not a proof of absence.")
         return 0
@@ -62,9 +80,12 @@ def main(argv):
     for rel, line, kind in hits:
         by_kind.setdefault(kind, []).append(f"{rel}:{line}")
     print(f"chamnan: {len(hits)} use(s) of `{symbol}`")
-    for kind in ("def", "call", "attribute"):
+    # `use` last and named for what it is: the lexical scanner cannot tell a declaration from a
+    # call, and printing one under "call" would send a reader looking for a caller.
+    for kind in ("def", "call", "attribute", "use"):
         for one in by_kind.get(kind, []):
             print(f"  {kind:9} {one}")
+    print(f"  {scope}")
     if unjudged:
         print(f"  ({unjudged} file(s) too large or unparseable — not judged, not absent)")
     return 0
