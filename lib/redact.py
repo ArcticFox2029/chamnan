@@ -3832,6 +3832,33 @@ def for_a_terminal(text):
     return text.translate(_TERMINAL_SAFE)
 
 
+def mixed_script_segment(text):
+    """The first path segment mixing two scripts, or None. Detection only — nothing is rewritten.
+
+    🐛 [2026-09-22] (R19) `for_a_terminal` strips bidi overrides and zero-width characters, but a homoglyph swap
+    (Cyrillic 'с' for Latin 'c') comes back byte-identical and reads the same to anything
+    downstream — CVE-2021-42574 and CVE-2021-42694 are exactly this. chamnan prints
+    repository-derived paths into a model's context, so a path differing by one invisible
+    character while reading identically is the exposure.
+
+    Checked per SEGMENT, not over the whole string: 'ไทย/main.py' is Thai in one segment and Latin
+    in another and is completely legitimate here — this repository's corpus is largely Thai. A
+    whole-string check would fire on that and warn on a healthy artifact, which this project
+    refuses.
+    """
+    for segment in re.split(r"[/\\._-]+", text):
+        scripts = set()
+        for ch in segment:
+            if not ch.isalpha():
+                continue
+            name = unicodedata.name(ch, "")
+            if name:
+                scripts.add(name.split()[0])
+        if len(scripts) > 1:
+            return segment
+    return None
+
+
 def emit(*args, **kwargs):
     """`print`, with every string argument scrubbed first. Meant to SHADOW the builtin.
 
