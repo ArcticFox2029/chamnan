@@ -234,8 +234,8 @@ def _git_edits(root, now, cutoff):
              "log", "-n", str(SITTING_GIT_COMMITS),
              "--since=%d" % int(cutoff), "--name-only", "--pretty=format:" + _STAMP + "%ct",
              "--", ".", ":(exclude).chamnan"],
-            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
+    except ws.git_cannot_answer():
         return []
     if out.returncode != 0:
         return []

@@ -477,18 +477,30 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                 with open(p, "r", encoding="utf-8", errors="replace") as fh:
                     body = fh.read()
                 if ext == ".py":
-                    hits = in_source(body, symbol)
-                    how["exact"] += 1
+                    hits, method = in_source(body, symbol), "exact"
                 else:
                     lang = ext_lang[ext]
                     hits = in_text(body, symbol, lang, line_comments.get(lang, ()))
-                    how["lexical"] += 1
+                    method = "lexical"
             except OSError:
                 unjudged += 1
                 continue
             if hits is None:
+                # 🐛 [2026-09-22] (self-measured) The method counter was incremented beside the
+                # call, before this test. `in_source` returns None for a file it cannot parse, so
+                # an unparseable Python file was counted BOTH as answered by the parser and as
+                # unjudged — the two numbers a caller reads to weigh the answer, contradicting
+                # each other about the same file, and `how["exact"] + how["lexical"] + unjudged`
+                # summing to more files than were walked.
+                #
+                # `in_text` has no None return today, so only the Python branch was ever wrong.
+                # The increment still moved to the one place both branches pass through, because
+                # the defect this repository records most often is a fix applied to one member of
+                # a set and forgotten in the identical one beside it — and a lexical scanner that
+                # learns to say "I could not read this" would have arrived pre-broken.
                 unjudged += 1
                 continue
+            how[method] += 1
             rel = os.path.relpath(p, str(root)).replace(os.sep, "/")
             for lineno, kind in hits:
                 found.append((rel, lineno, kind))

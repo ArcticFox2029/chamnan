@@ -630,8 +630,26 @@ def rebuild_map_after_upgrade(root, wsdir, pkg_root, indexed):
     Bounded three ways, because a hook that can hang is worse than a stale index: a size estimate
     that declines the job rather than starting it, a hard timeout, and a latch so a rebuild that
     fails or times out is not retried every session for that version.
+
+    🐛 [2026-09-22] (self-measured) `indexed` arrives as None when the caller could not tell how
+    large the index is, and the size estimate read `... if indexed else 0` — so unknown produced
+    an estimate of zero seconds, sailed through the gate, and the FIRST of those three bounds did
+    not exist on that path. A known index of 1,600 files is declined at 30.4 estimated seconds
+    while an unknown one of any size was attempted with only the 45-second hard timeout behind
+    it: the gamble got bigger exactly where less was known.
+
+    It is not an exotic path either. This function runs only on an index built by an OLDER
+    chamnan, which is precisely when that build's header is most likely to be one this version
+    cannot parse. `map_commits_behind`, forty lines below, states the rule in its own docstring —
+    *"None is not zero, and the caller must not treat it as such"* — and `map_rebuild_cost`
+    follows it by refusing to quote a price it cannot know. This was the third member of that
+    set, and the only one where the mistake is paid for in session-start seconds.
     """
-    est = indexed * MAP_REBUILD_MS_PER_FILE / 1000.0 if indexed else 0
+    if indexed is None:
+        return ("this index was built by an older chamnan, and nothing here could tell how large "
+                "it is, so rebuilding it now could take any amount of time. Run `chamnan-map` "
+                "when it suits you.")
+    est = indexed * MAP_REBUILD_MS_PER_FILE / 1000.0
     if est > MAP_AUTO_REBUILD_MAX_SECONDS:
         return ("this index was built by an older chamnan, which may not have read every language "
                 "this one can. It is big enough that rebuilding is your call: run `chamnan-map`.")
@@ -648,7 +666,8 @@ def rebuild_map_after_upgrade(root, wsdir, pkg_root, indexed):
                 "rebuild it. Run `chamnan-map` when you can.")
     try:
         r = subprocess.run([sys.executable, str(exe)], cwd=str(root), capture_output=True,
-                           text=True, timeout=MAP_AUTO_REBUILD_MAX_SECONDS + 15)
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=MAP_AUTO_REBUILD_MAX_SECONDS + 15)
     except (OSError, subprocess.SubprocessError):
         return ("this index was built by an older chamnan and rebuilding it here did not work. "
                 "Run `chamnan-map` when you can.")
@@ -673,7 +692,8 @@ def map_commits_behind(root, map_path):
             return None
         out = subprocess.run(["git", "-C", str(root), "rev-list", "--count",
                               "%s..HEAD" % m.group(1)],
-                             capture_output=True, text=True, timeout=5)
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=5)
         return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() \
             else None
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -1610,12 +1630,20 @@ def main():
             _pkg_root = Path(__file__).resolve().parents[1]
             _older = map_built_by_older(wsdir / "MAP.md", ws.plugin_version(_pkg_root))
             if _older and ws.notice_due(root, "map-rebuild-%s" % _older[1], times=1):
-                _indexed_now = 0
-                _hm0 = re.search(r"(\d[\d,]*) source file",
-                                 (wsdir / "MAP.md").read_text(encoding="utf-8-sig",
-                                                              errors="replace")[:600])
+                # None, not 0: 0 is a real answer ("this index names no files") and would let
+                # the rebuild run. The header is tried first because it is one small read, then
+                # the section markers, which are what every session is told to grep for and are
+                # therefore the one part of the format that has stayed put across versions --
+                # measured here 2026-09-22 as exactly the header's own figure on both indexes on
+                # this machine (648 and 130). Reading the whole file costs a few milliseconds and
+                # happens once per RELEASE, on the upgrade path only.
+                _indexed_now = None
+                _map_text = (wsdir / "MAP.md").read_text(encoding="utf-8-sig", errors="replace")
+                _hm0 = re.search(r"(\d[\d,]*) source file", _map_text[:600])
                 if _hm0:
                     _indexed_now = int(_hm0.group(1).replace(",", ""))
+                elif "\n## `" in _map_text:
+                    _indexed_now = _map_text.count("\n## `")
                 _why = rebuild_map_after_upgrade(root, wsdir, _pkg_root, _indexed_now)
                 _stale_lines.append(redact.scrub(
                     "_⚠ %s_\n" % _why if _why else
@@ -1952,7 +1980,14 @@ def main():
                     # rather than guessing from a duration. Capped because on a two-week gap this
                     # would name most of the tree, which is noise wearing the costume of a signal.
                     if edited and not what:
-                        _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in edited[:3])
+                        # 🐛 (self-measured) These are filenames straight out of `git log`, and
+                        # they went into the block unscrubbed. A path is not inert text here:
+                        # `aws_AKIA....pem` or a branch directory named after a token is an
+                        # ordinary thing to find in somebody else's repository, and this line is
+                        # read by the model. Scrubbed at the point it is read, which is the rule
+                        # the rest of this hook already follows.
+                        _shown = ", ".join(f"`{mdblock.as_quoted(redact.scrub(str(e)))}`"
+                                           for e in edited[:3])
                         _more = f" _+{len(edited)-3} more_" if len(edited) > 3 else ""
                         what = f"**{len(edited)} file(s) changed since** — {_shown}{_more}. "
                     # Scrubbed like every sibling section. It was the one warning built from
@@ -1987,7 +2022,13 @@ def main():
                     if _far:
                         _how_far = f"built {_behind_commits} commits ago"
                     else:
-                        _how_far = f"built {ago(behind)} ago"
+                        # 🐛 (self-measured) Was `f"built {ago(behind)} ago"`, and `ago()` already
+                        # ends its own string with "behind" — so every stale index in every
+                        # repository was announced as "built 2 seconds behind ago". User-visible
+                        # on the most common warning this hook prints. The commits branch above
+                        # supplies its own tail because `ago()` is not involved there; this one
+                        # must not, and the helper owning the word is what the two disagreed on.
+                        _how_far = f"built {ago(behind)}"
                     # The request, and only the request, is rationed. It rebuilds nothing: the same
                     # rule the update banner above states -- a tool that acts because somebody
                     # opened a session is doing something they did not ask for.
