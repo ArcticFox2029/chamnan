@@ -29,6 +29,7 @@ import unicodedata
 from pathlib import Path
 import workspace as ws
 import mdblock
+import pointer
 import state
 
 # 🐛 [2026-09-09] Three here, and FOUR in the two loops below and in `pointer.py`'s source list —
@@ -457,7 +458,35 @@ def rules_text(root, refuse_conflicts=False):
         if refuse_conflicts and unresolved_conflict(body):
             continue
         _read.append((path, body))
+    # 🎯 [owner 2026-09-22] One more term, between the pin and the clock: how often the file
+    # pointer has NAMED this rule for a file somebody was actually working on. The owner's frame is
+    # that these are the SECONDARY rules — `CLAUDE.md` governs on top of them anyway — so what
+    # belongs in front of the agent is the set that pairs with the recent work, and the rest wait
+    # in the store to be called.
+    #
+    # It also answers the failure recorded four comments up. Newest-first is a fair tie-break and a
+    # poor importance signal: `the-set-not-the-member.md` is this repository's most-recorded defect
+    # AND the rule the pointer names more often than any other — 27 times against 10 for the next —
+    # and it was arriving as a TITLE ONLY, which its own file blames for the violation twenty hours
+    # after it was written. Recency could never have found it; use does, and the record was already
+    # on disk with nothing reading it.
+    #
+    # Below the pin, never above: a pin is the owner saying this must not be cut, and no amount of
+    # evidence outranks that. Above the clock, because a rule earns its place by governing work
+    # rather than by being written recently. A fresh install has no counts, every value is zero,
+    # and the ordering falls back to exactly what it was — the same property `opens_by_store`
+    # documents for the same reason.
+    # Guarded, because the cost of not guarding is the whole section. `named_counts` reads a log
+    # written by a hook, and this runs inside the one code path that must never fail a session: a
+    # raise here reaches the SessionStart hook's own catch, which swallows it, and the session then
+    # starts with no rules at all and nothing saying why. An ordering hint is not worth that, so a
+    # broken log degrades to no evidence — which is the same answer a fresh install gives.
+    try:
+        _named = pointer.named_counts(root)
+    except Exception:      # noqa: BLE001 — see above; an ordering hint may never cost the section
+        _named = {}
     _read.sort(key=lambda pb: (not state.pinned(pb[1]),
+                               -_named.get(pb[0].name, 0),
                                -mtime_or_zero(pb[0]), pb[0].name))
     rule_paths = [path for path, _b in _read]
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
