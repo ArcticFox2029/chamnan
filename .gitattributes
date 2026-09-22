@@ -32,6 +32,7 @@ bin/chamnan-recall      text eol=lf
 bin/chamnan-schedule    text eol=lf
 bin/chamnan-setup       text eol=lf
 bin/chamnan-timeline    text eol=lf
+bin/chamnan-where        text eol=lf
 
 # cmd.exe is the one reader here that WANTS CRLF, and a `.cmd` file with bare LF has been reported
 # to mis-parse multi-line blocks on some Windows builds. Stated rather than left to the default.

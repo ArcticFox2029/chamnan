@@ -110,7 +110,15 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
     elsewhere.
     """
     found, unjudged = [], 0
-    for base, dirs, names in os.walk(str(root)):
+
+    def _unreadable(err):
+        # Without this a directory the walk cannot open is simply ABSENT from the result, and the
+        # caller counts what it got as what is there -- the false all-clear this module's own
+        # `unjudged` count exists to prevent, one level further out.
+        nonlocal unjudged
+        unjudged += 1
+
+    for base, dirs, names in os.walk(str(root), onerror=_unreadable):
         dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
         for name in names:
             if not name.endswith(".py"):

@@ -37792,6 +37792,208 @@ if _t_ws217 is not None:
                   _t_w217("src/notes.txt", "d217-e") == "")
 
             _sh217.rmtree(str(_t_r217.parent), ignore_errors=True)
+# ---- 218_advice_names_only_what_the_reader_has.py
+# ---- 218_advice_names_only_what_the_reader_has.py
+# 🐛 [2026-09-22] (self-measured) The long-document notice told every reader to run
+# `.chamnan/tools/read_agent_report.py` and `local_assist.ask()`, and cited a rule file by path.
+# All three exist in the repository chamnan was developed in and in no other install. So every user
+# who is not the author was told, on every long document, to run a script they do not have.
+#
+# It is the second of a pair found the same day. The sibling -- a hook reaching for chamnan at this
+# repository's own checkout layout -- merely went SILENT everywhere else, which is why it survived
+# so long. This one is loud and wrong: a reader who follows chamnan's own advice gets an error.
+#
+# Both are the same class, so this checks the POPULATION rather than the two instances: every
+# string a hook emits to a reader, scanned for a workspace path or a module that an install may not
+# have. Comments and docstrings are excluded -- they are notes to whoever edits the file, not advice
+# the user is given, and demanding portability of a comment produces filler.
+_t_ws218 = owner_workspace("Advice names only what the reader has")
+if _t_ws218 is not None:
+    import ast as _ast218
+    import json as _js218
+    import subprocess as _sp218
+    import tempfile as _tf218
+    import pathlib as _pl218
+    import shutil as _sh218
+    import re as _re218
+
+    # 🐛 [2026-09-22] (self-measured) A broad string scan was written here first and removed on its
+    # own first run. It flagged the GUARDED mentions -- the ones inside `if ... is_file()`, which a
+    # string scan cannot see -- and it flagged `.chamnan/tools/` in the promote nudge, which is a
+    # directory every install has. Two false positives out of four hits. "An AST check cannot see
+    # through a helper" is recorded here by name, and this was the same shape.
+    #
+    # What survives is the one literal with no legitimate use in emitted text: `local_assist` is
+    # the author's own local-model helper and is not part of chamnan in any install, guarded or
+    # not. Everything else is decided by BEHAVIOUR below, which drives the hook in two
+    # repositories and is strictly better evidence than a scan that cannot see a condition.
+    _t_never218 = "local" + "_assist"        # built, so this file does not match itself
+    _t_bad218 = []
+    for _t_p218 in sorted((ROOT / "hooks").glob("*.py")):
+        try:
+            _t_tree218 = _ast218.parse(_t_p218.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, OSError):
+            continue
+        _t_docs218 = set()
+        for _t_n218 in _ast218.walk(_t_tree218):
+            if isinstance(_t_n218, (_ast218.Module, _ast218.FunctionDef, _ast218.AsyncFunctionDef,
+                                    _ast218.ClassDef)):
+                _t_d218 = _ast218.get_docstring(_t_n218, clean=False)
+                if _t_d218:
+                    _t_docs218.add(_t_d218)
+        for _t_n218 in _ast218.walk(_t_tree218):
+            if not isinstance(_t_n218, _ast218.Constant) or not isinstance(_t_n218.value, str):
+                continue
+            if _t_n218.value in _t_docs218 or len(_t_n218.value) < 12:
+                continue
+            if _t_never218 in _t_n218.value:
+                _t_bad218.append("%s:%d" % (_t_p218.name, _t_n218.lineno))
+
+    check("NO NOTICE NAMES THE AUTHOR'S OWN LOCAL-MODEL HELPER",
+          not _t_bad218,
+          saw="emitted at %s — it is not part of chamnan in any install, so a reader who follows "
+              "that advice gets an error" % ", ".join(_t_bad218))
+
+    # And the behaviour, because a string scan cannot see a guard: the same document in a plain
+    # repository and in one that HAS the local tooling must produce different advice, and the plain
+    # one must name a command that ships.
+    if not _sh218.which("git"):
+        skip("  [SKIP] portable advice — no git")
+    else:
+        _t_r218 = _pl218.Path(_tf218.mkdtemp()) / "user"
+        (_t_r218 / ".chamnan" / "logs").mkdir(parents=True)
+        _t_doc218 = _t_r218 / "notes.md"
+        _t_doc218.write_text("# Notes\n" + "a line of prose\n" * 3000, encoding="utf-8")
+
+        def _t_fire218(root, doc, sess):
+            _t_res218 = _sp218.run(
+                [sys.executable, str(ROOT / "hooks" / "chamnan_bulk_read_notice.py")],
+                input=_js218.dumps({"session_id": sess, "tool_name": "Read",
+                                    "tool_input": {"file_path": str(doc)},
+                                    "cwd": str(root), "transcript_path": str(root / "t.jsonl")}),
+                capture_output=True, text=True, cwd=str(root))
+            if "additionalContext" in (_t_res218.stdout or ""):
+                return _js218.loads(
+                    _t_res218.stdout)["hookSpecificOutput"]["additionalContext"]
+            return ""
+
+        _t_plain218 = _t_fire218(_t_r218, _t_doc218, "p218-a")
+        check("...the notice still fires on a long document in a plain repository",
+              bool(_t_plain218),
+              saw="silence here would make every assertion below meaningless")
+        check("...and names a command that ships with the plugin",
+              "chamnan-peek" in _t_plain218,
+              saw="advice a reader cannot act on is not advice: %r" % _t_plain218[:120])
+        # The three things the old notice named unconditionally. Built, not written out.
+        _t_local218 = (".chamnan/" + "tools/", _t_never218, "memory/" + "rules/")
+        check("...and names NOTHING that only the author's workspace has",
+              not any(m in _t_plain218 for m in _t_local218),
+              saw="told a user to use %s, which their install does not contain"
+                  % [m for m in _t_local218 if m in _t_plain218])
+
+        # now give the same repository the local tooling, and it may name it
+        (_t_r218 / ".chamnan" / "tools").mkdir(parents=True, exist_ok=True)
+        (_t_r218 / ".chamnan" / "tools" / "read_agent_report.py").write_text(
+            "# a local reader\n", encoding="utf-8")
+        _t_rich218 = _t_fire218(_t_r218, _t_doc218, "p218-b")
+        check("...and a workspace that DOES have it is told about it",
+              "read_agent_report" in _t_rich218,
+              saw="the guard must be conditional, not a deletion — the tool exists here and the "
+                  "notice should say so: %r" % _t_rich218[:140])
+
+        _sh218.rmtree(str(_t_r218.parent), ignore_errors=True)
+# ---- 219_a_reference_is_not_every_line_that_mentions_it.py
+# ---- 219_a_reference_is_not_every_line_that_mentions_it.py
+# 🐛 [2026-09-22] (self-measured) The tool for this repository's most-recorded defect: a fix applied
+# to one member of a set and forgotten in the identical ones beside it, eighteen recorded instances.
+# The rule `the-set-not-the-member` says to find the whole population and never gave anybody
+# anything to find it with. On 2026-09-21 this session broke that rule twice in one day, and the
+# first time was a grep for `whole_graphemes` by function name that missed two checks reaching it
+# through `mapper._clip`.
+#
+# The cases below are the ones grep cannot tell apart: a docstring, an import, a string literal, a
+# comment, a method of the same name, and a local variable that shadows it. Measured on one module
+# holding all of them plus three real calls -- grep reports nine lines, this reports three.
+#
+# 🐛 And the first real run proved the size cap wrong. At 800,000 bytes `tests/run_tests.py` (2.8 MB)
+# landed in "not judged" -- which is exactly where the references were that the tool exists to find.
+# A cap chosen for cost had hidden the defect it was written for. What saved the claim was that
+# unjudged files are COUNTED: the answer said "1 file not judged" rather than "no references".
+_t_ws219 = owner_workspace("A reference is not every line that mentions it")
+if _t_ws219 is not None:
+    import textwrap as _tw219
+
+    if not (ROOT / "lib" / "refs.py").is_file():
+        skip("  [SKIP] find-references — no lib/refs.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import refs as _r219
+
+        _t_src219 = _tw219.dedent('''
+            """Module doc mentioning target_name in prose."""
+            from other import target_name
+            import other
+
+            NOTE = "call target_name here"
+            # target_name in a comment
+
+            def a(text):
+                return target_name(text)
+
+            def b(text):
+                return other.target_name(text)
+
+            def c():
+                target_name = lambda s: s
+                return target_name("x")
+
+            class K:
+                def target_name(self):
+                    pass
+        ''')
+        _t_hits219 = _r219.in_source(_t_src219, "target_name")
+        _t_lines219 = {ln for ln, _ in (_t_hits219 or [])}
+        _t_grep219 = {i for i, l in enumerate(_t_src219.split("\n"), 1) if "target_name" in l}
+
+        check("A REFERENCE IS NOT EVERY LINE THAT MENTIONS THE NAME",
+              _t_hits219 is not None and len(_t_hits219) < len(_t_grep219) / 2,
+              saw="found %s against grep's %d line(s) — if these are the same number the module is "
+                  "doing what grep does" % (_t_hits219, len(_t_grep219)))
+        check("...the two real calls are found, bare and attribute",
+              {10, 13} <= _t_lines219,
+              saw="lines found: %s; 10 is a bare call and 13 an attribute call" % sorted(_t_lines219))
+        check("...A SHADOWED LOCAL OF THE SAME NAME IS NOT A REFERENCE",
+              17 not in _t_lines219,
+              saw="line 17 calls a local lambda that happens to share the name — reporting it is "
+                  "the difference between an answer and a list of coincidences")
+        check("...and the docstring, import, string and comment are not references",
+              not ({2, 3, 6, 7} & _t_lines219),
+              saw="mentions at %s were counted as uses" % sorted({2, 3, 6, 7} & _t_lines219))
+        check("...and a definition is reported as a definition, not as a call",
+              any(k == "def" for _, k in (_t_hits219 or [])),
+              saw="the method of the same name is a def; calling it a call would send a reader "
+                  "looking for a caller that is not there")
+
+        # unparseable is not absence, and that distinction is the whole honesty of the answer
+        check("...and a file that cannot be parsed returns None, never an empty list",
+              _r219.in_source("def (((:\n", "target_name") is None,
+              saw="an empty list from a broken parse reads as 'no references', which is the false "
+                  "all-clear this package refuses elsewhere")
+
+        # the cap has to be large enough for this repository's own suite, which is where the
+        # references that started all this actually live
+        _t_suite219 = ROOT / "tests" / "run_tests.py"
+        if _t_suite219.is_file():
+            check("...and the size cap does not exclude this package's own suite",
+                  _t_suite219.stat().st_size <= _r219.MAX_BYTES,
+                  saw="the suite is %d bytes against a %d cap — it would be reported as 'not "
+                      "judged', and it is exactly where the references this tool was written for "
+                      "were found" % (_t_suite219.stat().st_size, _r219.MAX_BYTES))
+
+        _t_cmd219 = ROOT / "bin" / "chamnan-where"
+        check("...and the command that exposes it ships",
+              _t_cmd219.is_file(),
+              saw="a capability with no way to ask for it is one nobody finds")
 # ---- 21_a_name_may_open_with_a_digit_and_a_tool_has_one_name.py
 # ------------------------------------------- two defects found by USING a store nobody had filled
 # 🐛 [2026-09-09] `.chamnan/environments.md` — the store whose module docstring calls it "the
