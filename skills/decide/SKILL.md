@@ -138,6 +138,18 @@ assert_that("<the property, as a sentence that is true when it passes>", not off
 to fail has been run, not tested. If breaking it is impractical, assert the inverse in the same
 breath — `assert_that("...", A and not B)` — so a change in either direction is caught.
 
+**And the half everybody skips: show it can go GREEN for the right reason.** Red proves the guard
+reacts to something; it does not prove it reacts to the thing you meant, and a guard that can only
+ever fail is indistinguishable from a broken measurement. So keep a known-good case beside the
+broken one and check it passes — the same shape a benchmark calls an *oracle*, a solution shipped
+with the task so that "nobody can pass this" and "the scorer is broken" stop looking identical.
+
+    assert_that("<the property>", holds(known_bad) is False)   # it can go red
+    assert_that("<the property>", holds(known_good) is True)   # ...for the right reason
+
+The cheap version costs one extra line: whenever you build a fixture that the guard should reject,
+build its twin that it should accept, and assert both.
+
 Four traps, each of which has produced a guard that passed while measuring nothing:
 
 - **searching a whole document** for a name that appears in it twice — slice to the region first
