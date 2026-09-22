@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""chamnan-vs — what this repository costs a model three ways, measured on this tree right now.
+
+    chamnan-vs            the three numbers
+    chamnan-vs --json     the same, for a script
+
+Every tool in this space publishes a ratio. None of them ships the command that re-derives it on
+YOUR repository, so the figure a reader gets is always somebody else's tree. This prints three
+numbers for the tree it is run in:
+
+* **packed whole** — every source file the index knows about, concatenated, as a model would
+  receive it. The cost of "give it everything".
+* **chamnan's block** — what this plugin actually injects at session start.
+* **the largest file, peeked** — what `chamnan-peek` returns for the biggest file here, against
+  what that file costs read whole.
+
+**It names no other tool, and that is deliberate.** A reader gains nothing from a competitor's
+name: they gain from knowing what their own repository costs. Naming one turns a measurement into
+an argument about whether the comparison was fair, and the numbers below apply whatever they are
+comparing against.
+
+**What it does not claim.** That a smaller number is a better outcome. Context that is absent
+cannot be wrong, and context that is present can still be the wrong context — this repository's own
+research found related-but-non-answering material costing up to 24 accuracy points while random
+material helped. These are costs, not scores, and the only honest use of them is to decide what you
+are willing to spend.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import fit                                                            # noqa: E402
+import mapper                                                         # noqa: E402
+import peek as peek_mod                                               # noqa: E402
+import redact                                                         # noqa: E402
+import tokens                                                         # noqa: E402
+import workspace as ws                                                # noqa: E402
+
+# Every other command in this package shadows `print` so repository text cannot carry a credential
+# or a control sequence into a terminal. This one prints filenames from the tree, so it does too.
+print = redact.emit                                                   # noqa: A001
+
+KNOWN_FLAGS = ("--json",)
+TAKES_VALUE = ()
+TAKES_REST = ()
+# A file big enough that reading it whole is the decision this tool is about. Below it the question
+# does not arise and naming a 40-line module as "the largest" would be noise.
+MIN_INTERESTING_BYTES = 2_000
+
+
+def _packed(root, files):
+    """(tokens, file count, bytes) for every indexed source file concatenated.
+
+    🐛 Both loops here branched on the `os.path` absolute-path test before indexing, and the
+    package's Windows sweep failed them on both lines: from Python 3.13 that function no longer
+    calls a single leading slash absolute on Windows, so its answer changes inside the range
+    chamnan supports. The branch was also defending against a case that cannot occur —
+    `mapper.scan` builds every row's path as `relative_to(root).as_posix()` at one site, and
+    `chamnan-map` consumes them the same way — so the fix was to delete the branch rather than to
+    respell the test. The name is described here rather than written, because the sweep reads
+    source text and a comment quoting the removed call fails the check that removed it.
+    (self-measured)
+
+    Estimated per file and summed rather than built as one string: a monorepo would be hundreds of
+    megabytes, and the number is wanted, not the document.
+    """
+    total = count = size = 0
+    for f in files:
+        p = root / f["path"]
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        total += int(tokens.estimate(text))
+        size += len(text.encode("utf-8", "replace"))
+        count += 1
+    return total, count, size
+
+
+def _block_cost(root):
+    """(tokens, how it was measured). The reader's own block where there is a record of one.
+
+    `logs/block_shape.jsonl` holds what this workspace actually injected, firing by firing, so a
+    repository with history answers with its own median. A fresh install has none, and rather than
+    convert the byte ceiling into a token figure with a ratio nobody measured, it returns None and
+    says the bound in bytes. Reporting a guess as a measurement would be the thing this whole
+    command exists to argue against.
+    """
+    rows = []
+    try:
+        log = ws.workspace(root) / "logs" / "block_shape.jsonl"
+        with log.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if isinstance(rec, dict) and rec.get("tok"):
+                    rows.append(int(rec["tok"]))
+    except (OSError, ValueError):
+        rows = []
+    if len(rows) >= 5:
+        rows.sort()
+        return rows[len(rows) // 2], "median of %d recorded session(s)" % len(rows)
+    # 🐛 The first version converted the byte ceiling to tokens with a chars-per-token constant
+    # that does not exist in `tokens` — it weighs every character by script rather than assuming a
+    # ratio, which is the whole reason it is not a division. Inventing one to keep the units tidy
+    # would have put a fabricated number in the one command whose argument is that published
+    # figures are not re-derivable. Reported in bytes, labelled, and the caller says why.
+    return None, "bounded at %s bytes; no sessions recorded here yet" % f"{fit.CEILING:,}"
+
+
+def _largest(root, files):
+    """The biggest indexed file worth peeking, with what it costs whole and peeked."""
+    best = None
+    for f in files:
+        p = root / f["path"]
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        if size < MIN_INTERESTING_BYTES:
+            continue
+        if best is None or size > best[1]:
+            best = (p, size, f["path"])
+    if best is None:
+        return None
+    path, size, rel = best
+    try:
+        # int, not the raw estimate: `tokens.estimate` weighs characters by script and
+        # returns a float, and thirteen decimal places on a token count reads as precision the
+        # measurement does not have.
+        whole = int(tokens.estimate(path.read_text(encoding="utf-8", errors="replace")))
+        shaped = int(tokens.estimate(peek_mod.peek(path) or ""))
+    except (OSError, ValueError):
+        return None
+    return {"path": str(rel), "bytes": size, "whole": whole, "peeked": shaped}
+
+
+def main(argv):
+    bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if bad:
+        print(f"chamnan-vs: unknown flag {bad[0]} — try --help", file=sys.stderr)
+        return 2
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+
+    root = ws.find_root() or Path(os.getcwd())
+    # 🐛 (self-measured) This printed its own wording for "there is nothing here yet", and the
+    # suite failed it: eight other commands say one sentence, and a ninth saying the same thing
+    # differently is a person learning the same fact twice. Asked BEFORE the scan, too — walking a
+    # tree to discover there is no workspace is work done to produce a message that did not need
+    # it, and on a large tree it is the slow way to say nothing.
+    if not ws.workspace(root).is_dir():
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
+        return 1
+    files = mapper.scan(root)
+    if not files:
+        print(f"chamnan: no indexed source files at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
+        return 1
+
+    packed, count, size = _packed(root, files)
+    block, how = _block_cost(root)
+    big = _largest(root, files)
+
+    if "--json" in argv:
+        # 🐛 [found by 233, its own check] This printed through the shadowed `print`, and the
+        # redactor read the packed-token entry for what its SHAPE is — a secret word in the
+        # key, a separator, a long opaque value — and replaced the count with a placeholder. The
+        # document stopped being JSON. The redactor was right: `"api_tokens": <value>` is
+        # indistinguishable from this, and a rule that let it through to keep one command tidy
+        # would be a hole in every other one.
+        #
+        # So the repo-derived half is scrubbed where it comes IN, and only that half: `path` is the
+        # one string here that came out of the tree. The counts were computed in this process and
+        # are nobody's credential. `emit_prescrubbed` still strips control characters, which is the
+        # other half of what the shadow was doing and the half that a filename can still carry.
+        if big:
+            big = dict(big, path=redact.scrub(str(big["path"])))
+        redact.emit_prescrubbed(
+            json.dumps({"packed_tokens": packed, "files": count, "bytes": size,
+                        "block_tokens": block, "block_basis": how, "largest": big}, indent=2))
+        return 0
+
+    print(f"chamnan: {Path(root).name} — {count:,} indexed source file(s), "
+          f"{size / 1e6:.1f} MB")
+    print("")
+    print(f"  packed whole        {packed:>12,} tokens   every file, concatenated")
+    if block is None:
+        print(f"  chamnan's block     {'—':>12}          {how}")
+    else:
+        print(f"  chamnan's block     {block:>12,} tokens   {how}")
+    if big:
+        share = 100 * big["peeked"] / big["whole"] if big["whole"] else 0
+        print(f"  largest file whole  {big['whole']:>12,} tokens   {big['path']}")
+        print(f"  ...the same, peeked {big['peeked']:>12,} tokens   {share:.1f}% of it")
+    print("")
+    # Said in the reader's terms, and only about what was measured. The ratio is arithmetic on
+    # their own two numbers; whether the smaller one is enough for their task is not something this
+    # command can know, and pretending otherwise is the failure it was written against.
+    if packed and block:
+        print(f"  The block is {packed / block:,.0f}x smaller than the whole tree, and it is "
+              f"bounded: it does not grow as the repository does.")
+    elif packed:
+        print("  The block is bounded and does not grow as the repository does. Run a session "
+              "here and this line becomes a measured ratio instead of a promise.")
+    print("  Whether that is enough for a given task is not a number — measure it on the task.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(ws.never_fail(lambda: main(sys.argv[1:])))
