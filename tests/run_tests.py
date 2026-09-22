@@ -39427,6 +39427,118 @@ if _t_ws230 is not None:
           "except Exception" in _t_src230[_t_src230.find("_older = map_built_by_older"):
                                           _t_src230.find("_older = map_built_by_older") + 2500],
           saw="unguarded — this runs in the one code path that must never fail a session")
+# ---- 231_the_third_search_for_a_name_names_the_command.py
+# ---- 231_the_third_search_for_a_name_names_the_command.py
+# 🐛 [2026-09-22] (owner) The last unbuilt row of 1.30's "the cheap way was already installed"
+# table. The other three were live: a long read names `chamnan-peek`, a third near-identical script
+# names `chamnan-promote`, and work starting on a file the stores already discuss does better than
+# naming anything — `chamnan_skill_pointer` RUNS the recall and shows the answer. This row, a
+# symbol searched for over and over, had nothing.
+#
+# The table said to name `chamnan-impact`. It names `chamnan-where` instead, and following the
+# table would have been the mistake: the table was written before that command existed, and the
+# two answer different questions. `impact` answers "what breaks if I change this"; somebody
+# grepping the same name three times is asking "where is this used".
+#
+# 🐛 And the parser was wrong about the one flag that matters most. `-e` was in the list of flags
+# whose next token gets skipped, which is exactly backwards: its value IS the pattern, so
+# `grep -e validate_token -r .` read as having no symbol in it at all. `-f` genuinely does belong
+# there — it names a FILE of patterns, so nothing on the command line is the thing being searched
+# for, and giving up is the right answer.
+_t_ws231 = owner_workspace("The third search for a name names the command")
+if _t_ws231 is not None:
+    import contextlib as _ctx231
+    import importlib.util as _ilu231
+    import io as _io231
+    import json as _j231
+    import tempfile as _tf231
+    from pathlib import Path as _P231
+
+    _t_hook231 = ROOT / "hooks" / "chamnan_scratch_watch.py"
+    sys.path.insert(0, str(ROOT / "lib"))
+    _t_spec231 = _ilu231.spec_from_file_location("_sw231", str(_t_hook231))
+    _t_m231 = _ilu231.module_from_spec(_t_spec231)
+    try:
+        _t_spec231.loader.exec_module(_t_m231)
+    except SystemExit:
+        pass
+
+    # --- what counts as a search for a NAME, and what deliberately does not -------------------
+    _t_parse231 = [
+        ('grep -rn "handle_login" .', "handle_login", "the ordinary case"),
+        ("rg parse_config src/", "parse_config", "no quotes"),
+        ("grep -e validate_token -r .", "validate_token", "-e's value IS the pattern"),
+        ("rg --regexp handle_login .", "handle_login", "the long form of the same flag"),
+        ("grep --include=*.py handle_login .", "handle_login", "a flag that does consume a value"),
+        ("/usr/bin/grep -rn handle_login .", "handle_login", "an absolute path to the tool"),
+        ("grep -f patterns.txt .", "", "-f names a file of patterns, not a pattern"),
+        ("grep -rn 'def .*login' .", "", "a regex is a shape, not a name"),
+        ('grep -rn "foo|bar" .', "", "alternation is a shape"),
+        ("grep -rn src/app.py .", "", "a path is not a symbol"),
+        ("grep -rn 'ab' .", "", "too short to be a symbol"),
+        ("ls -la", "", "not a search at all"),
+        ('grep -rn "unbalanced .', "", "unbalanced quotes: give up rather than guess"),
+    ]
+    _t_wrong231 = ["%s -> %r want %r (%s)" % (c, _t_m231._searched_symbol(c), w, why)
+                   for c, w, why in _t_parse231 if _t_m231._searched_symbol(c) != w]
+    check("A search for a plain name is recognised, and a search for a shape is not",
+          not _t_wrong231,
+          saw="%s — the empty answers are the load-bearing half: a wrong suggestion is a line the "
+              "reader learns to skip, and this package has a rule about that" % (_t_wrong231,))
+
+    # --- it speaks on the third, and only on the third ----------------------------------------
+    def _t_fire231(mod, wsd, root, cmd, sid="s1"):
+        buf = _io231.StringIO()
+        with _ctx231.redirect_stdout(buf):
+            spoke = mod._repeated_search(
+                {"session_id": sid, "tool_name": "Bash", "tool_input": {"command": cmd}},
+                wsd, root)
+        return spoke, buf.getvalue()
+
+    with _tf231.TemporaryDirectory() as _t_d231:
+        _t_r231 = _P231(_t_d231)
+        _t_wsd231 = _t_r231 / ".chamnan"
+        (_t_wsd231 / "logs").mkdir(parents=True)
+        (_t_wsd231 / "config.json").write_text('{"ledger": true}', encoding="utf-8")
+        _t_said231, _t_text231 = [], ""
+        for _i231 in range(5):
+            _sp231, _out231 = _t_fire231(_t_m231, _t_wsd231, _t_r231,
+                                         'grep -rn "handle_login" .')
+            _t_said231.append(_sp231)
+            if _sp231:
+                _t_text231 = _out231
+        _t_other231, _ = _t_fire231(_t_m231, _t_wsd231, _t_r231, 'grep -rn "other_name" .')
+        _t_newsess231, _ = _t_fire231(_t_m231, _t_wsd231, _t_r231,
+                                      'grep -rn "handle_login" .', sid="s2")
+
+    check("...and it speaks on the third search, not the second and not the fourth",
+          _t_said231 == [False, False, True, False, False],
+          saw="%r — the second time is still a coincidence and the fourth is nagging; this is the "
+              "scratch watcher's own threshold reused rather than a new one" % (_t_said231,))
+    check("...and each name is counted on its own",
+          _t_other231 is False,
+          saw="a different symbol inherited the first one's count, so the notice fires on a term "
+              "nobody has repeated")
+    check("...and a new session starts its count again",
+          _t_newsess231 is False,
+          saw="the count carried across sessions, so the notice arrives about something this "
+              "session has not done")
+
+    # --- it names the command that answers THIS question ---------------------------------------
+    _t_note231 = ""
+    try:
+        _t_note231 = _j231.loads(_t_text231)["hookSpecificOutput"]["additionalContext"]
+    except Exception:
+        _t_note231 = _t_text231
+    check("...and it names chamnan-where, the command that answers where a name is used",
+          "chamnan-where" in _t_note231 and "chamnan-impact" not in _t_note231,
+          saw="said %r — the design table said `chamnan-impact`, which answers what BREAKS if this "
+              "changes; somebody searching the same name three times is asking where it is USED, "
+              "and the table predates the command that answers that" % (_t_note231[:140],))
+    check("...and the notice carries the term the reader actually searched for",
+          "handle_login" in _t_note231,
+          saw="said %r — a suggestion the reader has to translate to their own case is one they "
+              "do not act on" % (_t_note231[:140],))
 # ---- 23_named_as_a_credential_and_never_enforced.py
 # ------------------------------------------- the module named them and redacted none of them
 # 🐛 [2026-09-09] `_CREDENTIAL_PREFIX` lists twenty-two vendor prefixes, and six of them were

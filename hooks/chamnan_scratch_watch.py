@@ -14,6 +14,7 @@ needed parsing would have to understand every language a user might write a scra
 """
 import json
 import re
+import shlex
 import sys
 import time
 from datetime import datetime
@@ -455,6 +456,99 @@ def _environment_notice(payload, wsdir, root):
     return True
 
 
+# A search for a plain name, and nothing else. `grep -rn "handle_login" .` qualifies; a regex, a
+# path, a glob or a two-letter word does not -- the filter is deliberately narrow because the cost
+# of a wrong suggestion is a line somebody learns to skip, and this package has a rule about that.
+_SEARCH_CMD = ("grep", "rg", "ag", "ack", "egrep", "fgrep")
+_PLAIN_IDENT = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{3,}\Z")
+# Flags that consume the next token, so the pattern is not mistaken for their argument. `-e` is
+# NOT among them and must not be: its value IS the pattern, which is the whole point of the flag,
+# and skipping it read `grep -e validate_token -r .` as having no symbol at all. `-f` names a FILE
+# of patterns, so the pattern is not on the command line and giving up is right.
+# `-e` and `--regexp` are absent on purpose and were briefly given a branch of their own before a
+# mutation proved it earned nothing: their value IS the pattern, so simply NOT consuming them
+# leaves the generic "skip the flag, judge the next token" path landing on exactly the right token.
+# The branch was three lines that changed no verdict on any of the thirteen cases in check 231.
+_TAKES_VALUE = ("-f", "-m", "--include", "--exclude", "--glob", "-g", "--type", "-t",
+                "--file", "--max-count", "-A", "-B", "-C")
+
+
+def _searched_symbol(command):
+    """The plain identifier a search command is looking for, or "" when it is not one.
+
+    Deliberately gives up rather than guesses. A pattern carrying regex metacharacters is a search
+    for a SHAPE, not for a name, and `chamnan-where` has nothing better to offer about it; a token
+    holding a path separator is a file to search rather than the thing being searched for. The
+    remaining case -- a bare identifier, four characters or more -- is the one where somebody is
+    tracing a symbol by hand, which is the whole trigger.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return ""          # unbalanced quotes: not something to parse confidently
+    for i, tok in enumerate(parts):
+        # `Path(...).name` rather than `os.path.basename`: this module does not import `os`,
+        # and adding an import for one call is a wider change than the call is worth.
+        if Path(tok).name not in _SEARCH_CMD:
+            continue
+        rest = parts[i + 1:]
+        j = 0
+        while j < len(rest):
+            t = rest[j]
+            if t in _TAKES_VALUE:
+                j += 2
+                continue
+            if t.startswith("-"):
+                j += 1
+                continue
+            return t if _PLAIN_IDENT.match(t) else ""
+        return ""
+    return ""
+
+
+def _repeated_search(payload, wsdir, root):
+    """Say once when the same name has been searched for the third time this session.
+
+    The last of the four rows in 1.30's "the cheap way was already installed" table, and the only
+    one that had no trigger. The other three were built or already existed: a long read names
+    `chamnan-peek`, a third near-identical script names `chamnan-promote`, and work starting on a
+    file the stores already discuss does better than naming anything -- `chamnan_skill_pointer`
+    RUNS the recall and shows the answer.
+
+    The table said this row should name `chamnan-impact`. It names `chamnan-where` instead, because
+    the table was written before that command existed and the two answer different questions:
+    `impact` answers "what breaks if I change this", and somebody grepping the same name three
+    times is asking "where is this used", which is the other one.
+
+    `REPEAT_AT` is the scratch watcher's own threshold, reused rather than chosen again: the third
+    time is when a habit is visible and the second is still a coincidence.
+    """
+    if not ws.enabled("ledger", root):
+        return False
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return False
+    term = _searched_symbol(str((payload.get("tool_input") or {}).get("command") or ""))
+    if not term:
+        return False
+    entry = _nudge_read(wsdir, session_id)
+    seen = entry.get("searched") or {}
+    # Counted before the threshold is tested, so the count is the truth whether or not it speaks.
+    seen[term] = int(seen.get(term, 0)) + 1
+    entry["searched"] = seen
+    told = entry.get("searched_told") or []
+    if seen[term] != REPEAT_AT or term in told:
+        _nudge_write(wsdir, session_id, entry)
+        return False
+    entry["searched_told"] = told + [term]
+    _nudge_write(wsdir, session_id, entry)
+    say(f"chamnan: that is the {REPEAT_AT}rd search for `{term}` in this session. "
+        f"`chamnan-where {term}` answers the same question without the comments and string "
+        f"literals a text search returns — exact for Python, lexical for twenty more languages, "
+        f"and it says which of the two it used.")
+    return True
+
+
 def _resume_nudge(payload, wsdir, root):
     """Once per session: if a fair bit of work has already happened here and nothing is recorded
     for today, say so. Silent otherwise -- gated on the same "ledger" flag as the write-skills line
@@ -673,6 +767,12 @@ def main():
     # Independent of the above: this counts every PostToolUse call regardless of tool, so it still
     # runs even when notice_workflow's own checks return early for a non-Bash call.
     if _resume_nudge(payload, wsdir, root):
+        return 0
+
+    # After the nudge and before the scratch fingerprinting: a repeated search is cheaper to be
+    # wrong about than either, and it returns immediately for anything that is not a search, so
+    # the ordinary path pays a `basename` per token and nothing else.
+    if _repeated_search(payload, wsdir, root):
         return 0
 
     text = body_of(payload)
