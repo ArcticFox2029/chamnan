@@ -521,3 +521,50 @@ def note_query(wsdir, session_id, rel_path, pattern=""):
 # By record rather than by date, which is what the exemption promises. One PreToolUse firing per
 # file pointer is a handful a session, so this holds months of them.
 KEEP = 2000
+
+
+def named_counts(root, prefix="memory/rules/"):
+    """{filename: how many times this store file was NAMED for a file somebody was working on}.
+
+    🎯 [owner 2026-09-22] *"it should load only what pairs with the most recent work ... the rules
+    are still important, they are the secondary rules, so keep the others waiting to be called"*.
+    The block carries every rule each session and the largest section is the rules — 35% of a block
+    that is 30 bytes under its ceiling — while `CLAUDE.md` governs on top of them anyway.
+
+    `named` is the right signal and it was already being written. It is not "a session opened this
+    file": it is the file pointer deciding, at the moment somebody touched a source file, that THIS
+    rule governs it. Accumulated over real work that is exactly "what work used which rules", and
+    nothing had ever read it. Measured the day it was first read, over 241 records: 27 for
+    `the-set-not-the-member.md`, 10 for the round-numbering rule, 5 for the extend-a-skill rule.
+
+    That first number is the case for doing this at all. `memory.rules_text` orders by pin then by
+    mtime, and `the-set-not-the-member.md` — this repository's most-recorded defect, and the rule
+    named more often than any other — was arriving as a TITLE ONLY. Its own file records the
+    consequence: it was violated about twenty hours after being written, while unreadable.
+
+    Counts, not recency, for the reason `opens_by_store` gives beside it: a rule that governs work
+    done once a month still governs it. Never raises; no log is no evidence, which is the answer a
+    fresh install gives and which leaves the existing ordering exactly as it was.
+    """
+    out = {}
+    try:
+        path = ws.workspace(root) / EVENT_LOG
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue          # a torn line is one lost record, not a broken feature
+                if not isinstance(rec, dict):
+                    continue
+                for named in (rec.get("named") or []):
+                    rel = str(named).replace("\\", "/")
+                    if rel.startswith(prefix):
+                        name = rel.rsplit("/", 1)[-1]
+                        out[name] = out.get(name, 0) + 1
+    except (OSError, ValueError, RecursionError):
+        return {}
+    return out
