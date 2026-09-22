@@ -1846,39 +1846,39 @@ def main():
                     # A lead line — before the first heading — belongs to no section, so `reorder`
                     # keeps it at the front and nothing can drop it (R5 agent 5, 2026-09-09).
                     # Two tiers, because until now a 42-minute gap and a three-week one said the
-                    # same sentence. The quiet line below is right for the common case and stays
-                    # exactly as it was: it NAMES the missing files, which is something a session
-                    # can act on without deciding anything.
+                    # same sentence.
                     #
-                    # The loud one is for the reader this was actually failing -- somebody who has
-                    # not rebuilt in a long time, for whom listing three filenames is not the
-                    # answer and the real question is whether to spend the rebuild. It says what
-                    # that costs, on their tree, and it is capped at three showings by
-                    # `notice_due`: advice that repeats forever is worse than advice shown once,
-                    # and this one asks for something, which makes repeating it worse still.
-                    #
-                    # It does not rebuild by itself. The same rule the update banner above already
-                    # states: a tool that acts because somebody opened a session is doing something
-                    # they did not ask for, and doing it silently is worse than not doing it.
+                    # 🐛 The first version of this capped the whole loud notice with `notice_due`,
+                    # and `10_offer_fatigue` caught it: *the staleness warning is not the offer and
+                    # must never be capped, because it describes the tree right now and is true
+                    # every time it fires.* That is right, and capping it would have gone silent
+                    # about a stale index while it was still stale -- exactly the reader this tier
+                    # was written for. What may not repeat is the ASK: the cost sentence and the
+                    # request to spend it. So the fact is unconditional and only the request is
+                    # rationed, and after three showings the loud tier degrades to the plain
+                    # factual line rather than to silence.
                     _behind_commits = map_commits_behind(root, wsdir / "MAP.md")
-                    _loud = (_behind_commits is not None
-                             and _behind_commits >= MAP_STALE_COMMITS
-                             and ws.notice_due(root, "map-far-behind"))
-                    if _loud:
+                    _far = (_behind_commits is not None
+                            and _behind_commits >= MAP_STALE_COMMITS)
+                    if _far:
+                        _how_far = f"built {_behind_commits} commits ago"
+                    else:
+                        _how_far = f"built {ago(behind)} ago"
+                    # The request, and only the request, is rationed. It rebuilds nothing: the same
+                    # rule the update banner above states -- a tool that acts because somebody
+                    # opened a session is doing something they did not ask for.
+                    _ask = ""
+                    if _far and ws.notice_due(root, "map-far-behind"):
                         _indexed = 0
                         _hm = re.search(r"(\d[\d,]*) source file", text[:600])
                         if _hm:
                             _indexed = int(_hm.group(1).replace(",", ""))
                         _cost = map_rebuild_cost(_indexed)
-                        _stale_lines.append(redact.scrub(
-                            f"_⚠ This index was built {_behind_commits} commits ago and is no "
-                            f"longer describing this repository. {what}Rebuilding takes "
-                            f"{_cost or 'a moment'} and nothing does it for you — run {fix} when "
-                            f"you want it. Said at most three times._\n"))
-                    else:
-                        _stale_lines.append(redact.scrub(
-                            f"_⚠ Source has changed since this index was built ({ago(behind)}). "
-                            f"{what}Rebuild it with {fix}._\n"))
+                        _ask = (f" Rebuilding takes {_cost} and nothing does it for you."
+                                if _cost else "")
+                    _stale_lines.append(redact.scrub(
+                        f"_⚠ Source has changed since this index was built ({_how_far}). "
+                        f"{what}Rebuild it with {fix}.{_ask}._\n"))
 
                 # Outside the `if behind:` above, and that placement is the fix rather than an
                 # oversight. Both warnings there are gated on an mtime comparison, and deleting or
