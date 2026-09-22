@@ -32,6 +32,7 @@ import edge would ever show. And it is not stored as a derived artefact: the log
 correlation is computed on read, so there is nothing to regenerate, invalidate, or merge.
 """
 import json
+import subprocess
 import workspace as ws
 import time
 from collections import Counter, defaultdict
@@ -187,6 +188,60 @@ SITTING_MAX_AGE_DAYS = 7
 SITTING_MAX_FILES = 5
 
 
+# How far back to look for commits, and how many. Both bound a `git log` on a repository this
+# code knows nothing about: a monorepo with a hundred commits an hour must cost the same as a quiet
+# one. The window matches SITTING_MAX_AGE_DAYS so neither source can report a sitting the other
+# would have aged out.
+SITTING_GIT_COMMITS = 60
+
+
+def _git_edits(root, now, cutoff):
+    """[(at, path)] for files touched by recent commits, or [] when git cannot answer.
+
+    🐛 [2026-09-22] (self-measured) `edits.jsonl` is written from the PostToolUse hook, which fires
+    on Edit and Write. A session that changes files by RUNNING something -- a `sed`, a patch script,
+    a formatter -- writes nothing to it, and Claude Code's own auto mode instructs exactly that
+    ("make file changes with sed, heredocs, or short scripts, rather than using the dedicated
+    Read, Edit, or Write tools"). Measured on the session that found it: the ledger's newest entry
+    was 15.3 hours old while six files had been changed that day, and the hand-off named last
+    night's work as though nothing had happened since.
+
+    git sees a change whatever made it, so it is read as a second source rather than a replacement:
+    the ledger still carries edits that have not been committed, and git carries the ones no tool
+    event ever saw. Merged, not chosen between -- picking the newer source alone would drop
+    uncommitted work the moment anything was committed.
+    """
+    try:
+        out = subprocess.run(
+            # 🐛 The workspace's own bookkeeping is excluded, and without it this answered with
+            # it. `.chamnan/` changes in most commits of any repository that uses chamnan -- a
+            # state file, a tool registry, a check floor -- so ranking by how often a path appears
+            # put chamnan's own housekeeping at the top of a line whose whole job is to remind
+            # somebody what THEY were doing. `_map_is_current_by_git` already excludes the same
+            # directory for the same reason, and this is that convention rather than a new idea.
+            ["git", "-C", str(root), "log", "-n", str(SITTING_GIT_COMMITS),
+             "--since=%d" % int(cutoff), "--name-only", "--pretty=format:%ct",
+             "--", ".", ":(exclude).chamnan"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    rows, at = [], None
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # A commit timestamp is a 10-digit epoch on its own line; anything else is a path. A path
+        # that is all digits is possible, which is why the length is checked and not just isdigit().
+        if len(line) == 10 and line.isdigit():
+            at = int(line)
+            continue
+        if at is not None and cutoff <= at <= now:
+            rows.append((at, line))
+    return rows
+
+
 def last_sitting(wsdir, now=None):
     """(files, seconds_ago) for the most recent unbroken run of edits, newest file first.
 
@@ -227,7 +282,14 @@ def last_sitting(wsdir, now=None):
                 if at >= cutoff and at <= now:
                     rows.append((at, rec["fp"]))
     except OSError:
-        return [], 0
+        rows = []
+    # The other half, which the ledger structurally cannot see -- but only when the ledger looks
+    # incomplete. Measured: 32 ms of the git call is the process spawn alone and cannot be tuned
+    # away, so a session that edits through the Edit and Write tools should not pay it at all. If
+    # the ledger already has something inside the current sitting, it saw this session's work.
+    newest_logged = max((at for at, _ in rows), default=0)
+    if now - newest_logged > SITTING_GAP:
+        rows += _git_edits(wsdir.parent, now, cutoff)
     if not rows:
         return [], 0
     # The log is appended to under a lock, so it is in order -- but a clock that stepped backwards
@@ -239,10 +301,17 @@ def last_sitting(wsdir, now=None):
         if keep[-1][0] - at > SITTING_GAP:
             break
         keep.append((at, fp))
-    files = []
-    for _, fp in keep:                # keep is newest-first; dedupe keeps the newest mention
-        if fp not in files:
-            files.append(fp)
+    # 🐛 Ranked by recency alone, this named whatever the newest commit happened to touch --
+    # `.gitignore`, a tool registry, a generated state file -- while the modules actually being
+    # worked on sat one commit behind. Factually right and useless, which is the failure a
+    # hand-off has: the reader glances at it, recognises nothing they were doing, and stops
+    # reading the line. Ranked by how many times a path appears in the sitting instead: a file
+    # touched once by a tool loses to one edited repeatedly, and recency breaks the ties.
+    hits, seen_at = {}, {}
+    for at, fp in keep:
+        hits[fp] = hits.get(fp, 0) + 1
+        seen_at[fp] = max(seen_at.get(fp, 0), at)
+    files = sorted(hits, key=lambda fp: (-hits[fp], -seen_at[fp], fp))
     return files[:SITTING_MAX_FILES], int(now - newest)
 
 

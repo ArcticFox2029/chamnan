@@ -556,6 +556,36 @@ def _indexable(root):
 
 
 _BUILT_FROM = re.compile(r"\bBuilt from ([0-9a-f]{7,40})\.")
+_BUILT_BY = re.compile(r"\bBuilt by chamnan (\d+)\.(\d+)\.(\d+)\.")
+
+
+def map_built_by_older(map_path, running):
+    """(built_version, running_version) when a NEWER chamnan is reading an older build, else None.
+
+    Not "different" -- older. A downgrade is already reported by `ws.reconcile_version` and means
+    something else entirely; rebuilding on it would hand the user an index built by the version
+    they are trying to step back from.
+
+    Why this is worth a line at all: the commit stamp answers whether the SOURCE moved, and cannot
+    answer whether the build that read it knew how. When the C family was added to the extractors,
+    an already-indexed C project reported zero files and a C++ one six of 142 -- the source had not
+    moved, so nothing was stale by any measure chamnan had, and the index was blind to a whole
+    language. A map with no version in it cannot be asked the question.
+    """
+    if not running:
+        return None
+    try:
+        m = _BUILT_BY.search(map_path.read_text(encoding="utf-8-sig", errors="replace")[:600])
+    except OSError:
+        return None
+    if not m:
+        return None          # built before the stamp existed; unknown, and unknown is not older
+    built = tuple(int(g) for g in m.groups())
+    try:
+        now_v = tuple(int(x) for x in running.split(".")[:3])
+    except ValueError:
+        return None
+    return (".".join(str(x) for x in built), running) if built < now_v else None
 
 
 # How many commits behind the index is before the notice stops being a footnote and becomes a
@@ -568,6 +598,56 @@ MAP_STALE_COMMITS = 20
 # Measured on this repository: 11.9s to rebuild an index of 636 files, so ~19ms per file. Used to
 # say what the rebuild costs on the READER's tree rather than quoting a figure from ours.
 MAP_REBUILD_MS_PER_FILE = 19
+
+
+# An upgrade rebuild is allowed to spend this long and no longer. Above it the session is told
+# instead of made to wait: a repository large enough to cost a minute is one where a slow session
+# start is a worse bargain than an index that is behind on one language, and the reader can spend
+# it when they choose.
+MAP_AUTO_REBUILD_MAX_SECONDS = 30
+
+
+def rebuild_map_after_upgrade(root, wsdir, pkg_root, indexed):
+    """Rebuild the index once, after a NEWER chamnan finds an older build. Returns a line or "".
+
+    **Why this one acts and the update banner does not.** The banner is about the PLUGIN, and a tool
+    that upgrades itself because somebody opened a session is doing something they did not ask for.
+    An index is not that: it is regenerable, it is not a record, and this package's own rules ask
+    for it to be rebuilt without being told. Nothing is lost by rebuilding it and nothing is decided
+    by it.
+
+    **Why not just say so.** That was the first design, and the measurement in this repository
+    refutes it: given a block that NAMES a file worth reading, the agent opened it in 10 of 93
+    sessions. A notice has about a one-in-ten chance of being acted on, and the cost of it not
+    being acted on is an index blind to a whole language -- when the C family was added to the
+    extractors, an already-indexed C project reported zero files and a C++ one six of 142.
+
+    **What it costs, honestly.** 11.9 seconds for 636 files here, against a 2.1-second session
+    start. That is a real slowdown, and it happens ONCE per upgrade rather than once per session:
+    the condition is "the running version is newer than the version in the header", which stops
+    being true the moment this runs. Roughly one slow session per release.
+
+    Bounded three ways, because a hook that can hang is worse than a stale index: a size estimate
+    that declines the job rather than starting it, a hard timeout, and a latch so a rebuild that
+    fails or times out is not retried every session for that version.
+    """
+    est = indexed * MAP_REBUILD_MS_PER_FILE / 1000.0 if indexed else 0
+    if est > MAP_AUTO_REBUILD_MAX_SECONDS:
+        return ("this index was built by an older chamnan, which may not have read every language "
+                "this one can. It is big enough that rebuilding is your call: run `chamnan-map`.")
+    exe = Path(pkg_root) / "bin" / "chamnan-map"
+    if not exe.is_file():
+        return ""
+    try:
+        r = subprocess.run([sys.executable, str(exe)], cwd=str(root), capture_output=True,
+                           text=True, timeout=MAP_AUTO_REBUILD_MAX_SECONDS + 15)
+    except (OSError, subprocess.SubprocessError):
+        return ("this index was built by an older chamnan and rebuilding it here did not work. "
+                "Run `chamnan-map` when you can.")
+    if r.returncode != 0:
+        return ("this index was built by an older chamnan and the rebuild failed. Run "
+                "`chamnan-map` to see why.")
+    return ""          # rebuilt; the caller says so
 
 
 def map_commits_behind(root, map_path):
@@ -1500,6 +1580,42 @@ def main():
         # `index_is_behind` runs on every firing and its answer was discarded; carrying it into the
         # log is what makes "how often is my index stale" a query rather than a one-off script.
         _behind_seconds = None
+
+        # An index built by an OLDER chamnan is stale in a way no commit can show: the source has
+        # not moved, so every measure chamnan has says the index is current, and it may still be
+        # blind to a whole language. When the C family was added to the extractors an
+        # already-indexed C project reported zero files and a C++ one six of 142.
+        #
+        # This one rebuilds rather than asks, and the distinction from the plugin-update banner
+        # below is not a loophole. That banner is about the PLUGIN, which the user chose and which
+        # nothing may change for them. An index is regenerable, is not a record, and this package's
+        # own rules ask for it to be rebuilt without being told -- nothing is lost by doing it and
+        # nothing is decided by it. The alternative was measured and refuted: given a block that
+        # NAMES a file worth reading, the agent opened it in 10 of 93 sessions, so a notice has
+        # about a one-in-ten chance of being acted on.
+        #
+        # It costs one slow session per RELEASE, not per session: the condition is "the running
+        # version is newer than the header's", which stops being true the moment this runs. The
+        # latch is `times=1`, so a rebuild that fails or is declined is not retried every session
+        # for that version.
+        try:
+            _pkg_root = Path(__file__).resolve().parents[1]
+            _older = map_built_by_older(wsdir / "MAP.md", ws.plugin_version(_pkg_root))
+            if _older and ws.notice_due(root, "map-rebuild-%s" % _older[1], times=1):
+                _indexed_now = 0
+                _hm0 = re.search(r"(\d[\d,]*) source file",
+                                 (wsdir / "MAP.md").read_text(encoding="utf-8-sig",
+                                                              errors="replace")[:600])
+                if _hm0:
+                    _indexed_now = int(_hm0.group(1).replace(",", ""))
+                _why = rebuild_map_after_upgrade(root, wsdir, _pkg_root, _indexed_now)
+                _stale_lines.append(redact.scrub(
+                    "_⚠ %s_\n" % _why if _why else
+                    "_This index was built by chamnan %s and has been rebuilt for %s, which reads "
+                    "languages that one did not. Nothing else was changed._\n"
+                    % (_older[0], _older[1])))
+        except Exception:
+            pass          # a hand-off is never worth failing a session for
 
         # Said before anything else, and never suppressed by a config flag: if the code running this
         # session is older than a version that has already set this workspace up, everything below is
