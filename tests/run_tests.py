@@ -37574,6 +37574,224 @@ if _t_ws215 is not None:
               saw="skill(s) with no parseable `description:` frontmatter: %s — the host matches on "
                   "that description, so one without it can never be selected"
                   % ", ".join(_t_bad215))
+# ---- 216_instruction_files_that_stopped_being_true.py
+# ---- 216_instruction_files_that_stopped_being_true.py
+# 🐛 [2026-09-22] (self-measured) The repository's own instruction files -- CLAUDE.md, AGENTS.md and
+# fifteen more conventions, the list derived from `host._AGENTS` -- say things that stopped being
+# true, and nothing checked them. The agent reads one every session and believes it absolutely; it
+# will never think to verify a sentence it was handed as an instruction. A wrong instruction costs
+# more than a missing one.
+#
+# THE QUESTION IS NOT "does this path exist". That was written first and measured before shipping:
+# on the three real instruction files on this machine it reported 11 of 24, 8 of 12 and 19 of 47 --
+# 50% to 80% false positives -- because ordinary prose names paths relative to a different base,
+# paths the tool CREATES in somebody else's repository, and paths that are gitignored.
+#
+# The question is "did this path exist when this sentence was written". git answers exactly, and
+# the same three files then reported zero.
+#
+# So the cases below are mostly about what must STAY SILENT, and the fixture proves it can speak
+# before any of them are believed.
+_t_ws216 = owner_workspace("Instruction files that stopped being true")
+if _t_ws216 is not None:
+    import subprocess as _sp216
+    import tempfile as _tf216
+    import pathlib as _pl216
+    import shutil as _sh216
+
+    if not (ROOT / "lib" / "drift.py").is_file():
+        skip("  [SKIP] instruction drift — no lib/drift.py")
+    elif not _sh216.which("git"):
+        skip("  [SKIP] instruction drift — no git, and every case needs history")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import drift as _d216
+        import host as _h216
+
+        # The file list is DERIVED. A host added to host._AGENTS is covered without anyone
+        # remembering this module exists, and that is the property worth pinning.
+        _t_conv216 = _d216.instruction_files()
+        _t_declared216 = {e for spec in _h216._AGENTS.values()
+                          for e in (spec.get(_h216.REPO, ()) or ()) if e and not e.endswith("/")}
+        check("THE INSTRUCTION-FILE LIST IS DERIVED FROM THE HOSTS, NOT TYPED",
+              set(_t_conv216) == _t_declared216 and len(_t_conv216) >= 10,
+              saw="derived %d, hosts declare %d — a list typed into drift.py drifts from the one "
+                  "host.py maintains, which is this repository's commonest defect"
+                  % (len(_t_conv216), len(_t_declared216)))
+        check("...and CLAUDE.md and AGENTS.md are both in it",
+              "CLAUDE.md" in _t_conv216 and "AGENTS.md" in _t_conv216)
+
+        _t_r216 = _pl216.Path(_tf216.mkdtemp()) / "repo"
+        (_t_r216 / "tests").mkdir(parents=True)
+        (_t_r216 / "src").mkdir()
+        (_t_r216 / "tests" / "test_a.py").write_text("def test_a(): pass\n", encoding="utf-8")
+        (_t_r216 / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (_t_r216 / "CLAUDE.md").write_text(
+            "# P\n\nTests are in `tests/test_a.py`, source in `src/a.py`.\n"
+            "We vendor `vendor/thing.js`, which this repository has never had.\n"
+            "Globs like `src/*.py` are patterns. See `https://example/x/y`.\n", encoding="utf-8")
+        for _t_c216 in (["git", "init", "-q"], ["git", "add", "-A"],
+                        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                         "commit", "-qm", "instructions"]):
+            _sp216.run(_t_c216, cwd=str(_t_r216), capture_output=True)
+
+        _t_g216, _t_seen216 = _d216.gone_since(_t_r216, "CLAUDE.md")
+        check("...a CURRENT instruction file reports nothing",
+              _t_g216 == [],
+              saw="reported %s on a file whose every path still resolves — this is the 50-80%% "
+                  "false-positive shape the first design had" % _t_g216)
+        check("...and it did examine what the file names",
+              _t_seen216 >= 3,
+              saw="examined %d path(s); a silence from an empty scan is not a silence from a clean "
+                  "file" % _t_seen216)
+
+        # now move the tests, which is the rot
+        (_t_r216 / "spec").mkdir()
+        _sh216.move(str(_t_r216 / "tests" / "test_a.py"), str(_t_r216 / "spec" / "test_a.py"))
+        (_t_r216 / "tests").rmdir()
+        for _t_c216 in (["git", "add", "-A"],
+                        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                         "commit", "-qm", "move tests to spec"]):
+            _sp216.run(_t_c216, cwd=str(_t_r216), capture_output=True)
+
+        _t_g216, _ = _d216.gone_since(_t_r216, "CLAUDE.md")
+        check("A PATH THE INSTRUCTIONS NAME THAT HAS GONE SINCE IS REPORTED",
+              _t_g216 == ["tests/test_a.py"],
+              saw="got %s — the moved path is the whole finding, and anything else in that list is "
+                  "a false positive" % _t_g216)
+        check("...and a path that NEVER existed is not reported",
+              "vendor/thing.js" not in _t_g216,
+              saw="prose legitimately names paths this repository never had — the tool's own "
+                  "README names sixteen it creates in somebody else's")
+        check("...and a glob is not treated as a file",
+              "src/*.py" not in _t_g216)
+
+        _t_n216 = _d216.notice(_t_r216)
+        check("...and the notice is ONE sentence, not a list of every mismatch",
+              _t_n216.count("\n") == 0 and "CLAUDE.md" in _t_n216 and "gone now" in _t_n216,
+              saw=repr(_t_n216[:130]))
+
+        # unanswerable is not evidence
+        _t_ng216 = _pl216.Path(_tf216.mkdtemp()) / "nogit"
+        _t_ng216.mkdir(parents=True)
+        (_t_ng216 / "CLAUDE.md").write_text("Tests are in `tests/x.py`.\n", encoding="utf-8")
+        check("...and a repository git cannot answer for is silent, not guessed at",
+              _d216.notice(_t_ng216) == "",
+              saw="an unanswerable question is not evidence that anything is wrong")
+
+        (_t_r216 / "AGENTS.md").write_text("See `tests/test_a.py`.\n", encoding="utf-8")
+        _t_ug216, _ = _d216.gone_since(_t_r216, "AGENTS.md")
+        check("...and an UNTRACKED instruction file is not judged",
+              _t_ug216 == [],
+              saw="a file with no history has no 'when it was written' to compare against")
+
+        _sh216.rmtree(str(_t_r216.parent), ignore_errors=True)
+        _sh216.rmtree(str(_t_ng216.parent), ignore_errors=True)
+# ---- 217_a_second_component_is_named_before_it_is_written.py
+# ---- 217_a_second_component_is_named_before_it_is_written.py
+# 🐛 [2026-09-22] (self-measured) Two findings, and the first is the larger one.
+#
+# **`_what_this_repo_already_has` could only ever fire in the author's own repository.** It looked
+# for `chamnan-recall` at `Path(root) / "Work-Mode" / "chamnan" / "bin"`, which is THIS
+# repository's layout and nobody else's. Everywhere else the guard below it returned "" on every
+# call, and the whole feature was dead -- silently, because "" is also what "nothing matched" looks
+# like. The plugin knows where it lives: the hook is in `hooks/`, so `bin/` is its sibling.
+#
+# **And the same mechanism now answers the most-reported complaint about coding agents**: that they
+# "create duplicate code or write custom code for pre-existing functions instead of integrating".
+# In UI work that is the same `Button`, `Modal` or `Card` written a fourth time, and chamnan is the
+# only thing installed that already holds every symbol in the repository.
+#
+# Exact stem, case-insensitive, and nothing cleverer. `Btn` against `Button` is a similarity
+# judgement, and a similarity judgement without a model is the false-positive machine this project
+# has recorded fifteen times.
+_t_ws217 = owner_workspace("A second component is named before it is written")
+if _t_ws217 is not None:
+    import json as _js217
+    import subprocess as _sp217
+    import tempfile as _tf217
+    import pathlib as _pl217
+    import shutil as _sh217
+
+    _t_hook217 = ROOT / "hooks" / "chamnan_skill_pointer.py"
+    if not _t_hook217.is_file():
+        skip("  [SKIP] duplicate-component guard — no chamnan_skill_pointer.py")
+    else:
+        # --- the portability defect, pinned by source so it cannot come back
+        _t_src217 = _t_hook217.read_text(encoding="utf-8", errors="replace")
+        # The literal is BUILT, never written here: a check that spells the forbidden string
+        # matches its own source, and this repository records that defect by name.
+        _t_forbidden217 = '"' + "Work" + "-" + "Mode" + '"'
+        check("NO HOOK LOOKS FOR CHAMNAN AT THIS REPOSITORY'S OWN LAYOUT",
+              _t_forbidden217 not in _t_src217,
+              saw="the hook reaches for a path only the author's machine has, so the feature "
+                  "behind it is dead for every other user and fails the way 'nothing matched' "
+                  "looks")
+
+        if not _sh217.which("git"):
+            skip("  [SKIP] duplicate-component guard — no git, and the fixture needs a repository")
+        else:
+            _t_r217 = _pl217.Path(_tf217.mkdtemp()) / "app"
+            (_t_r217 / "src" / "ui").mkdir(parents=True)
+            (_t_r217 / "src" / "pages").mkdir()
+            (_t_r217 / "src" / "ui" / "Button.tsx").write_text(
+                "export function Button({label}) {\n  return <button>{label}</button>;\n}\n",
+                encoding="utf-8")
+            (_t_r217 / "src" / "ui" / "Modal.tsx").write_text(
+                "export function Modal({children}) {\n  return <div>{children}</div>;\n}\n",
+                encoding="utf-8")
+            for _t_c217 in (["git", "init", "-q"], ["git", "add", "-A"],
+                            ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                             "commit", "-qm", "app"]):
+                _sp217.run(_t_c217, cwd=str(_t_r217), capture_output=True)
+            _sp217.run([sys.executable, str(ROOT / "bin" / "chamnan-setup")],
+                       cwd=str(_t_r217), capture_output=True)
+            _sp217.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                       cwd=str(_t_r217), capture_output=True)
+
+            def _t_w217(rel, sess):
+                _t_res217 = _sp217.run(
+                    [sys.executable, str(_t_hook217)],
+                    input=_js217.dumps({"session_id": sess, "tool_name": "Write",
+                                        "tool_input": {"file_path": str(_t_r217 / rel)},
+                                        "cwd": str(_t_r217),
+                                        "transcript_path": str(_t_r217 / "t.jsonl")}),
+                    capture_output=True, text=True, cwd=str(_t_r217))
+                if "additionalContext" in (_t_res217.stdout or ""):
+                    return _js217.loads(
+                        _t_res217.stdout)["hookSpecificOutput"]["additionalContext"]
+                return ""
+
+            _t_dup217 = _t_w217("src/pages/Button.tsx", "d217-a")
+            check("A SECOND COMPONENT OF THE SAME NAME IS NAMED BEFORE IT IS WRITTEN",
+                  "already has `Button`" in _t_dup217 and "src/ui/Button.tsx" in _t_dup217,
+                  saw="writing a second Button said: %r" % (_t_dup217[:140] or "(nothing)"))
+
+            # the silences, each of which is a false positive if it speaks
+            check("...and a genuinely new component is silent",
+                  _t_w217("src/ui/Dropdown.tsx", "d217-b") == "",
+                  saw="a name the repository does not have must not be reported")
+            # 🐛 [2026-09-22] (self-measured) This case exists because a mutation SURVIVED: swapping
+            # the exact-stem test for a prefix test (`stem[:3] in other`) passed all six checks,
+            # since nothing in the fixture collided that way. `ButtonGroup` does -- it shares three
+            # letters with `Button` and is a different component. Without this, the check asserted
+            # exactness while permitting the false-positive design it was written to forbid.
+            check("...and a name that merely STARTS like an existing one is silent",
+                  _t_w217("src/ui/ButtonGroup.tsx", "d217-f") == "",
+                  saw="`ButtonGroup` was reported as a duplicate of `Button` — that is a "
+                      "similarity judgement, and a similarity judgement without a model is the "
+                      "false-positive shape this repository has recorded fifteen times")
+            check("...and EDITING the existing component is silent",
+                  _t_w217("src/ui/Button.tsx", "d217-c") == "",
+                  saw="this is for a file being created, not one being changed")
+            check("...and a stem too short to be a component name is silent",
+                  _t_w217("src/ui/Go.tsx", "d217-d") == "",
+                  saw="a two-letter stem is a word, not a component, and matching on it fires on "
+                      "everything")
+            check("...and a non-UI file is left to the store-backed half",
+                  _t_w217("src/notes.txt", "d217-e") == "")
+
+            _sh217.rmtree(str(_t_r217.parent), ignore_errors=True)
 # ---- 21_a_name_may_open_with_a_digit_and_a_tool_has_one_name.py
 # ------------------------------------------- two defects found by USING a store nobody had filled
 # 🐛 [2026-09-09] `.chamnan/environments.md` — the store whose module docstring calls it "the
