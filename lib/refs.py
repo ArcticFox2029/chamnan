@@ -215,6 +215,26 @@ def _interp_ranges(span, lang):
     return keep
 
 
+def _ident_in_quotes(lang):
+    """True where this language writes DECLARED NAMES inside double quotes.
+
+    Terraform does: `resource "aws_kms_key" "secrets" {` -- the labels are the identity of the
+    block, not string data. Blanking quoted spans there destroyed every declaration in the corpus,
+    0 of 19 recognised, and the symbol a reader asks for does not survive to be matched at all.
+
+    DERIVED from the declaration patterns rather than named: a rule that captures with `"(` opens
+    its capture group immediately after a quote, which is exactly the syntax this is about. `c` also
+    mentions a quote -- in a negative lookahead for `extern "C"` -- and is correctly NOT selected,
+    which is the discrimination a hand-written list of one language would not have been tested for.
+
+    What it costs, stated: in such a language a genuine string on a code line, `description =
+    "target"`, is reported as a use. That is a false positive on a language whose files are mostly
+    declarations, against losing every declaration in it.
+    """
+    import mapper
+    return any('"(' in pat for _kind, pat in mapper.REGEX_RULES.get(lang, ()))
+
+
 def _lang_tables():
     """(EXT_LANG, LINE_COMMENT) from `mapper`, imported only when a non-Python file is judged.
 
@@ -238,6 +258,7 @@ def code_only(text, lang, line_comments, block=True):
     # Longest first, or `//` inside a language that also has `/` never matches, and `#` would win
     # over `#!` where both are listed.
     markers = sorted(line_comments, key=len, reverse=True)
+    quoted_idents = _ident_in_quotes(lang)
     # The C family is identified by its own line-comment marker rather than by a second list of
     # language names, for the same reason `_lang_tables` derives everything else.
     c_family = "//" in line_comments
@@ -272,6 +293,9 @@ def code_only(text, lang, line_comments, block=True):
             while i < n and text[i] != "\n":
                 out[i] = " "
                 i += 1
+            continue
+        if ch == '"' and quoted_idents:
+            i += 1          # the labels are the syntax here; see `_ident_in_quotes`
             continue
         if ch in "\"'`":
             # A backtick is a raw string in Go and a template literal in JS; a single quote is raw
@@ -321,14 +345,79 @@ def code_only(text, lang, line_comments, block=True):
     return "".join(out)
 
 
+_DECL_CACHE = {}
+
+
+def _declares(lang):
+    """Compiled declaration patterns for `lang`, from `mapper`'s own rules. () when it has none.
+
+    Reused rather than written: `mapper.REGEX_RULES` already extracts declarations for 20 of the 21
+    languages and each pattern is anchored at line start with the declared NAME in group 1, which
+    is exactly the two properties this needs. Writing a second set here would be the same defect
+    shape the interpolation table already recorded -- and these patterns carry a combining-mark fix
+    that a fresh copy would not.
+    """
+    if lang not in _DECL_CACHE:
+        import mapper
+        # `re.M` because these patterns are anchored at line start and mapper applies them that
+        # way; harmless here, where the subject is one line, and wrong to omit if the subject ever
+        # becomes a block.
+        # 🐛 The KIND was thrown away here, and it is what decides where the name sits. mapper
+        # reads a `func` rule's name from the first group -- the second is the argument list -- and
+        # a `class` rule's identity as every group joined with a dot, because Terraform's
+        # `data "aws_iam_policy" "eks_admin"` is ONE object and not nine of type `aws_iam_policy`.
+        # Dropping the kind and always taking group 0 reported the resource TYPE as the declared
+        # name: every Terraform declaration in the corpus came back as a plain use, 0 of 19.
+        _DECL_CACHE[lang] = tuple(
+            (kind, re.compile(pat, re.M)) for kind, pat in mapper.REGEX_RULES.get(lang, ()))
+    return _DECL_CACHE[lang]
+
+
 def in_text(text, symbol, lang, line_comments):
-    """[(lineno, "use")] for a symbol appearing as code rather than in a comment or a string."""
+    """[(lineno, kind)] for a symbol appearing as code rather than in a comment or a string.
+
+    `kind` is "def" only where that language's own declaration pattern matches the line AND names
+    this exact symbol; everything else is "use". It is never "call": a lexical scan cannot tell a
+    call from a bare mention of the name, and printing one under "call" sends a reader looking for
+    a caller that may not exist. Naming the declaration is worth the extra pass because "where is
+    this defined" is the first thing somebody asks and the one answer a text search buries.
+    """
     if symbol not in text:
         return []
     word = re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(symbol))
     stripped = code_only(text, lang, line_comments)
-    return [(k, _LEXICAL_USE) for k, line in enumerate(stripped.splitlines(), 1)
-            if word.search(line)]
+    decls = _declares(lang)
+    out = []
+    for k, line in enumerate(stripped.splitlines(), 1):
+        if not word.search(line):
+            continue
+        kind = _LEXICAL_USE
+        for decl_kind, pat in decls:
+            m = pat.search(line)
+            if not m:
+                continue
+            # 🐛 The name was read from `m.group(1)`, and mapper -- which owns these patterns --
+            # reads the first NON-NONE group instead, because several rules carry alternatives
+            # where group 1 is None on a match. Copying the table and not its convention is the
+            # same defect as copying neither: on the rules where they differ, group 1 is None and
+            # every declaration in that language was reported as a plain use.
+            groups = [g for g in m.groups() if g is not None]
+            if not groups:
+                continue
+            # mapper's own two rules, and nothing invented beside them.
+            if decl_kind == "class" and len(groups) > 1:
+                declared = ".".join(groups)
+            else:
+                declared = groups[0]
+            # The name has to be the one asked for -- without that a file's first `func` line is
+            # reported as the declaration of every symbol on it. The last dotted component counts
+            # too, so `chamnan-where service_secret` finds the Terraform block that declares it
+            # while `aws_secretsmanager_secret`, which is the TYPE it instantiates, stays a use.
+            if symbol == declared or symbol == declared.rsplit(".", 1)[-1]:
+                kind = "def"
+                break
+        out.append((k, kind))
+    return out
 
 
 def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "site-packages")):
