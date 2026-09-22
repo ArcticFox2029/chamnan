@@ -38933,6 +38933,94 @@ if _t_ws227 is not None:
               saw="description %r — the host matches on this and nothing else, so a trigger absent "
                   "from it is a skill that never loads"
               % (_t_desc227.group(1)[:120] if _t_desc227 else None,))
+# ---- 228_a_far_behind_index_asks_once_and_rebuilds_nothing.py
+# ---- 228_a_far_behind_index_asks_once_and_rebuilds_nothing.py
+# 🐛 [2026-09-22] (owner) The index-staleness notice said the same sentence for a 42-minute gap and
+# a three-week one. It fires on any staleness at all, and its whole content is an age plus up to
+# three filenames — which is right for the common case and useless for the reader it was actually
+# failing: somebody who has not rebuilt in a long time, for whom three filenames are not the answer
+# and the real question is whether to spend the rebuild.
+#
+# The bar is 20 commits, and it was chosen from recorded behaviour rather than picked. Across 400
+# real session-block firings in the repository chamnan is developed in, the index was behind on 78
+# (19.5%), by a median of 42 minutes and a MAXIMUM of 16.6 hours. Not one of those 400 would clear
+# this bar, so the loud notice cannot fire on ordinary work.
+#
+# Three properties make it safe to be loud, and each is asserted below because each is the thing
+# that would make it a nuisance instead:
+#   * unknown is not zero -- no git, no stamp, or a stamp from history this clone does not have all
+#     mean the quiet line stays the whole notice;
+#   * it is capped at three showings, because advice that repeats forever is worse than advice
+#     shown once, and this advice ASKS for something, which makes repeating it worse still;
+#   * it rebuilds NOTHING. The same rule the update banner beside it already states: a tool that
+#     acts because somebody opened a session is doing something they did not ask for, and doing it
+#     silently is worse than not doing it at all.
+_t_ws228 = owner_workspace("A far-behind index asks once and rebuilds nothing")
+if _t_ws228 is not None:
+    import re as _re228
+
+    _t_hook228 = ROOT / "hooks" / "chamnan_session_start.py"
+    _t_src228 = _t_hook228.read_text(encoding="utf-8-sig", errors="replace")
+
+    check("The staleness notice has a loud tier with a bar, not one sentence for every gap",
+          "MAP_STALE_COMMITS" in _t_src228 and "map_commits_behind" in _t_src228,
+          saw="no tier — a 42-minute gap and a three-week one read identically, and the reader who "
+              "needs the second one has learned to skip the first")
+
+    _t_bar228 = _re228.search(r"MAP_STALE_COMMITS\s*=\s*(\d+)", _t_src228)
+    check("...and the bar is above anything the recorded firings ever reached",
+          _t_bar228 is not None and int(_t_bar228.group(1)) >= 10,
+          saw="bar is %s — the evidence for it is 400 recorded firings whose worst case was 16.6 "
+              "hours behind; a bar low enough to fire on those is a bar that fires on ordinary work"
+          % (_t_bar228.group(1) if _t_bar228 else None,))
+
+    # Unknown is not zero. Asserted on the real function, against a tree with no stamp to read.
+    sys.path.insert(0, str(ROOT / "lib"))
+    import importlib.util as _ilu228
+    _t_spec228 = _ilu228.spec_from_file_location("_ss228", str(_t_hook228))
+    _t_mod228 = _ilu228.module_from_spec(_t_spec228)
+    try:
+        _t_spec228.loader.exec_module(_t_mod228)
+    except SystemExit:
+        pass          # the hook guards its own entry point; importing it is not running it
+
+    import tempfile as _tf228
+    from pathlib import Path as _P228
+    with _tf228.TemporaryDirectory() as _t_d228:
+        _t_empty228 = _P228(_t_d228)
+        (_t_empty228 / "MAP.md").write_text("# no stamp here\n", encoding="utf-8")
+        _t_unknown228 = _t_mod228.map_commits_behind(_t_empty228, _t_empty228 / "MAP.md")
+    check("...and an index it cannot date reports unknown, never zero",
+          _t_unknown228 is None,
+          saw="returned %r — zero reads as 'current' to the caller, which is a confident answer "
+              "about a repository nothing could be measured in" % (_t_unknown228,))
+
+    # The cost has to be the READER's, not ours. Same figure for every tree means it is a quote.
+    _t_costs228 = [_t_mod228.map_rebuild_cost(n) for n in (0, 600, 3000, 20000)]
+    check("...and the rebuild cost is scaled to the reader's index, not quoted from ours",
+          _t_costs228[0] == "" and len({c for c in _t_costs228[1:]}) >= 2,
+          saw="%r — an empty index has no cost to state, and one figure for every size is this "
+              "repository's number wearing the reader's name" % (_t_costs228,))
+
+    # The two guards that keep a loud notice from becoming a nuisance.
+    _t_loud228 = _t_src228[_t_src228.find("_loud = ("):]
+    _t_loud228 = _t_loud228[:_t_loud228.find("else:")]
+    check("...and the loud notice is capped, so it cannot repeat forever",
+          "notice_due" in _t_loud228,
+          saw="ungated — it asks the reader to spend something, and an unanswered request repeated "
+              "every session is how a reader learns to skip the whole block")
+    check("...and nothing in it rebuilds the index by itself",
+          not _re228.search(r"chamnan-map|mapper\.build|subprocess\.run\(\[.*map", _t_loud228),
+          saw="the notice rebuilds — a tool that acts because somebody opened a session is doing "
+              "something they did not ask for, which is the rule the update banner beside it "
+              "already states")
+
+    # Below the bar, the old line has to survive: it NAMES the files, which is what makes the
+    # everyday case actionable without deciding anything.
+    check("...and below the bar the notice still names the files, as it did before",
+          "Source has changed since this index was built" in _t_src228,
+          saw="the quiet branch is gone — replacing an actionable line with a louder one that asks "
+              "a question is a downgrade for the 19.5% of firings that are the ordinary case")
 # ---- 22_a_second_entry_does_not_overwrite_the_first.py
 # ------------------------------------------- one of four stores had the guard
 # 🐛 [2026-09-09] Every store here builds a filename by truncating an ASCII reduction of the title —
