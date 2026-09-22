@@ -58,6 +58,7 @@ chamnan is delivered as a Claude Code plugin and as a plain command-line tool. T
 - `chamnan-schedule`: finish this work later, when the limit has reset
 - `chamnan-setup`: install or update chamnan across every host on this machine, and say what moved
 - `chamnan-timeline`: one line of work followed across the sessions it actually took
+- `chamnan-where`: every place a name is actually used, not every line that mentions it
 
 ## Documentation
 

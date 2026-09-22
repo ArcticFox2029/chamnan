@@ -9124,6 +9124,12 @@ _de_silent = {
     # cannot answer must add NO line to somebody's commit output, let alone advice about a workspace
     # it does not need. Same reasoning as `chamnan-peek` above, reached from the other direction.
     "chamnan-guard": "reads a staged diff and needs no workspace at all",
+    # Same reasoning as `chamnan-peek`, and verified the same way before exempting it: run in a
+    # directory with no `.chamnan` and no `.git` at all, `chamnan-where helper` answered correctly
+    # -- `def src/a.py:1`, `call src/b.py:5`, exit 0. It parses source with `ast` and needs no
+    # index, so demanding the create-a-workspace sentence of it would add an error to a command
+    # that has none, which is the mistake this list's own comment above records.
+    "chamnan-where": "parses source directly and needs no workspace at all",
 }
 _de_missing = []
 for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
@@ -10356,14 +10362,19 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # Raised 2026-09-22 from 24 to 25: `survives._git` asks `git check-ignore` before an edit, so the
 # doomed-edit notice can say when git will not keep the change. A SEVENTEENTH purpose -- no other
 # site asks the ignore question, and the README now names it.
+# Raised 2026-09-22 from 25 to 26: `drift._git` asks `git ls-tree` what the tree held at the commit
+# that last touched an instruction file. An EIGHTEENTH purpose -- no other site asks what a path
+# looked like at an earlier commit, and that question is the whole difference between "this path
+# does not exist" (50-80% false positives, measured) and "this path has gone since somebody wrote
+# that line".
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 25, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 26, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-five call sites serve seventeen read-only paths"
+      and "Twenty-six call sites serve eighteen read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -21432,6 +21443,9 @@ if _CAN_DENY_WRITE:
         "chamnan-report": None,
         "chamnan-guard": None,
         "chamnan-setup": None,
+        # Read-only, like the other `None` entries: it parses source and prints, and the argv it
+        # needs is a symbol name rather than anything that could write.
+        "chamnan-where": None,
     }
     _nw_commands = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*") if p.suffix != ".cmd")
     check("the write-honesty sweep knows about every command that ships",
