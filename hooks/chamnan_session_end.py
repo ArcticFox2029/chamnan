@@ -18,8 +18,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import workspace as ws  # noqa: E402
+from workflows import SIMILAR, jaccard  # noqa: E402
 
-SIMILAR = 0.55
 WINDOW_HOURS = 24
 MIN_REPEATS = 2
 MAX_LISTED = 4
@@ -40,10 +40,6 @@ MAX_CLUSTERED = 400
 MAX_FAMILIES = 120
 # Read, shown once and deleted by chamnan_session_start.py on the next session in this repository.
 DIGEST_NAME = "repeat_digest.json"
-
-
-def jaccard(a, b):
-    return len(a & b) / len(a | b) if a and b else 0.0
 
 
 def main():

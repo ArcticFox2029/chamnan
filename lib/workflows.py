@@ -57,7 +57,39 @@ KEYWORDS = {
 }
 
 MIN_LENGTH = 3        # distinct signatures before a run counts as a workflow
-REPEAT_AT = 3         # say something on the third occurrence, matching scratch_watch
+REPEAT_AT = 3         # say something on the third occurrence
+SIMILAR = 0.55        # Jaccard at or above this counts as "the same script again"
+
+
+def jaccard(a, b):
+    """Overlap of two signature sets, 0.0 when either is empty.
+
+    🐛 [2026-09-22] (R1, 2026-09-22) This function and `SIMILAR` were each defined TWICE — here and
+    in `chamnan_scratch_watch.py` and `chamnan_session_end.py` — and both hooks used them to answer
+    the same question: is this the same script again. Four things that had to agree, with nothing
+    enforcing it, and a comment on `REPEAT_AT` that ASSERTED they matched, which is the weakest
+    kind of guarantee there is. Nothing was broken; the two bodies were semantically identical and
+    differed only in spelling.
+
+    The risk is the next edit, and R21 published the number that makes it likely: moving a
+    similarity threshold from 0.99 to 0.75 took a cache hit ratio from 23.5% to 90.3% while
+    accuracy moved only 92.1% to 91.2%. Somebody will want to tune this, and tuning one of two
+    copies makes two features silently disagree about what "the same" means.
+
+    **`chamnan_session_end.py` imports from here. `chamnan_scratch_watch.py` deliberately does
+    NOT**, and that asymmetry is the whole decision rather than an oversight. Session-end runs once
+    per session, so an import there is free. Scratch-watch runs on EVERY Bash, Write and Edit, and
+    its own import block carries the measurement: importing all nine lib modules cost 34.5 ms of
+    the 44 ms that process spends above the interpreter floor, paid in front of the user on every
+    call. Deduplicating into it would charge the user milliseconds per tool call to save a
+    maintainer one edit.
+
+    So the duplication there is DETECTED rather than removed — check 239 asserts every definition
+    of these two names agrees, derived from source, so a third copy is caught the same way. That is
+    the opposite trade from the atomic-write fix made the same day, and the reason differs: there,
+    prevention at the writer was free.
+    """
+    return len(a & b) / len(a | b) if a and b else 0.0
 MAX_LENGTH = 8        # longest sequence worth reporting, and the ceiling on the level walk
 # There is deliberately no window on how far back a day is read. The cap above is on the length of
 # the ANSWER, not on the evidence: a routine run in the morning and again after lunch is the same

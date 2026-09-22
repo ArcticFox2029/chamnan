@@ -40296,6 +40296,90 @@ if _t_ws238 is not None:
           _t_left238 == ["x.md"],
           saw="%s — the temp file is the half-written one, and a glob that finds it judges it"
           % (_t_left238,))
+# ---- 239_one_similarity_threshold_however_many_copies.py
+# ---- 239_one_similarity_threshold_however_many_copies.py
+# 🐛 [2026-09-22] (R1, 2026-09-22) `SIMILAR` and `jaccard()` were each defined twice — in
+# `chamnan_scratch_watch.py` and `chamnan_session_end.py` — and both hooks used them to answer one
+# question: is this the same script again. Four things that had to agree, with nothing enforcing
+# it, and a comment on `REPEAT_AT` that ASSERTED they matched. Nothing was broken; the two bodies
+# were semantically identical and differed only in spelling.
+#
+# R21 supplied the number that makes the next edit likely: moving a similarity threshold from 0.99
+# to 0.75 took a cache hit ratio from 23.5% to 90.3% while accuracy moved 92.1% to 91.2%. Somebody
+# will want to tune this, and tuning one copy makes two features silently disagree.
+#
+# **The duplication in `scratch_watch` is KEPT on purpose**, which is why this asserts agreement
+# rather than uniqueness. That hook runs on every Bash, Write and Edit, and its own import block
+# measures the alternative: importing all nine lib modules cost 34.5 ms of the 44 ms it spends
+# above the interpreter floor, in front of the user, every call. `session_end` runs once a session
+# and imports from `workflows`; scratch-watch keeps its copy and pays nothing.
+_t_ws239 = owner_workspace("One similarity threshold, however many copies")
+if _t_ws239 is not None:
+    import ast as _ast239
+
+    # Derived: every module-level SIMILAR, and every def jaccard, anywhere in the package.
+    _t_sim239, _t_jac239 = {}, {}
+    for _t_f239 in sorted(list((ROOT / "lib").glob("*.py"))
+                          + list((ROOT / "hooks").glob("*.py"))):
+        _t_src239 = _t_f239.read_text(encoding="utf-8", errors="replace")
+        try:
+            _t_tree239 = _ast239.parse(_t_src239)
+        except SyntaxError:
+            continue
+        for _t_n239 in _t_tree239.body:
+            if isinstance(_t_n239, _ast239.Assign) and len(_t_n239.targets) == 1 \
+                    and isinstance(_t_n239.targets[0], _ast239.Name) \
+                    and _t_n239.targets[0].id == "SIMILAR" \
+                    and isinstance(_t_n239.value, _ast239.Constant):
+                _t_sim239[_t_f239.name] = _t_n239.value.value
+            if isinstance(_t_n239, _ast239.FunctionDef) and _t_n239.name == "jaccard":
+                # Compare BEHAVIOUR, not spelling: one returns early on an empty set and the other
+                # uses a conditional expression. Pinning the text would fail on a rewrite that
+                # changed nothing, which is the trap recorded here more than any other.
+                _t_jac239[_t_f239.name] = _t_n239
+
+    check("the sweep found the similarity threshold at all: %d copy/copies" % len(_t_sim239),
+          len(_t_sim239) >= 1,
+          saw="no module-level SIMILAR anywhere — the sweep is looking in the wrong place and "
+              "would pass whatever the values were")
+    check("EVERY COPY OF THE SIMILARITY THRESHOLD AGREES",
+          len(set(_t_sim239.values())) <= 1,
+          saw="%s — two features answering 'is this the same script again' with different "
+              "thresholds disagree silently, and the reader sees one notice fire and the other "
+              "not" % (_t_sim239,))
+
+    # Behaviour, established by running each definition rather than by reading it.
+    # 🐛 The first version of this list had no BOTH-EMPTY case, and that is the only input where
+    # an unguarded body divides by zero — so a mutation deleting the guard survived. The cases a
+    # duplicated helper actually parts company on are the degenerate ones, which is exactly why
+    # they are the ones to enumerate.
+    _t_cases239 = [(frozenset(), frozenset()), (frozenset(), frozenset({1})),
+                   (frozenset({1}), frozenset()),
+                   (frozenset({1, 2}), frozenset({2, 3})), (frozenset({1}), frozenset({1})),
+                   (frozenset({1, 2, 3}), frozenset({4, 5}))]
+    _t_answers239 = {}
+    for _t_name239, _t_node239 in _t_jac239.items():
+        _t_ns239 = {}
+        exec(compile(_ast239.Module(body=[_t_node239], type_ignores=[]), "<jaccard>", "exec"),
+             _t_ns239)
+        def _t_ask239(a, b, _f=_t_ns239["jaccard"]):
+            """One copy's answer, with a raise recorded as an answer rather than ending the run.
+
+            A copy that crashes where the others return a number is the sharpest disagreement
+            there is, and letting the exception escape would report it as a broken check instead
+            of a broken helper."""
+            try:
+                return _f(a, b)
+            except Exception as exc:                       # noqa: BLE001 — the raise IS the datum
+                return type(exc).__name__
+        _t_answers239[_t_name239] = tuple(_t_ask239(a, b) for a, b in _t_cases239)
+    check("...and the sweep found the function too: %d copy/copies" % len(_t_jac239),
+          len(_t_jac239) >= 1,
+          saw="no def jaccard found — see above, an empty population passes everything")
+    check("...and every copy of it answers identically on the same inputs",
+          len(set(_t_answers239.values())) <= 1,
+          saw="%s — including the empty-set cases, which is where two hand-written copies of this "
+              "usually part company (one guards, one divides by zero)" % (_t_answers239,))
 # ---- 23_named_as_a_credential_and_never_enforced.py
 # ------------------------------------------- the module named them and redacted none of them
 # 🐛 [2026-09-09] `_CREDENTIAL_PREFIX` lists twenty-two vendor prefixes, and six of them were
