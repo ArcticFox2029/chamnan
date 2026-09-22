@@ -38352,6 +38352,587 @@ if _t_ws222 is not None:
               "coedit.sitting_line(" in _t_hsrc222,
               saw="nothing in the SessionStart hook calls it, so the reader never sees it and the "
                   "saving is zero however cheap the line is")
+# ---- 223_a_shipped_skill_never_tells_you_to_plant_a_key.py
+# ---- 223_a_shipped_skill_never_tells_you_to_plant_a_key.py
+# 🐛 [2026-09-22] (owner) `skills/decide/SKILL.md` shipped this morning telling the reader that where
+# no test case exists they should "plant one: a repository that has the defect, a file that names a
+# path that has gone, a credential in a corpus". Every clause of that is fine except the last, which
+# names no boundary at all -- and an agent following it on the repository it is working in writes a
+# credential-shaped string into a tracked file. GitHub's secret scanning forwards a live-looking key
+# to the provider within minutes of it reaching a remote and the account that owns it is marked, so
+# the cost of that fixture is borne by somebody who never ran the test. The owner rejected planting
+# credential fixtures into a user's repository permanently, and `chamnan-corpus/plant_secrets.py`
+# records the reasoning; the advice above quietly reopened it in prose.
+#
+# The owner found it by asking whether anything in the remaining work planted a dummy credential.
+# Nothing did. The defect was in shipped text nobody had re-read.
+#
+# The rule this enforces is `the-set-not-the-member`: the population is DERIVED by scanning
+# `skills/`, never listed, because the next skill added is the one a hand-written list forgets. The
+# assertion is conditional rather than a ban -- a skill may discuss a credential fixture, but a
+# document that tells you to MAKE one has to also say where it may not go.
+#
+# This check cannot match itself: it scans `skills/` only, and it lives in the checks pool. That is
+# deliberate, and the reason the literals below can be written out plainly for once.
+_t_ws223 = owner_workspace("A shipped skill never tells you to plant a key")
+if _t_ws223 is not None:
+    import re as _re223
+
+    _t_dir223 = ROOT / "skills"
+    if not _t_dir223.is_dir():
+        skip("  [SKIP] shipped skills — no skills/ directory")
+    else:
+        _t_docs223 = sorted(_t_dir223.rglob("*.md"))
+        # An empty population is not a reason to skip: it is the measurement failing. Every other
+        # assertion below is vacuously true on zero documents, which is how a broken scan reports
+        # itself as a pass.
+        check("The shipped skills are found by scanning, and there are some",
+              len(_t_docs223) >= 5,
+              saw="%d skill document(s) under %s — the population this check asserts over is the "
+                  "thing that broke, so an empty or tiny scan is a failure, not a clean run"
+                  % (len(_t_docs223), _t_dir223))
+
+        _t_cred223 = _re223.compile(
+            r"credential|secret|api[_ -]?key|password|\bAKIA|\bsk-", _re223.I)
+        # Only verbs that produce the fixture. "detect", "redact" and "catch" are the whole point of
+        # this package and must not be caught by their own guard.
+        _t_make223 = _re223.compile(r"\b(plant|fabricate|forge|insert|inject)\b", _re223.I)
+        # What a document that tells you to make one has to also say, in any of these forms.
+        _t_bound223 = _re223.compile(
+            r"never in a tracked file|outside any repositor|throwaway director|"
+            r"never anything that can be pushed", _re223.I)
+
+        _t_unbounded223 = []
+        for _p223 in _t_docs223:
+            _t_txt223 = _p223.read_text(encoding="utf-8-sig", errors="replace")
+            _t_bad223 = [i for i, ln in enumerate(_t_txt223.splitlines(), 1)
+                         if _t_cred223.search(ln) and _t_make223.search(ln)]
+            if _t_bad223 and not _t_bound223.search(_t_txt223):
+                _t_unbounded223.append("%s:%s" % (_p223.name, _t_bad223))
+
+        check("...and no shipped skill says to make a credential fixture without bounding where",
+              not _t_unbounded223,
+              saw="%s — a reader on their own repository writes a live-looking key into a tracked "
+                  "file, a remote forwards it to the provider, and their account is marked for a "
+                  "test fixture they did not run" % (_t_unbounded223,))
+
+        # The clause above is conditional, so it guards the NEXT skill rather than this fix: once
+        # `decide` stopped saying "plant", it stopped being in the population and the fix itself
+        # became unasserted. So the fix is pinned to the section that made it necessary -- a step
+        # telling the reader to build a test case for a threshold is where a credential fixture gets
+        # invented, and the boundary has to sit in the same document as that instruction.
+        _t_decide223 = _t_dir223 / "decide" / "SKILL.md"
+        if _t_decide223.is_file():
+            _t_dtxt223 = _t_decide223.read_text(encoding="utf-8-sig", errors="replace")
+            _t_teaches223 = _re223.search(r"Test the threshold before trusting it", _t_dtxt223)
+            if _t_teaches223:
+                check("...and the step that invites a test fixture carries the boundary with it",
+                      _t_bound223.search(_t_dtxt223) is not None,
+                      saw="the skill tells the reader to build a test case for a threshold and "
+                          "says nothing about where a credential-shaped one may not go — which is "
+                          "the exact text that shipped this morning")
+                check("...and states what being wrong costs, not only that it is forbidden",
+                      "scanning" in _t_dtxt223 and "marked" in _t_dtxt223,
+                      saw="the boundary is stated without the consequence — a rule with no cost "
+                          "attached is the one a reader decides does not apply to their case")
+# ---- 224_a_refused_command_is_not_a_failed_one.py
+# ---- 224_a_refused_command_is_not_a_failed_one.py
+# 🐛 [2026-09-22] (owner) 1.30's step 1 was recorded as PERMANENTLY BLOCKED -- "a Bash
+# `tool_response` has no exit code and its `stderr` is a constant, do not re-plan it". Both facts
+# are true and the conclusion was wrong: the question had been framed as something a hook must
+# answer live, and the signal is not in the hook's payload. It is in the transcript the host writes
+# anyway, which two tools in this workspace were already reading for other reasons. Measured over 6
+# transcripts and 42,821 Bash calls: 100.0% carried a recorded outcome. The reusable lesson is that
+# a signal absent from the one interface you happened to check is not a signal that does not exist.
+#
+# 🐛 And the first measurement off the back of it was wrong in a way that looked authoritative. It
+# reported `rm` as failing 20% of the time, because `is_error` is set BOTH for a command that ran
+# and returned non-zero AND for one that never reached the shell -- permission refused (109 of the
+# 282), the user declining (47), a hook blocking it (30), the model briefly unavailable (9). `rm`
+# actually ran 342 times, failed 11 (3%), and was refused 72. A "most fragile command" list built
+# on the conflated number measures the permission prompt, not the command, and would send somebody
+# to rewrite a script that works.
+#
+# So the outcome has THREE states, and the checks below exist to stop it collapsing back to two.
+_t_ws224 = owner_workspace("A refused command is not a failed one")
+if _t_ws224 is not None:
+    import json as _j224
+    import tempfile as _tf224
+    from pathlib import Path as _P224
+
+    _t_tool224 = _t_ws224 / "tools" / "command_outcomes.py"
+    if not _t_tool224.is_file():
+        skip("  [SKIP] command outcomes — no tools/command_outcomes.py")
+    else:
+        sys.path.insert(0, str(_t_ws224 / "tools"))
+        import command_outcomes as _co224
+
+        def _t_line224(role, blocks):
+            return _j224.dumps({"type": role, "message": {"role": role, "content": blocks}}) + "\n"
+
+        def _t_use224(tid, cmd):
+            return {"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": cmd}}
+
+        def _t_res224(tid, text, err):
+            return {"type": "tool_result", "tool_use_id": tid, "content": text, "is_error": err}
+
+        # Every case the real transcripts contain, including the one that produced the wrong number.
+        _t_cases224 = [
+            ("a", "grep -rn x .",               "matched\n",                                 False),
+            ("b", "python3 -c 'raise SystemExit(1)'", "Exit code 1\nTraceback...",            True),
+            ("c", "rm -rf /tmp/thing",          "Permission to use Bash with command rm -rf", True),
+            ("d", "git push",                   "The user doesn't want to proceed with this tool use.", True),
+            ("e", "sleep 5 && tail -f x",       "<tool_use_error>Blocked: sleep 5 followed by", True),
+            # A program printing the host's own wording in the MIDDLE of its output, on a
+            # successful call. Cheap, and it does NOT test the anchor: `is_error` is false, so the
+            # classifier returns before it ever looks for an exit line. Kept for what it does prove.
+            ("f", "cat notes.txt",              "some notes\nExit code 1 was mentioned here\n", False),
+            # THIS is the case that tests the anchor, and the first version of this check did not
+            # have it: an error that never reached the shell, whose text happens to contain the
+            # host's exit wording further down. Unanchored, it is reported as a command that ran and
+            # returned 99 -- a failure invented out of a refusal, with a code nothing returned.
+            # A mutation removing the `\A` passed 9/9 until this line existed.
+            ("j", "gh pr merge 42",             "Permission for this action was denied by the "
+                                                "Claude Code hook\nnote: Exit code 99 is unrelated\n", True),
+            # An error whose text matches nothing on the refusal list. It must not become a command
+            # failure by default -- an unrecognised refusal wording is the expected future case.
+            ("g", "curl https://x",             "something nobody has seen before\n",         True),
+            ("h", "python3 -c 'import os;os._exit(137)'", "Exit code 137\n",                  True),
+        ]
+        with _tf224.TemporaryDirectory() as _t_d224:
+            _t_f224 = _P224(_t_d224) / "session.jsonl"
+            with _t_f224.open("w", encoding="utf-8") as _fh224:
+                for _tid224, _cmd224, _txt224, _err224 in _t_cases224:
+                    _fh224.write(_t_line224("assistant", [_t_use224(_tid224, _cmd224)]))
+                    _fh224.write(_t_line224("user", [_t_res224(_tid224, _txt224, _err224)]))
+                # a call whose result never arrived, which is the last call of any live transcript
+                _fh224.write(_t_line224("assistant", [_t_use224("i", "echo pending")]))
+            _t_before224 = sorted(p.name for p in _P224(_t_d224).iterdir())
+            _t_rows224 = _co224.walk([_t_f224])
+            _t_after224 = sorted(p.name for p in _P224(_t_d224).iterdir())
+
+        # Keyed by the case letter, which is unambiguous where a command prefix would not be.
+        _t_got224 = {}
+        for _cmd224, _state224, _code224 in _t_rows224:
+            for _tid224, _c224, _, _ in _t_cases224:
+                if _c224 == _cmd224:
+                    _t_got224[_tid224] = (_state224, _code224)
+            if _cmd224 == "echo pending":
+                _t_got224["i"] = (_state224, _code224)
+
+        check("Every call in the transcript is judged, and none is silently dropped",
+              len(_t_rows224) == len(_t_cases224) + 1,
+              saw="%d row(s) out of %d call(s) — a dropped call is a number that looks smaller and "
+                  "cleaner than the truth" % (len(_t_rows224), len(_t_cases224) + 1))
+
+        check("...and a command that ran and returned non-zero is FAILED, with its code",
+              _t_got224.get("b") == (_co224.FAILED, 1) and _t_got224.get("h") == (_co224.FAILED, 137),
+              saw="b=%r h=%r" % (_t_got224.get("b"), _t_got224.get("h")))
+
+        # The defect, stated as three cases because all three produced the wrong `rm` figure.
+        _t_refused224 = {k: _t_got224.get(k) for k in ("c", "d", "e")}
+        check("...and a refused, declined or blocked command is NEVER counted as FAILED",
+              all(v == (_co224.REFUSED, None) for v in _t_refused224.values()),
+              saw="%r — this is the conflation that reported `rm` as 20%% fragile when it is 3%%, "
+                  "and it points a reader at a script that works" % (_t_refused224,))
+
+        check("...and an unrecognised error wording defaults to never-ran, not to failed",
+              _t_got224.get("g") == (_co224.UNKNOWN, None),
+              saw="g=%r — the refusal wordings are the host's and will change; defaulting the "
+                  "unknown case to FAILED turns every future rewording into a fake command failure, "
+                  "and folding it into REFUSED hides that the list went stale"
+              % (_t_got224.get("g"),))
+
+        check("...and the host's exit line is matched only at the START of the result",
+              _t_got224.get("f") == (_co224.OK, None)
+              and _t_got224.get("j") == (_co224.REFUSED, None),
+              saw="f=%r j=%r — j is the case that matters: a refusal whose text mentions the exit "
+                  "wording further down becomes, unanchored, a command that ran and returned 99"
+              % (_t_got224.get("f"), _t_got224.get("j")))
+
+        check("...and a call still waiting on its result is its own state",
+              _t_got224.get("i") == (_co224.PENDING, None),
+              saw="i=%r — counting it as ok inflates the success rate by exactly the calls nobody "
+                  "has an answer for yet" % (_t_got224.get("i"),))
+
+        check("...and reading the transcripts writes nothing beside them",
+              _t_before224 == _t_after224,
+              saw="%r -> %r" % (_t_before224, _t_after224))
+
+        # The parser is SHARED on purpose: it carries two measured corrections, and a second copy
+        # would reintroduce both. Asserted by absence of the second copy, not by presence of an
+        # import, because an import that is then ignored looks identical from the outside.
+        _t_src224 = _t_tool224.read_text(encoding="utf-8-sig", errors="replace")
+        check("...and the command-name parser is reused, never copied",
+              "from bash_output_cost import" in _t_src224
+              and "pushd" not in _t_src224 and "_PREFIX" not in _t_src224,
+              saw="a second copy of the clause/prefix tables lives here — `cd` consuming its clause "
+                  "and `sudo` merely prefixing were each a wrong measurement before they were fixed "
+                  "once")
+
+        check("...and the transcript directory is derived, not one machine's path",
+              "def bucket(" in _t_src224 and "parents[2]" in _t_src224,
+              saw="the path is hardcoded — the same shape as the two shipped features found on "
+                  "2026-09-22 that only ever worked on the author's own checkout")
+
+        # 🐛 The refusal list was dead code at first: the recognised branch and the fallback both
+        # returned the same state, so a mutation emptying `NEVER_RAN` entirely changed no verdict.
+        # These wordings belong to the HOST and will be reworded; folded together, that day looks
+        # exactly like today, and the count nobody can see is the one that goes wrong quietly.
+        check("...and a recognised refusal and an unrecognised error stay separate states",
+              _co224.REFUSED != _co224.UNKNOWN
+              and _t_got224.get("c", (None,))[0] == _co224.REFUSED
+              and _t_got224.get("g", (None,))[0] == _co224.UNKNOWN,
+              saw="c=%r g=%r — if these collapse, the day the host rewords its refusal text is "
+                  "invisible, and `NEVER_RAN` is decoration rather than a guard"
+              % (_t_got224.get("c"), _t_got224.get("g")))
+# ---- 225_a_slice_running_beside_the_gate_cannot_take_it_down.py
+# ---- 225_a_slice_running_beside_the_gate_cannot_take_it_down.py
+# 🐛 [2026-09-22] (self-measured) A 16-minute full gate died with `shutil.Error` because a
+# `suite_slice` run beside it deleted `tools/_suite_batch_run.py` while `ceiling-probe.py` was
+# part-way through copying the whole `.chamnan` tree. The failure mode is what makes this worth a
+# check rather than a note: exit 1, a traceback, **zero FAIL lines and no totals line** -- which is
+# indistinguishable from a clean run to anything that counts failures, and this workspace already
+# records `absence of FAIL is not success` as a lesson learned the same way.
+#
+# Two independent guards, because either alone leaves the other half of the shape open: the
+# transient file lives outside every tree anything copies, AND the copy survives a file that
+# vanishes mid-read. The second one is the general property -- the workspace is live, and anything
+# in it can be mid-write when a probe walks past.
+_t_ws225 = owner_workspace("A slice beside the gate cannot take it down")
+if _t_ws225 is not None:
+    _t_slice225 = _t_ws225 / "tools" / "suite_slice.py"
+    _t_probe225 = _t_ws225 / "tools" / "ceiling-probe.py"
+    if not (_t_slice225.is_file() and _t_probe225.is_file()):
+        skip("  [SKIP] slice/probe collision — one of the two tools is absent")
+    else:
+        _t_ssrc225 = _t_slice225.read_text(encoding="utf-8-sig", errors="replace")
+        _t_psrc225 = _t_probe225.read_text(encoding="utf-8-sig", errors="replace")
+
+        # What the probe copies, read from the probe rather than assumed: the ignore list is the
+        # thing that decides, and hardcoding a copy of it here would go stale silently.
+        _t_ignored225 = set()
+        for _m225 in __import__("re").finditer(r"ignore_patterns\(([^)]*)\)", _t_psrc225):
+            _t_ignored225 |= {p.strip().strip('"\'') for p in _m225.group(1).split(",") if p.strip()}
+        check("The probe's ignore list is readable, so this check is measuring something",
+              bool(_t_ignored225),
+              saw="no ignore_patterns found in ceiling-probe.py — the assertion below would pass "
+                  "vacuously on a probe that copies everything")
+
+        # The scratch file must land somewhere the copy skips. "logs" is the documented scratch
+        # location and is on that list; the point is the RELATION, not the literal directory.
+        _t_where225 = __import__("re").search(
+            r"_scratch = .*?parent\s*/\s*\"([a-z]+)\"", _t_ssrc225) or \
+            __import__("re").search(r"parent\.parent\s*/\s*\"([a-z]+)\"", _t_ssrc225)
+        check("...and the slice's transient script is written where the probe does not look",
+              _t_where225 is not None and _t_where225.group(1) in _t_ignored225,
+              saw="scratch dir %r against the probe's ignore list %s — a transient file inside the "
+                  "copied tree fails the copy, and the gate reports that as exit 1 with no FAIL "
+                  "lines" % (_t_where225.group(1) if _t_where225 else None, sorted(_t_ignored225)))
+
+        check("...and two slices at once cannot collide on the same scratch name",
+              "getpid()" in _t_ssrc225,
+              saw="the scratch name is shared, so a second slice overwrites or deletes the first "
+                  "one's script while it runs")
+
+        # The general half: a whole-tree copy of a LIVE directory has to tolerate a vanished file.
+        check("...and the whole-tree copy survives a file that disappears mid-copy",
+              "shutil.Error" in _t_psrc225 and "No such file" in _t_psrc225,
+              saw="copytree is unguarded — it raises at the END, having copied everything else, so "
+                  "one transient file anywhere under the workspace is a failed gate rather than a "
+                  "retried read")
+# ---- 226_comments_and_strings_go_but_interpolated_code_stays.py
+# ---- 226_comments_and_strings_go_but_interpolated_code_stays.py
+# 🐛 [2026-09-22] (owner) `chamnan-where` shipped Python-only, and the reasoning written into it was
+# that a call site has no fixed shape and a regex sweep across twenty-two languages is a
+# false-positive machine. That is still true of a regex sweep and it was the wrong conclusion. The
+# owner pushed on it; there is a third option, which is to remove what makes a text search wrong
+# before matching at all. Comments and string literals ARE what makes it wrong: measured on
+# `chamnan-corpus` (530 files, all 21 languages, 40 identifiers by file frequency), 34.6% of a text
+# search's lines were comment or string text -- 12% in Zig, 63% in Terraform.
+#
+# 🐛 And the first version lost real references. Blanking a string literal blanked the interpolation
+# inside it, so five uses of `_rand` in Python f-strings went missing -- a false ABSENCE, which is
+# the failure `in_source` refuses by returning None rather than []. It had been fixed for Ruby
+# `#{}` and JS `${}` and forgotten in the eight identical cases beside them: this repository's
+# most-recorded defect shape, nineteenth instance. Python was the one language that did not need
+# the path, so the hole was live for Dart, Kotlin, Swift, Scala, C#, PHP and Elixir.
+#
+# So the populations below are DERIVED from the tables and never listed. A language added to
+# `mapper.EXT_LANG` must reach this scanner, and a language added to `refs.INTERP_SPANS` must keep
+# its interpolated code -- and the fixture for each is BUILT from that language's own opener and
+# closer, so a new entry is exercised the moment it is added rather than the next time somebody
+# remembers to extend a hand-written list.
+_t_ws226 = owner_workspace("Comments and strings go, interpolated code stays")
+if _t_ws226 is not None:
+    if not (ROOT / "lib" / "refs.py").is_file():
+        skip("  [SKIP] lexical references — no lib/refs.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import refs as _r226
+        import mapper as _m226
+
+        _t_lc226 = _m226.LINE_COMMENT
+        check("The language tables are readable, so the populations below are not empty",
+              len(_t_lc226) >= 15 and len(_m226.EXT_LANG) >= 30,
+              saw="%d language(s) with a line comment, %d extension(s) — every assertion below is "
+                  "vacuously true on an empty table, which is how a broken scan passes"
+                  % (len(_t_lc226), len(_m226.EXT_LANG)))
+
+        # --- a comment is excluded, in EVERY language that has one -----------------------------
+        _t_missed226 = []
+        for _lang226, _marks226 in sorted(_t_lc226.items()):
+            for _mark226 in _marks226:
+                _src226 = "%s target\nx = target\n" % _mark226
+                _got226 = [n for n, _ in _r226.in_text(_src226, "target", _lang226, _marks226)]
+                if _got226 != [2]:
+                    _t_missed226.append("%s %r -> %r" % (_lang226, _mark226, _got226))
+        check("...and a line comment is excluded in every language that has one",
+              not _t_missed226,
+              saw="%s — derived from mapper.LINE_COMMENT, so a language added there and forgotten "
+                  "here shows up as one of these" % (_t_missed226,))
+
+        # --- a string literal is excluded ------------------------------------------------------
+        _t_strs226 = []
+        for _lang226, _marks226 in sorted(_t_lc226.items()):
+            # Single quotes, which interpolate in none of these languages, so the expected answer
+            # is the same everywhere and the case stays derivable.
+            _src226 = "x = 'target'\ny = target\n"
+            _got226 = [n for n, _ in _r226.in_text(_src226, "target", _lang226, _marks226)]
+            if _got226 != [2]:
+                _t_strs226.append("%s -> %r" % (_lang226, _got226))
+        check("...and a single-quoted literal is excluded in every language",
+              not _t_strs226,
+              saw="%s" % (_t_strs226,))
+
+        # --- interpolated code is KEPT, in every language that interpolates --------------------
+        # The fixture is built from each language's own opener and closer, so an entry added to
+        # INTERP_SPANS is exercised without anybody extending a list here.
+        _t_lost226 = []
+        for _lang226, _forms226 in sorted(_r226.INTERP_SPANS.items()):
+            _pre226 = _r226.INTERP_PREFIX.get(_lang226, ("",))[0]
+            _q226 = "`" if _lang226 == "js" else '"'
+            for _opener226, _opn226, _close226 in _forms226:
+                _body226 = "%starget()%s" % (_opener226.replace("\\\\", "\\"), _close226)
+                _src226 = "x = %s%sa %s b%s\n" % (_pre226, _q226, _body226, _q226)
+                _marks226 = _t_lc226.get(_lang226, ("#",))
+                _got226 = [n for n, _ in _r226.in_text(_src226, "target", _lang226, _marks226)]
+                if _got226 != [1]:
+                    _t_lost226.append("%s %r in %r -> %r" % (_lang226, _opener226, _src226, _got226))
+        check("...and interpolated code survives in every language that interpolates",
+              not _t_lost226,
+              saw="%s — each of these is a REAL use reported as absent, which is the one failure "
+                  "this module refuses everywhere else" % (_t_lost226,))
+
+        # --- nesting has no limit, which is why the regex was replaced by a balanced scan -------
+        check("...and interpolation nested three deep is still found",
+              [n for n, _ in _r226.in_text('let s = "v \\(fmt(g(target))) w"\n', "target",
+                                           "swift", _t_lc226.get("swift", ()))] == [1],
+              saw="a call inside a call inside Swift interpolation was read as string text — the "
+                  "first version capped nesting at one level and this was the case that made the "
+                  "cap unacceptable")
+
+        # --- the Lua precedence trap ------------------------------------------------------------
+        check("...and a block opener is tested before a line marker that prefixes it",
+              [n for n, _ in _r226.in_text("--[[ target\n block target ]]\nx = target()\n",
+                                           "target", "lua", _t_lc226.get("lua", ()))] == [3],
+              saw="Lua's line comment is `--` and its block comment opens `--[[`, so a line-first "
+                  "scanner closes the comment at the newline and reads the rest of the block as "
+                  "code")
+
+        # --- a lexical hit is never dressed up as something a parser said -----------------------
+        _t_kinds226 = {k for _, k in _r226.in_text("x = target()\n", "target", "go", ("//",))}
+        check("...and a lexical hit is reported as a use, never as a def or a call",
+              _t_kinds226 == {"use"},
+              saw="kinds %r — a lexical scan cannot tell a declaration from a call, and printing "
+                  "one under `call` sends a reader looking for a caller that may not exist"
+              % (sorted(_t_kinds226),))
+
+        # --- and the caller is told which method answered ---------------------------------------
+        _t_sig226 = _r226.find(ROOT, "whole_graphemes")
+        check("...and find() reports how each answer was reached",
+              len(_t_sig226) == 3 and set(_t_sig226[2]) == {"exact", "lexical"}
+              and _t_sig226[2]["exact"] > 0,
+              saw="find() returned %d value(s), methods %r — presenting a parser's answer and a "
+                  "scanner's as one number is the claim this package refuses to make"
+              % (len(_t_sig226), _t_sig226[2] if len(_t_sig226) == 3 else None))
+
+        # A floor, and it is not arbitrary. Every assertion above derives its fixture from
+        # `INTERP_SPANS`, which means DELETING a language from that table removes the case that
+        # would have caught the deletion -- the population shrinks and the checks still pass. This
+        # repository records `an empty population is not a reason to skip` for the same shape. The
+        # number is the count of languages here that genuinely interpolate, and lowering it is a
+        # decision somebody has to make on purpose.
+        check("...and the interpolation table still covers every language known to interpolate",
+              len(_r226.INTERP_SPANS) >= 11,
+              saw="%d language(s) in INTERP_SPANS: %s. Each entry above builds its own fixture from "
+                  "this table, so a deleted entry deletes its own guard — for Dart, Kotlin, Swift, "
+                  "Scala, C#, PHP and Elixir that means a silently missed reference"
+                  % (len(_r226.INTERP_SPANS), sorted(_r226.INTERP_SPANS)))
+
+        # --- naming the DECLARATION, using mapper's rules and mapper's conventions --------------
+        # 🐛 [2026-09-22] (self-measured) Three separate defects came out of reusing that table
+        # without reading how mapper reads it, and each one is asserted below rather than described:
+        #   - the name was taken from `group(1)`; mapper takes the first NON-NONE group, and on the
+        #     rules where they differ group 1 is None, so every declaration in that language was a
+        #     plain use;
+        #   - the KIND was discarded, and it is what decides where the name sits -- a `func` rule's
+        #     second group is the argument list, a `class` rule with two groups is ONE object whose
+        #     identity is both joined. Terraform came back 0 of 19;
+        #   - quoted spans were blanked in a language that writes its declared names inside quotes,
+        #     which removed the symbol before it could be matched at all. Terraform, again, 0 of 19.
+        # Measured after all three, on chamnan-corpus: 2,037 of 2,178 sampled declarations named as
+        # `def` (93.5%), stable across runs. Ten languages at 100%; the floor is C at 74%, where a
+        # signature split across lines cannot be seen by a per-line match.
+        check("...and the declaration rules are taken from mapper WITH their kinds",
+              all(isinstance(r, tuple) and len(r) == 2 and isinstance(r[0], str)
+                  for r in _r226._declares("go")) and len(_r226._declares("go")) > 0,
+              saw="_declares('go') gave %r — dropping the kind is what reported a resource TYPE as "
+                  "the declared name" % (_r226._declares("go")[:1],))
+
+        _t_decl226 = [
+            ("go", "func target(a int) int {\n", "target", "def"),
+            ("go", "func other() int { return target() }\n", "target", "use"),
+            ("tf", 'resource "aws_kms_key" "target" {\n', "target", "def"),
+            ("tf", 'resource "target" "thing" {\n', "target", "use"),
+            ("rb", "def target\n", "target", "def"),
+        ]
+        _t_wrong226 = []
+        for _lang226, _src226, _sym226, _want226 in _t_decl226:
+            _got226 = _r226.in_text(_src226, _sym226, _lang226,
+                                    _t_lc226.get(_lang226, ("#",)))
+            if _got226 != [(1, _want226)]:
+                _t_wrong226.append("%s %r -> %r want %r" % (_lang226, _src226.strip(),
+                                                            _got226, _want226))
+        check("...and a declaration is named def only when it declares the symbol asked for",
+              not _t_wrong226,
+              saw="%s — the `use` rows are the discriminating ones: a line holding a declaration of "
+                  "something ELSE must not be reported as this symbol's" % (_t_wrong226,))
+
+        check("...and quoted identifiers are preserved only where the language puts them there",
+              _r226._ident_in_quotes("tf") and not _r226._ident_in_quotes("c")
+              and not _r226._ident_in_quotes("go"),
+              saw="tf=%s c=%s go=%s — derived from whether a declaration rule captures with a quote "
+                  "before the group. `c` mentions a quote in a negative lookahead for `extern \"C\"` "
+                  "and must NOT be selected; a hand-written list of one language would never have "
+                  "been tested against that"
+              % (_r226._ident_in_quotes("tf"), _r226._ident_in_quotes("c"),
+                 _r226._ident_in_quotes("go")))
+
+        check("...and a declaration inside a comment is not a declaration",
+              _r226.in_text("// func target() {}\nx = target()\n", "target", "go", ("//",))
+              == [(2, "use")],
+              saw="a commented-out signature was reported as the place it is defined, which sends "
+                  "a reader to a line that does nothing")
+# ---- 227_the_decision_prototype_is_copyable_and_calls_nothing.py
+# ---- 227_the_decision_prototype_is_copyable_and_calls_nothing.py
+# 🐛 [2026-09-22] (owner) The `decide` skill shipped as reasoning with no artefact. The owner's
+# objection, and it is an economy rather than a style point: *every model can already think its way
+# to a good judgement — it just costs tokens every time.* Where the answer is settled, the deciding
+# itself is the waste, and the cheap form is a guard that carries the decision so nobody re-derives
+# it.
+#
+# Measured on this session's own output, which is the evidence that made the point stick: five
+# guards written in one night, 40,595 bytes, and each one re-invented the identical scaffolding --
+# the population gate, the skip with a reason, 8.2 assertions each with its own `saw=`. The shape
+# was in `.chamnan/skills/writing_a_check_that_can_fail.md`, which is this repository's PRIVATE
+# workspace, so nobody who installs the plugin ever saw it. It is now a copyable prototype in the
+# shipped skill.
+#
+# Two of the checks below are the owner's constraints rather than mine, and both were stated twice:
+# the confidence comes from COUNTING and not from a model, and nothing in the procedure calls out.
+# A decision procedure that ends in a model call has not removed the deciding, it has moved it
+# somewhere that bills per use.
+_t_ws227 = owner_workspace("The decision prototype is copyable and calls nothing")
+if _t_ws227 is not None:
+    import re as _re227
+
+    _t_sk227 = ROOT / "skills" / "decide" / "SKILL.md"
+    if not _t_sk227.is_file():
+        skip("  [SKIP] decision prototype — no skills/decide/SKILL.md")
+    else:
+        _t_txt227 = _t_sk227.read_text(encoding="utf-8-sig", errors="replace")
+        _t_low227 = _t_txt227.lower()
+
+        # A prototype is something you copy. Prose is not.
+        _t_blocks227 = _re227.findall(r"```[a-z]*\n(.*?)```", _t_txt227, _re227.S)
+        check("The decision skill carries a copyable prototype, not only prose",
+              any(len(b.splitlines()) >= 8 for b in _t_blocks227),
+              saw="%d fenced block(s), longest %d line(s) — the owner's point was that a clear "
+                  "prototype gets copied and adapted, and advice does not"
+              % (len(_t_blocks227), max((len(b.splitlines()) for b in _t_blocks227), default=0)))
+
+        # The six decisions the prototype exists to carry. Each is a decision somebody would
+        # otherwise make again, and this repository has paid for each of them at least once.
+        # One pattern each, naming the DECISION as the table states it. No alternatives that a
+        # different part of the document could satisfy -- that is what let a gutted row pass.
+        _t_carries227 = {
+            "derive the population": r"deriv\w+ the population",
+            "an empty population fails": r"empty population is a failure",
+            "name the offender": r"report who",
+            "the message says what to do": r"acts without opening",
+            "the threshold lives in code": r"not re-argued",
+            "the name reads as a property": r"not as a test id",
+        }
+        # 🐛 Searched the WHOLE document, and every pattern carried alternatives -- so gutting the
+        # table row for "derive the population" left `scan(` in the code block and the check stayed
+        # green. An assertion that passes on a substitute is the first trap the prototype above
+        # names: search the region, not the document. The table is where the decision is STATED;
+        # the code block is where it is performed, and both have to be there.
+        _t_table227 = _t_low227[_t_low227.find("| in the prototype"):]
+        _t_table227 = _t_table227[:_t_table227.find("\n\n")] if "\n\n" in _t_table227 else _t_table227
+        _t_absent227 = [k for k, pat in _t_carries227.items()
+                        if not _re227.search(pat, _t_table227)]
+        check("...and it names each decision it carries, so none is re-argued per use",
+              not _t_absent227,
+              saw="missing: %s — a prototype that leaves one of these to the reader is one the "
+                  "reader has to decide again, which is the cost this exists to remove"
+              % (_t_absent227,))
+
+        # The owner's constraint, stated twice: local-first, no network, and the confidence is
+        # counted rather than asked for. Built at runtime so this file cannot match itself.
+        _t_forbidden227 = [
+            "ask the " + "model", "call the " + "model", "the " + "model decides",
+            "send it to " + "an api", "query " + "an llm", "http" + "s://api",
+        ]
+        _t_found227 = [f for f in _t_forbidden227 if f in _t_low227]
+        check("...and nothing in the procedure asks a model or a service for the confidence",
+              not _t_found227,
+              saw="%s — a procedure that ends in a model call has not removed the deciding, it has "
+                  "moved it somewhere that bills per use, and chamnan runs local-first with no "
+                  "network by design" % (_t_found227,))
+        # 🐛 My own first version of this read `"not.*model" in text` -- a regex written as a
+        # substring test, which can never match -- and `A and B or C` collapsed it to C. It failed
+        # on a skill that says the right thing, which is the third shape the prototype above warns
+        # about: a guard that is wrong in both directions.
+        # Emphasis is stripped before matching: the sentence in the file is "does **not** come
+        # from a model", and a pattern that does not allow for markdown between the words is a
+        # guard that fails on correct text -- which is how this check first went red.
+        _t_flat227 = " ".join(_t_low227.replace("*", "").replace("`", "").split())
+        check("...and it says outright where the confidence comes from",
+              _re227.search(r"count(ed|ing)", _t_flat227) is not None
+              and _re227.search(r"(does not|never) come[s]? from a model", _t_flat227) is not None,
+              saw="the skill never states that the confidence is counted rather than a model's — "
+                  "which is the one line that makes it usable with no network")
+
+        # It has to be reachable WITHOUT somebody remembering to type it, or the prototype is an
+        # island. The five skills that write into the workspace are deliberately user-only; a
+        # read-only procedure is not.
+        check("...and the model may load it by itself, so ordinary work can reach the prototype",
+              "disable-model-invocation: true" not in _t_txt227,
+              saw="the skill is user-invoked only, so it is reached by remembering to type it — and "
+                  "a decision made mid-work is exactly the moment nobody remembers")
+
+        # The description is the only thing the host matches on, so the trigger has to be in it.
+        _t_desc227 = _re227.search(r"^description:\s*(.+?)(?:\n---|\n[a-z-]+:)",
+                                   _t_txt227, _re227.S | _re227.M)
+        check("...and its description names writing a guard, which is when it is wanted",
+              _t_desc227 is not None
+              and _re227.search(r"check|guard|gate|validat", _t_desc227.group(1), _re227.I)
+              is not None,
+              saw="description %r — the host matches on this and nothing else, so a trigger absent "
+                  "from it is a skill that never loads"
+              % (_t_desc227.group(1)[:120] if _t_desc227 else None,))
 # ---- 22_a_second_entry_does_not_overwrite_the_first.py
 # ------------------------------------------- one of four stores had the guard
 # 🐛 [2026-09-09] Every store here builds a filename by truncating an ASCII reduction of the title —
