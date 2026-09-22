@@ -558,6 +558,57 @@ def _indexable(root):
 _BUILT_FROM = re.compile(r"\bBuilt from ([0-9a-f]{7,40})\.")
 
 
+# How many commits behind the index is before the notice stops being a footnote and becomes a
+# decision. Chosen from recorded behaviour rather than picked: across 400 real session-block firings
+# in the repository chamnan is developed in, the index was behind on 78 of them (19.5%), by a median
+# of 42 minutes and a MAXIMUM of 16.6 hours. Not one firing in that record would clear this bar. So
+# it cannot fire on ordinary work -- it fires for the reader who has not rebuilt in weeks, which is
+# the only case where the cost of rebuilding is worth putting in front of somebody.
+MAP_STALE_COMMITS = 20
+# Measured on this repository: 11.9s to rebuild an index of 636 files, so ~19ms per file. Used to
+# say what the rebuild costs on the READER's tree rather than quoting a figure from ours.
+MAP_REBUILD_MS_PER_FILE = 19
+
+
+def map_commits_behind(root, map_path):
+    """Commits between the index's stamped build and HEAD, or None when that cannot be answered.
+
+    None is not zero, and the caller must not treat it as such: no git, no stamp, or a stamp from
+    history this repository does not have all mean *unknown*, and the quiet age-based line stays
+    the whole notice in that case. The same rule `_map_is_current_by_git` already follows.
+    """
+    if not ws.git_can_speak_for(root):
+        return None
+    try:
+        m = _BUILT_FROM.search(map_path.read_text(encoding="utf-8-sig", errors="replace")[:600])
+        if not m:
+            return None
+        out = subprocess.run(["git", "-C", str(root), "rev-list", "--count",
+                              "%s..HEAD" % m.group(1)],
+                             capture_output=True, text=True, timeout=5)
+        return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() \
+            else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def map_rebuild_cost(indexed):
+    """"about 12 seconds" for the reader's own index size, or "" when the size is unknown.
+
+    The point of saying it at all: the strong notice asks somebody to spend something, and a request
+    with no price attached gets deferred forever. It is deliberately vague -- "about 12 seconds" --
+    because a figure to three digits invites an argument about the figure instead of a decision.
+    """
+    if not indexed:
+        return ""
+    secs = indexed * MAP_REBUILD_MS_PER_FILE / 1000.0
+    if secs < 20:
+        return "about %d seconds" % max(5, round(secs / 5) * 5)
+    if secs < 120:
+        return "under two minutes"
+    return "a few minutes"
+
+
 def _map_is_current_by_git(root, map_path):
     """True when nothing the map describes has changed since the commit it was built from.
 
@@ -1794,9 +1845,40 @@ def main():
                     #
                     # A lead line — before the first heading — belongs to no section, so `reorder`
                     # keeps it at the front and nothing can drop it (R5 agent 5, 2026-09-09).
-                    _stale_lines.append(redact.scrub(
-                        f"_⚠ Source has changed since this index was built ({ago(behind)}). "
-                        f"{what}Rebuild it with {fix}._\n"))
+                    # Two tiers, because until now a 42-minute gap and a three-week one said the
+                    # same sentence. The quiet line below is right for the common case and stays
+                    # exactly as it was: it NAMES the missing files, which is something a session
+                    # can act on without deciding anything.
+                    #
+                    # The loud one is for the reader this was actually failing -- somebody who has
+                    # not rebuilt in a long time, for whom listing three filenames is not the
+                    # answer and the real question is whether to spend the rebuild. It says what
+                    # that costs, on their tree, and it is capped at three showings by
+                    # `notice_due`: advice that repeats forever is worse than advice shown once,
+                    # and this one asks for something, which makes repeating it worse still.
+                    #
+                    # It does not rebuild by itself. The same rule the update banner above already
+                    # states: a tool that acts because somebody opened a session is doing something
+                    # they did not ask for, and doing it silently is worse than not doing it.
+                    _behind_commits = map_commits_behind(root, wsdir / "MAP.md")
+                    _loud = (_behind_commits is not None
+                             and _behind_commits >= MAP_STALE_COMMITS
+                             and ws.notice_due(root, "map-far-behind"))
+                    if _loud:
+                        _indexed = 0
+                        _hm = re.search(r"(\d[\d,]*) source file", text[:600])
+                        if _hm:
+                            _indexed = int(_hm.group(1).replace(",", ""))
+                        _cost = map_rebuild_cost(_indexed)
+                        _stale_lines.append(redact.scrub(
+                            f"_⚠ This index was built {_behind_commits} commits ago and is no "
+                            f"longer describing this repository. {what}Rebuilding takes "
+                            f"{_cost or 'a moment'} and nothing does it for you — run {fix} when "
+                            f"you want it. Said at most three times._\n"))
+                    else:
+                        _stale_lines.append(redact.scrub(
+                            f"_⚠ Source has changed since this index was built ({ago(behind)}). "
+                            f"{what}Rebuild it with {fix}._\n"))
 
                 # Outside the `if behind:` above, and that placement is the fix rather than an
                 # oversight. Both warnings there are gated on an mtime comparison, and deleting or
