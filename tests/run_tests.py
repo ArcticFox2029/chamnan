@@ -27208,11 +27208,39 @@ try:
 
     # The STALENESS warning is not the offer and must never be capped: it describes the tree right
     # now and is true every time it fires.
+    #
+    # 🐛 [2026-09-22] (self-measured) This used to read 2,000 characters before the warning's text
+    # and assert `notice_due` was not among them. That is proximity, not structure, and it failed
+    # on a CORRECT change: the notice was split so the unconditional fact keeps firing while only
+    # the ASK beside it is rationed -- which is this property being honoured more carefully, not
+    # broken. Wrong in the other direction too: a cap placed 2,001 characters away would have
+    # passed. Asked of the syntax tree instead, where "is this append inside a notice_due branch"
+    # is a question with an answer.
+    import ast as _ast10
     _hook_src = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
-    _warn = _hook_src[_hook_src.index("Source has changed since this index was built") - 2000:
-                      _hook_src.index("Source has changed since this index was built")]
+    _tree10 = _ast10.parse(_hook_src)
+
+    def _appends_stale10(node):
+        """True if any `_stale_lines.append(...)` carrying the warning's text sits under `node`."""
+        for sub in _ast10.walk(node):
+            if not (isinstance(sub, _ast10.Call) and isinstance(sub.func, _ast10.Attribute)
+                    and sub.func.attr == "append"):
+                continue
+            src = _ast10.get_source_segment(_hook_src, sub) or ""
+            if "Source has changed since this index was built" in src:
+                return True
+        return False
+
+    _capped10 = [n for n in _ast10.walk(_tree10)
+                 if isinstance(n, _ast10.If)
+                 and "notice_due" in (_ast10.get_source_segment(_hook_src, n.test) or "")
+                 and _appends_stale10(n)]
     check("...while the staleness warning itself carries no such cap",
-          "notice_due" not in _warn.split("_offer =")[-1])
+          not _capped10,
+          saw="the warning is emitted inside a `notice_due` branch at line(s) %s — after the cap "
+              "is spent the block would go quiet about an index that is still stale, which is the "
+              "one reader this warning exists for"
+              % ([n.lineno for n in _capped10],))
 finally:
     shutil.rmtree(_d_10, ignore_errors=True)
 # ---- 110_a_candidate_removed_mid_command_fails_by_name_not_errno.py
@@ -39002,15 +39030,32 @@ if _t_ws228 is not None:
           saw="%r — an empty index has no cost to state, and one figure for every size is this "
               "repository's number wearing the reader's name" % (_t_costs228,))
 
-    # The two guards that keep a loud notice from becoming a nuisance.
-    _t_loud228 = _t_src228[_t_src228.find("_loud = ("):]
-    _t_loud228 = _t_loud228[:_t_loud228.find("else:")]
-    check("...and the loud notice is capped, so it cannot repeat forever",
-          "notice_due" in _t_loud228,
-          saw="ungated — it asks the reader to spend something, and an unanswered request repeated "
-              "every session is how a reader learns to skip the whole block")
+    # 🐛 The first version of this asserted the whole loud notice was gated, and `10_offer_fatigue`
+    # was right to refuse it: the staleness warning describes the tree right now and is true every
+    # time it fires, so capping it would go silent about a stale index while it was still stale.
+    # What may not repeat is the ASK. Both halves are checked, because honouring one and dropping
+    # the other is how this went wrong the first time.
+    import ast as _ast228
+    _t_tree228 = _ast228.parse(_t_src228)
+    _t_gated228 = [n for n in _ast228.walk(_t_tree228)
+                   if isinstance(n, _ast228.If)
+                   and "notice_due" in (_ast228.get_source_segment(_t_src228, n.test) or "")
+                   and "map-far-behind" in (_ast228.get_source_segment(_t_src228, n.test) or "")]
+    check("...and the REQUEST it makes is rationed, so it cannot be asked every session",
+          bool(_t_gated228),
+          saw="nothing gates the ask — an unanswered request repeated every session is how a "
+              "reader learns to skip the whole block")
+
+    _t_askbody228 = "\n".join(_ast228.get_source_segment(_t_src228, b) or ""
+                              for n in _t_gated228 for b in n.body)
+    check("...and the fact it states is NOT rationed, so a stale index is never silent",
+          "Source has changed since this index was built" not in _t_askbody228,
+          saw="the warning itself sits inside the capped branch, so after three showings the "
+              "block stops mentioning an index that is still behind")
+
     check("...and nothing in it rebuilds the index by itself",
-          not _re228.search(r"chamnan-map|mapper\.build|subprocess\.run\(\[.*map", _t_loud228),
+          not _re228.search(r"chamnan-map|mapper\.build|subprocess\.run\(\[.*map",
+                            _t_askbody228),
           saw="the notice rebuilds — a tool that acts because somebody opened a session is doing "
               "something they did not ask for, which is the rule the update banner beside it "
               "already states")
