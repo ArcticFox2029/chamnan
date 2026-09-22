@@ -96,22 +96,26 @@ def in_source(text, symbol):
         tree = ast.parse(text)
     except (SyntaxError, ValueError, RecursionError):
         return None                      # unparseable is not the same as "no references"
-    shadowed = set()
-    for n in ast.walk(tree):
+    # One descent that carries "is this node under a scope that shadows `symbol`" down the
+    # stack, instead of marking every node under a shadowing scope one at a time (which walked
+    # most of the tree once per shadowing function, on top of the two full walks this replaces).
+    out = []
+    stack = [(tree, False)]
+    while stack:
+        n, shadowed = stack.pop()
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             if symbol in _bound_locally(n):
-                for inner in ast.walk(n):
-                    shadowed.add(id(inner))
-    out = []
-    for n in ast.walk(tree):
+                shadowed = True
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == symbol:
             out.append((n.lineno, "def"))
-        elif isinstance(n, ast.Call) and id(n) not in shadowed:
+        elif isinstance(n, ast.Call) and not shadowed:
             f = n.func
             if isinstance(f, ast.Name) and f.id == symbol:
                 out.append((n.lineno, "call"))
             elif isinstance(f, ast.Attribute) and f.attr == symbol:
                 out.append((n.lineno, "attribute"))
+        for child in ast.iter_child_nodes(n):
+            stack.append((child, shadowed))
     return sorted(set(out))
 
 

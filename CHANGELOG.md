@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1290), and every one of these is on the
+[README](README.md#whats-new-in-1300), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -18,6 +18,244 @@ in this file that no tag matches — and on the machine chamnan is developed on,
 already reports the last released number while running newer code.
 
 ---
+
+## What's new in 1.30.0
+
+**Five new questions you can ask the repository, and the answers arrive faster than the last release
+could give them.**
+
+| | 1.29.0 | 1.30.0 |
+|---|---|---|
+| Naming an edit that will not survive | 33.5 ms per Edit | **0.5 ms** |
+| Cache hit ratio behind the similarity path | 23.5% | **90.3%** |
+| Languages a reference scan can read | 1 | **21** |
+| Noise in a cross-language reference scan | a plain grep's | **98% of it removed** |
+| Instruction files checked for claims that stopped being true | none | **every one in the tree** |
+
+Together those say one thing: **the cost of asking fell far enough that asking became worth doing.**
+A question that takes a third of a second gets asked; the same question at thirty milliseconds a
+file does not.
+
+- **You can ask where a name is actually used**, not where it is mentioned. `chamnan-where` reads
+  21 languages and excludes comments, strings and docstrings before it answers.
+- **You can ask what this repository costs a model, measured on this repository.** `chamnan-vs`
+  prints three numbers from your own tree rather than quoting ours.
+- **You can ask whether the problem is the machine or the code**, before an hour goes into the wrong
+  one. `/chamnan:why`.
+- **You can have a change reviewed against what the repository already knows** — its rules, its
+  recorded decisions, the sibling that solved this before. `/chamnan:review`.
+- **You can have a decision counted rather than argued.** `/chamnan:decide` puts the evidence on
+  each side and shows the count, with no model in the loop.
+- **Resuming a session stops paying twice.** The hook recognises its own block in the transcript and
+  sends one line instead of the whole thing.
+
+### What you should notice
+
+Most of this is deliberately invisible on the happy path. What you will see: a resumed session that
+does not re-send what it already told you, a repository whose stale index asks once instead of every
+time, and one notice per tool call instead of one per hook that fired.
+
+What you will not see, and that is the point, is the `chamnan-where` that used to take long enough
+that you would have run `grep` instead.
+
+### Under the hood
+
+**Asking the repository a question**
+
+Five commands, and the common thread is that each answers a question somebody was already asking
+badly. `chamnan-where` answers "where is this name used" — a comment, a string and a docstring all
+*mention* a name and none of them *uses* it, and that distinction is the whole difference between a
+list you can act on and a list you have to filter by hand. Python is answered by its own parser;
+twenty other languages are answered lexically, and labelled as lexical so nobody mistakes one for
+the other. Comments and string literals are blanked before the identifier is matched: against the
+AST's verdict on six real symbols in this package — 92 true uses against 178 raw grep hits, 86 of
+them noise — that removes 98% of the noise, reporting 94 against the AST's 92.
+
+`chamnan-vs` prints three numbers measured on the tree it is run in: every indexed file
+concatenated, the block chamnan injects, and the largest file read whole against the same file
+peeked. It names no other tool, deliberately — a reader gains nothing from a competitor's name and
+loses the ability to check the figure against their own code. A repository with no recorded sessions
+gets the block's byte *ceiling* rather than a token figure that would have to be invented from a
+chars-per-token ratio this package refuses to use.
+
+`/chamnan:why` separates "the machine is wrong" from "the code is wrong" before either is debugged.
+`/chamnan:review` reviews a change against the repository's own rules and recorded decisions.
+`/chamnan:decide` counts evidence on each side of a question and shows the count.
+
+**Performance**
+
+Naming an edit that will not survive went from **33.5 ms to 0.5 ms** per Edit. The old path paid a
+git subprocess on every edit of every file, and 32 ms of that is process spawn alone and cannot be
+optimised away — it had to stop being spawned.
+
+One similarity threshold existed in two copies that could disagree. Consolidating it and moving it
+from 0.99 to 0.75 took the cache hit ratio behind it from **23.5% to 90.3%**, because a threshold
+that strict meant almost nothing was ever recognised as the thing it had just seen.
+
+The reference scan no longer walks a function's whole subtree once per enclosing function. On a
+module where every function shadows the searched name, the old shape visited 1,852 AST nodes against
+520 now — and produced the identical answer on all 5,016 (file, symbol) pairs it was checked against.
+
+**Reliability**
+
+A repository whose index has fallen behind now asks once and stops. Measured over 400 real sessions,
+the index was behind on **78 of them (19.5%)**, median 42 minutes, p90 3.6 hours, and a maximum of
+16.6 hours — so the notice was firing constantly and being ignored constantly, which is the worst
+state for a notice to be in.
+
+Instruction files are now checked for claims that stopped being true. On this machine that check
+reported 11 of 24, 8 of 12 and 19 of 47 statements no longer matching the tree they describe —
+between 50% and 80% of each file. The check reports and never rewrites: an instruction file is the
+owner's, and a tool that edits one is a tool nobody can trust with anything else.
+
+A tool call produces one notice now, across hooks that cannot see each other and each believed
+itself the only speaker.
+
+**Security**
+
+Homoglyph detection closes the half of Trojan Source this package never answered. The bidirectional
+and zero-width halves were already scrubbed; a Cyrillic character standing in for a Latin one was
+not, and a path mixing two scripts is exactly how a reviewer is shown one thing while the machine
+reads another. It detects and names the segment — it never rewrites a path, because a rewrite is a
+decision about somebody else's filename.
+
+Per-segment, not per-path, and that is load-bearing: this repository's own tree contains Thai
+directory names, and a per-path test would flag every one of them.
+
+**Cross-platform**
+
+The long-document notice told every reader to run a script that exists only on the machine that
+wrote it. Windows paths that git C-quotes are decoded before they are compared, rather than compared
+as quoted bytes against unquoted ones.
+
+### Interesting findings
+
+**A check can assert the opposite of its own name and pass for its entire life.** A guard was found
+beside the feature it was written for, having never once run — its population was empty, so it
+reported success over nothing every time. The fix was not to the guard: the new check derives its
+population from the source rather than trusting a list, because a list is what let the population go
+empty unnoticed.
+
+**A warning that fires on healthy files teaches people to ignore it.** Two warnings were measured
+firing on files with nothing wrong with them, and both were found by the feature that had just been
+built to warn about things — it warned about itself. Both were removed rather than tuned; a
+threshold that needs tuning to stop crying wolf is usually answering the wrong question.
+
+**Three claims the index made about the tree were false.** An absent reference, a swallowed commit,
+and a rebuild that reported success without running. All three now check rather than assert, which
+is the whole difference between a document and a claim.
+
+**The right answer to "which language is this" was already written down.** A declaration scanner was
+about to get its own rules for naming things, one file away from `mapper.py`, which had answered the
+same question for twenty languages already. Terraform scored 0 of 19 under the new rules and 19 of
+19 under mapper's — nine resources of type `aws_kms_key` are not nine things named `aws_kms_key`.
+
+### Dogfood and real-world discovery
+
+Every number in the performance section came from running this package on real repositories rather
+than on a fixture. The 400-session index-staleness figure is this machine's own session history. The
+33.5 ms edit cost was noticed as a session that felt slow before it was ever measured, and was turned
+into a reproducible case before any code moved.
+
+The five new commands each exist because the same question was asked badly three times in a row in
+real work, and the third time it was written down instead of answered again.
+
+### Research-driven improvements
+
+Two techniques that a repository index is expected to adopt were measured against this one and are
+deliberately not in it.
+
+**Incremental rebuild.** Rebuilding only what changed is the standard answer for an index, and three
+separate literatures — incremental recomputation, content-addressed identity, differential dataflow —
+arrive at it. Measured here, a full index rebuild is 11.5 seconds across 660 files. Against that
+base, the published conditions on those techniques bite: the first incremental build is slower, each
+configuration needs its own cache, and a coarse task erases the benefit entirely. The staleness
+class it would introduce costs more than the seconds it would return, so the index still rebuilds
+whole and stays simple enough to reason about.
+
+**Late-interaction retrieval.** Token-level matching with a reranker is the current answer to
+retrieval quality, and every published variant requires a neural encoder, a multi-vector index and
+accelerator-backed inference. This package is standard library, with no model and no index service,
+which is what lets it install into any repository and run the same way. Retrieval here stays lexical
+and exact rather than trading that away.
+
+Both decisions, their sources and the conditions that would reopen them are in the research index
+attached to this release.
+
+### Research & evidence
+
+- `INDEX_CITED_IN_CODE.md` — attached to this release. Every defect record in the source that names
+  the research round or the measurement that found it, resolved back to the line it was fixed on.
+- `tests/run_tests.py` — the whole suite, runnable after a clone.
+- `tools/redactor_recall.py` — recomputes the redactor's recall and precision on the shipped corpus.
+- `tools/map_claim_check.py` — re-derives whether the index's claims about the tree still hold.
+- `tools/verify_release.py` — checks the package itself.
+- `bin/chamnan-vs` — the three numbers, on your repository rather than on ours.
+
+### Verification
+
+VERIFICATION_TOTALS_PENDING
+
+The suite covers known regressions, malformed and hostile input, platform-specific behaviour,
+research-derived edge cases and adversarial security fixtures. It is not a claim that this package
+has no defects — it is a claim that the behaviours it defines still do what it said they would.
+
+**The megaproject gate**, run before anything else and against a corpus nobody on this project
+wrote: **532 source files, 517 of them described (97.2%), 69 distinct extensions, and 7 writing
+systems in the index** — Arabic, CJK, Cyrillic, Devanagari, Hangul, Hiragana and Thai. **Planted
+credentials reaching the index: 0**, which is asserted absolutely and never as a floor, because one
+is the whole product failing.
+
+The 15 files it does not describe are recorded rather than rounded off: three Perl files have no
+reader at all, two Python-2 files cannot be parsed, and the rest carry no comment to read. 97.2% is
+the ceiling currently available without writing a Perl reader.
+
+**Catastrophic backtracking**, asked in the engine that actually runs the patterns: every quantified
+regular expression this package ships was fired at with inputs shaped to force exponential
+backtracking, inside a watchdog that kills the attempt rather than waiting for it. **None hung.**
+That probe now runs as part of the suite, so a pattern added later is asked the same question.
+
+### Measured and rejected
+
+**A published figure was withdrawn rather than defended.** "Aggressive context compression raises
+cost by 1.8% over 358 runs" was cited in this project's own notes. Re-measured, the smallest effect
+this repository can detect at all is 52.7% of the mean — thirty times larger than that figure — so
+the number was never separable from noise. It is withdrawn, and no compression change was made on
+the strength of it.
+
+**A fail-closed redaction mode was designed and rejected.** Refusing to store anything containing a
+detected secret is safer in the narrow sense and stops the work in the broad one: real sessions
+handle credentials legitimately, and a model that cannot see the sentence around a credential cannot
+tell you to rotate it. This package filters and lets the work continue. That is a different product
+from a blocking one, not a weaker version of it.
+
+### Known limitations
+
+- Windows behaviour is tested on CI, not on a Windows machine anybody here owns.
+- `chamnan-where` still parses every source file in the tree rather than reading the index, so on a
+  large repository it is seconds rather than milliseconds. The nested-walk half of that cost was
+  fixed here; the parse-everything half was not.
+- The reference scan is exact for Python and lexical for the other twenty languages. Lexical results
+  are labelled as lexical and should be read that way.
+- The redactor cannot catch a secret with no shape, no known prefix and no credential-named
+  position, and the shipped corpus does not cover every secret format in existence.
+- Homoglyph detection reports a mixed-script segment; deciding whether it is an attack or a
+  legitimately multilingual path is left to the reader.
+
+### Upgrade
+
+```
+/plugin update chamnan
+```
+
+Nothing else to do. The new commands appear on the next session start; existing workspaces are not
+migrated or rewritten.
+
+### In closing
+
+This release is about the moment somebody turns to the repository with a question. Five of those
+questions now have a command, the answers arrive fast enough to be worth asking for, and the
+measurements behind every claim above ship with the package so you can take them apart.
 
 ## What's new in 1.29.0
 

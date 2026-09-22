@@ -34882,6 +34882,49 @@ if _t_rc186 is None:
 else:
     CITE186, DATED186 = _t_rc186.CITE, _t_rc186.DATED
 
+    # 🐛 [2026-09-22] (self-measured) `DATED` was widened the same day to read a record's OWN
+    # bracket (`[audit-qa 2026-09-22]`, `[R6, 2026-09-16]`) instead of requiring a bare date, and
+    # this check started SEEING those records for the first time -- and rejecting nearly all of
+    # them, because it only ever looked at the window around the record, never inside the bracket
+    # the widening just opened up. A named maintenance agent or a round citation written inside the
+    # bracket says exactly as much as the same thing written in the window already does.
+    #
+    # Agent names are read from `agent_schedule.AGENTS` at runtime rather than typed here -- a
+    # hand-typed roster is the defect this repository records most often, and the next agent added
+    # there would otherwise be silently rejected by a check nobody thought to update.
+    _t_as_path186 = ROOT.parent.parent / ".chamnan" / "tools" / "agent_schedule.py"
+    _t_as186 = None
+    if _t_as_path186.is_file():
+        try:
+            _t_as_spec186 = _ilu186.spec_from_file_location("agent_schedule186", str(_t_as_path186))
+            _t_as186 = _ilu186.module_from_spec(_t_as_spec186)
+            _t_as_spec186.loader.exec_module(_t_as186)
+        except Exception:      # noqa: BLE001 — an unloadable tool is a skip, not a false green
+            _t_as186 = None
+
+    _AGENT_NAMES186 = None      # regex over every dispatchable agent, or None if agent_schedule did not load
+    if _t_as186 is None:
+        print("      [note] check 186 — could not load %s; a maintenance-agent name written inside "
+              "a record's bracket will not be recognised this run" % (_t_as_path186,))
+    else:
+        # 🐛 [2026-09-22] (owner) Built from `AGENTS` alone at first, and that is the SCHEDULE, not
+        # the roster. `audit-qa` came off the schedule earlier the same day on the owner's word and
+        # stayed dispatchable by name, so fourteen records reading `🐛 [audit-qa <date>]` named a
+        # real agent that really found them and were still counted as naming nothing. The question
+        # this check asks is whether the record says where it came from — being on a cadence is a
+        # different question, and reading the wrong set made the answer depend on it.
+        #
+        # `_defined_agents()` is the roster: every agent with a definition file, scheduled or not.
+        # Deriving from it means the next agent added or descheduled needs no edit here.
+        _t_roster186 = set(_t_as186.AGENTS) | set(_t_as186._defined_agents())
+        # Longest name first: a name that is a prefix of another must not steal the match. `\b`
+        # alone is not enough here because the boundary is checked around the WHOLE alternated
+        # name, not fragment by fragment.
+        _t_agent_names186 = sorted(_t_roster186, key=len, reverse=True)
+        if _t_agent_names186:
+            _AGENT_NAMES186 = _re186.compile(
+                r"\b(?:" + "|".join(_re186.escape(_t_n186) for _t_n186 in _t_agent_names186) + r")\b")
+
     _t_recent186 = 0
     _t_offenders186 = []
     _t_round_cited186 = 0      # recent records that carry a round citation (the CITE186 form)
@@ -34915,9 +34958,22 @@ else:
                 continue
             _t_recent186 += 1
             _t_window186 = _t_lines186[_t_i186 - 1:_t_i186 - 1 + _t_rc186.RECORD_CITATION_WINDOW]
-            if _t_cited186:
+
+            # What the record's OWN bracket says, if anything. `_t_m186` (the DATED match on this
+            # line) starts at the 🐛 and ends at the bracket's own closing `]`, so slicing it is
+            # enough -- no second regex is written to re-extract the same text.
+            _t_bracket186 = _t_m186.group(0).split("[", 1)[1][:-1]
+            # `CITE` already recognises a round written as `(R6)` / `(R6, 2026-09-16)` -- the
+            # paren-wrapped shape. A bracket writes the identical text without the parens, so the
+            # bracket text is wrapped in the parens CITE already expects rather than teaching this
+            # check a second pattern that would mean the same thing.
+            _t_bracket_round186 = bool(CITE186.search("(" + _t_bracket186 + ")"))
+            _t_bracket_agent186 = bool(_AGENT_NAMES186 and _AGENT_NAMES186.search(_t_bracket186))
+
+            if _t_cited186 or _t_bracket_round186:
                 _t_round_cited186 += 1
-            elif any(_t_rc186.STATED_SOURCE.search(_t_l186) for _t_l186 in _t_window186):
+            elif _t_bracket_agent186 or any(
+                    _t_rc186.STATED_SOURCE.search(_t_l186) for _t_l186 in _t_window186):
                 _t_other_cited186 += 1
             else:
                 _t_head186 = DATED186.sub("", _t_line186).lstrip("#% ").strip()
@@ -40470,6 +40526,434 @@ _t_named = set(re.findall(r"(?:sk-|pk-|rk_|ak_|phc_|ghp_|github_pat_|AKIA|ASIA|A
                           r"glpat-|dop_v1_|shpat_|SG\\.|npm_|dckr_pat_)", _t_src23))
 check("the exemption constant and the enforcement list are both still present and distinct",
       "_CREDENTIAL_PREFIX" in _t_src23 and len(_t_named) >= 10, saw=f"{len(_t_named)} prefixes named")
+# ---- 240_a_thai_path_is_not_a_homoglyph_attack.py
+# ---- 240_a_thai_path_is_not_a_homoglyph_attack.py
+# 🐛 [2026-09-22] (R19) Trojan Source is two CVEs and chamnan only answered one. `for_a_terminal`
+# strips bidi overrides and zero-width characters — verified — so CVE-2021-42574 is covered. A
+# HOMOGLYPH swap is not touched: `srс/main.py` with a Cyrillic `с` comes back byte-identical and
+# reads as `src/main.py` to anything downstream, which is CVE-2021-42694. chamnan prints
+# repository-derived paths into a model's context, so that is the exposure.
+#
+# **The load-bearing property is the NEGATIVE one.** A whole-string script check flags
+# `ไทย/main.py`, and this repository's corpus is largely Thai — it would fire on ordinary paths all
+# day, which is the warning-on-a-healthy-artifact this project refuses by rule. Checking per
+# SEGMENT is what separates a real confusable from an ordinary multilingual path, and that
+# distinction is the whole value of the function. It is asserted first, and on real paths from
+# this repository rather than on invented ones.
+#
+# Detection only. Nothing rewrites a user's filename — that would be changing their data to make a
+# warning easier to emit.
+_t_ws240 = owner_workspace("A Thai path is not a homoglyph attack")
+if _t_ws240 is not None:
+    sys.path.insert(0, str(ROOT / "lib"))
+    import redact as _rd240
+
+    # Real paths out of this repository, not fixtures: the false-positive claim has to be made
+    # against the corpus that would suffer it.
+    _t_innocent240 = ["src/main.py", "ไทย/main.py", "data/ความรู้/index.json",
+                      "miki-hybridge-ai/src/vector_memory.py",
+                      ".chamnan/memory/rules/the-set-not-the-member.md",
+                      "Work-Mode/chamnan/lib/redact.py"]
+    _t_fired240 = [p for p in _t_innocent240 if _rd240.mixed_script_segment(p)]
+    check("NO ORDINARY PATH IN THIS REPOSITORY IS FLAGGED, INCLUDING THE THAI ONES",
+          not _t_fired240,
+          saw="%s — a detector that fires on this corpus is one the reader learns to skip, and "
+              "the Thai paths here are ordinary rather than exotic" % (_t_fired240,))
+
+    # And the positive case, or the check above passes on a function that always answers None.
+    _t_confusable240 = {"src/maіn.py": "Cyrillic i", "sгc/main.py": "Cyrillic r",
+                        "рaypal.py": "Cyrillic p"}
+    _t_missed240 = [p for p in _t_confusable240 if not _rd240.mixed_script_segment(p)]
+    check("...and a single-character homoglyph swap inside one segment IS caught",
+          not _t_missed240,
+          saw="%s — these differ from their Latin twins by one codepoint and render "
+              "identically; that is the whole of CVE-2021-42694" % (_t_missed240,))
+    check("...and what it returns is the offending segment, so a reader can see which part",
+          _rd240.mixed_script_segment("src/рaypal.py") == "рaypal",
+          saw="%r — naming the path without naming the segment leaves the reader hunting for one "
+              "invisible character" % (_rd240.mixed_script_segment("src/рaypal.py"),))
+    # It must not have become a rewriter. Detection changes nothing.
+    check("...and it rewrites nothing — the caller still holds the original string",
+          _rd240.for_a_terminal("sгc/main.py") == "sгc/main.py",
+          saw="the scrubber altered a homoglyph path; changing a user's filename to make a "
+              "warning easier is not this function's job")
+# ---- 241_nothing_is_deleted_that_git_never_held.py
+# ---- 241_nothing_is_deleted_that_git_never_held.py
+# 🐛 [2026-09-22] (R14) `close_a_round --delete` removed 25 of the 37 research reports filed that
+# day while git had never held them. They were filed, screened, closed and deleted inside single
+# sessions, so no commit ever caught the file. R1-R12 survive in history only because an earlier
+# commit happened to include them; **R13-R37 are gone permanently** — roughly 250 findings, leaving
+# only the compressed summaries in the four curated files.
+#
+# What makes that serious rather than untidy: those summaries were written with a screening frame
+# the owner corrected the same day ("ask what it makes POSSIBLE, not whether we have the problem"),
+# and six refusals were later found to be wrong. The material that would have allowed a re-read had
+# already been destroyed by the tool, on the strength of summaries now known to be unreliable.
+#
+# R14 researched this exact question and the answer was banked and not acted on: logical deletion
+# and physical reclamation are separate authorities, and every published system puts a window
+# between them — AWS 30 days, GitLab 30, Kubernetes finalizers, SCARF notify-block-delete. The
+# window this project already has is git. It costs nothing. It simply was not required.
+_t_ws241 = owner_workspace("Nothing is deleted that git never held")
+if _t_ws241 is not None:
+    import importlib as _il241
+    sys.path.insert(0, str(_t_ws241 / "tools"))
+    _car241 = _il241.import_module("close_a_round")
+
+    _t_tracked241 = _t_ws241 / "tools" / "close_a_round.py"
+    _t_absent241 = _t_ws241 / "state" / "research" / "R9999_never_written_probe.md"
+
+    check("a file git holds is recognised as recoverable",
+          _car241.is_committed(_t_tracked241),
+          saw="a committed file was called unrecoverable, which would block every legitimate "
+              "close and make the guard something a caller learns to work around")
+    check("...and a file git has never seen is NOT",
+          not _car241.is_committed(_t_absent241),
+          saw="an uncommitted report was called recoverable — deleting it is permanent, and that "
+              "is how 25 reports were lost on 2026-09-22")
+
+    # The property that matters most, and the one the day actually turned on: a report git HELD and
+    # which was later deleted is still recoverable. If the check asked "does this path exist in the
+    # working tree" it would answer no here and the distinction would collapse.
+    _t_gone241 = (_t_ws241 / "state" / "research" /
+                  "R5_acc5_a_change_that_repairs_one_defect_and_creates__2026-09-22.md")
+    check("...and a report already deleted but held in history is still recoverable",
+          _car241.is_committed(_t_gone241),
+          saw="%s — this file is gone from the working tree and present in git, which is exactly "
+              "the state a correct close leaves behind; calling it unrecoverable confuses "
+              "'deleted' with 'lost'" % (_t_gone241.name,))
+
+    # And the refusal has to be wired into the delete path, not merely available beside it.
+    _t_src241 = (_t_ws241 / "tools" / "close_a_round.py").read_text(encoding="utf-8")
+    _t_del241 = _t_src241[_t_src241.index("if a.delete:"):]
+    check("...and the delete path actually consults it before unlinking anything",
+          "is_committed" in _t_del241.split("path.unlink()")[0],
+          saw="a guard that exists and is not called is the shape this repository records as a "
+              "decoration; the check must sit between the decision and the unlink")
+# ---- 242_a_refused_write_cannot_be_ignored.py
+# ---- 242_a_refused_write_cannot_be_ignored.py
+# 🐛 [2026-09-22] (R10) `workspace.atomic_write_text` returns False and writes nothing when it
+# refuses — the read-only guard, a full disk, a permission error. It does not raise. Its own
+# docstring records what that cost last time: *"the callers that ignore it announced writes that
+# never happened"*, with `chamnan-timeline new` printing "declared — …" and no file on disk.
+#
+# Six workspace tools were converted to `durable.write` earlier the SAME DAY, and all six discarded
+# the result, each printing a "wrote X" line immediately afterwards. The defect was re-introduced
+# six times over, while fixing a different data-loss bug, by somebody who had just read the
+# docstring describing it.
+#
+# R10 named it — *"flag callers that discard False, catch OSError, or continue after a failure"* —
+# in a table row that went unread until the deleted reports were recovered from git.
+#
+# The cut is at the adapter, not at six call sites: a caller can ignore a False and still look
+# correct, and cannot ignore an exception. That asymmetry is the whole fix, and it is why this
+# checks the BEHAVIOUR of the adapter rather than counting call sites.
+_t_ws242 = owner_workspace("A refused write cannot be ignored")
+if _t_ws242 is not None:
+    import importlib as _il242
+    import os as _os242
+    import tempfile as _tf242
+    from pathlib import Path as _P242
+
+    sys.path.insert(0, str(_t_ws242 / "tools"))
+    sys.path.insert(0, str(ROOT / "lib"))
+    _dur242 = _il242.import_module("durable")
+
+    with _tf242.TemporaryDirectory() as _d242:
+        _r242 = _P242(_d242)
+        _ok242 = _dur242.write(_r242 / "ordinary.md", "content\n")
+        _wrote242 = (_r242 / "ordinary.md").read_text(encoding="utf-8")
+
+        # The refusal path, driven the way the product drives it rather than by monkeypatching:
+        # the read-only guard is an environment variable, and it is the real reason a write is
+        # refused in this project.
+        _prev242 = _os242.environ.get("CHAMNAN_READ_ONLY")
+        _os242.environ["CHAMNAN_READ_ONLY"] = "1"
+        try:
+            import workspace as _wsmod242
+            _il242.reload(_wsmod242)
+            _il242.reload(_dur242)
+            _raised242 = False
+            try:
+                _dur242.write(_r242 / "refused.md", "content\n")
+            except Exception:
+                _raised242 = True
+            _left242 = (_r242 / "refused.md").exists()
+        finally:
+            if _prev242 is None:
+                _os242.environ.pop("CHAMNAN_READ_ONLY", None)
+            else:
+                _os242.environ["CHAMNAN_READ_ONLY"] = _prev242
+            _il242.reload(_wsmod242)
+            _il242.reload(_dur242)
+
+    check("A REFUSED WRITE RAISES — a caller cannot report success by ignoring a return value",
+          _raised242,
+          saw="durable.write returned quietly when the write was refused. Six callers discard its "
+              "result and print 'wrote X' immediately afterwards; a False they never read is a "
+              "success they announce that did not happen")
+    check("...and nothing was left on disk when it refused",
+          not _left242,
+          saw="a refused write left a file behind — half a write is worse than none, because the "
+              "next reader cannot tell it apart from a finished one")
+    # The oracle: an adapter that raises on everything satisfies the first check and makes the
+    # tool useless.
+    check("...and an ordinary write still succeeds and returns truthy",
+          bool(_ok242) and _wrote242 == "content\n",
+          saw="ordinary write returned %r and left %r — a guard that refuses everything passes the "
+              "assertion above while writing nothing at all" % (_ok242, _wrote242))
+# ---- 243_nothing_we_put_on_sys_path_shadows_the_stdlib.py
+# ---- 243_nothing_we_put_on_sys_path_shadows_the_stdlib.py
+# 🐛 [2026-09-22] (R19) CPython bpo-22172 — a local file next to a script silently becomes the
+# meaning of that name for every later import IN THE PROCESS, including imports made inside the
+# standard library itself. Filed 2014, closed *not a bug*, and it has stood as accepted behaviour
+# for twelve years. Ruff ships the rule as A005; nothing here checked it.
+#
+# chamnan's hooks and tools put four directories on `sys.path` at position 0 — 33 insert sites
+# across the package and the workspace, and six of them were added on 2026-09-22 alone so six
+# tools could reach `durable.py`. A file named `json.py` or `time.py` landing in any of them
+# shadows the real module for that process.
+#
+# Measured when this was written: 184 modules across the four directories, **zero** shadowing a
+# stdlib name. So this is a floor, not a repair — it exists to stop the 185th. That is worth
+# fifteen lines because `.chamnan/tools` alone holds 101 modules and gains one most working days.
+#
+# The banked NO said a comment would be enough here, since only this package writes those
+# directories. That NO was written before the day's central lesson: a rule that is prose gets
+# skipped, and a rule a tool enforces holds. This is the second kind.
+_t_ws243 = owner_workspace("Nothing we put on sys.path shadows the stdlib")
+if _t_ws243 is not None:
+    import re as _re243
+
+    # Derived: every directory this package actually inserts, read from the source that inserts it.
+    _t_dirs243 = {ROOT / "lib": "the plugin's own modules",
+                  ROOT / "hooks": "hook modules imported by name",
+                  _t_ws243 / "tools": "the workspace's tools"}
+    _t_app243 = _t_ws243.parent / "miki-hybridge-ai" / "src"
+    if _t_app243.is_dir():
+        _t_dirs243[_t_app243] = "the host app, inserted by seven sites"
+
+    # 3.9 has no sys.stdlib_module_names. Derived from what this interpreter can actually import
+    # rather than from a list somebody keeps by hand — a hand list is the defect this file is about.
+    _t_std243 = set(getattr(sys, "stdlib_module_names", ()))
+    if not _t_std243:
+        import distutils.sysconfig as _sc243
+        _t_libdir243 = _P243 = __import__("pathlib").Path(_sc243.get_python_lib(standard_lib=True))
+        _t_std243 = {p.stem for p in _t_libdir243.glob("*.py")} | \
+                    {p.name for p in _t_libdir243.iterdir() if p.is_dir()
+                     and (p / "__init__.py").is_file()}
+
+    check("the stdlib name set was derived and is non-trivial: %d" % len(_t_std243),
+          len(_t_std243) >= 100,
+          saw="fewer stdlib names than any Python has — the comparison below would pass against "
+              "an almost-empty set, which is the shape that makes a sweep look like coverage")
+
+    _t_shadow243 = []
+    _t_scanned243 = 0
+    for _t_d243, _t_why243 in _t_dirs243.items():
+        if not _t_d243.is_dir():
+            continue
+        for _t_p243 in _t_d243.glob("*.py"):
+            _t_scanned243 += 1
+            if _t_p243.stem in _t_std243:
+                _t_shadow243.append("%s (%s)" % (_t_p243, _t_why243))
+
+    check("the sweep read the inserted directories: %d module(s)" % _t_scanned243,
+          _t_scanned243 >= 100,
+          saw="too few modules to be the real population — the directories moved, or the glob "
+              "stopped matching, and an empty sweep passes while measuring nothing")
+    check("NOTHING ON A DIRECTORY WE INSERT AT sys.path[0] SHADOWS A STDLIB MODULE",
+          not _t_shadow243,
+          saw="%s — a module of that name wins over the real one for the whole process, including "
+              "imports made inside the standard library. CPython closed this as not-a-bug in 2014 "
+              "and it has behaved this way ever since" % (_t_shadow243,))
+# ---- 244_the_reader_keeps_up_with_the_convention.py
+# ------------------ a defect record the index's own pattern cannot read is a fix that vanishes
+# 🎯 [owner 2026-09-22] The owner asked for the sixth time why `INDEX_CITED_IN_CODE.md`'s findings
+# figure had not moved on a day of real work, and the answer this time was not a scope gap like the
+# previous five. It was that the reader had fallen behind the convention: `DATED` required a bracket
+# holding a bare date and nothing else, while the shape actually written across this repository puts
+# the origin in the same bracket. Measured that day: 46 records in 23 distinct shapes were invisible,
+# including `🐛 [R6, <date>]` and `🐛 [R1 agent1, <date>]`, which are round citations that should have
+# been in the figure's largest bucket. The last fix of that day -- a defect found in the live Menu Bar
+# log, fixed, and given a regression test -- was invisible for this reason.
+#
+# Nothing could have caught it. Check 186 asks whether a record NAMES its source; this asks whether
+# the reader can SEE the record at all, and until now nobody compared the shapes the pattern accepts
+# against the shapes people write. A pattern falling silently behind a convention is the failure, and
+# a count that quietly stops tracking reality is what it produces.
+#
+# The owner's instruction was that it must not happen again, so this fails loudly and names the file
+# and line rather than reporting a number nobody checks.
+import importlib.util as _ilu244
+import re as _re244
+
+_t_rc_path244 = ROOT.parent.parent / ".chamnan" / "tools" / "research_citations.py"
+_t_rc244 = None
+if _t_rc_path244.is_file():
+    try:
+        _t_spec244 = _ilu244.spec_from_file_location("research_citations244", str(_t_rc_path244))
+        _t_rc244 = _ilu244.module_from_spec(_t_spec244)
+        _t_spec244.loader.exec_module(_t_rc244)
+    except Exception:      # noqa: BLE001 — an unloadable tool is a skip, not a false green
+        _t_rc244 = None
+
+if _t_rc244 is None:
+    skip("  [SKIP] check 244 — could not load %s to get its DATED pattern" % (_t_rc_path244,))
+else:
+    # 🐛 The marker and the date shape are BUILT here rather than written, because this file is one
+    # of the files the sweep below reads: a literal example would be found as a real record and the
+    # check would assert against itself. The same trap this repository has recorded under its own
+    # name -- a check that reads its own source matches itself.
+    _BUG244 = "\U0001f41b"
+    _DATEISH244 = _re244.compile(r"20\d\d-\d\d-\d\d")
+    _BRACKET244 = _re244.compile(_BUG244 + r"\s*\[[^\]]{0,80}\]")
+
+    _t_seen244 = 0
+    _t_blind244 = []
+    for _t_f244 in _t_rc244.shipped_files():
+        try:
+            _t_lines244 = _t_f244.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for _t_i244, _t_ln244 in enumerate(_t_lines244, 1):
+            for _t_m244 in _BRACKET244.finditer(_t_ln244):
+                _t_txt244 = _t_m244.group(0)
+                if not _DATEISH244.search(_t_txt244):
+                    continue          # a marker with no date is not this check's population
+                _t_seen244 += 1
+                if not _t_rc244.DATED.search(_t_txt244):
+                    _t_blind244.append("%s:%d  %s" % (_t_rc244.rel_name(_t_f244), _t_i244, _t_txt244))
+
+    # The population must be real before its emptiness means anything. A sweep that silently matched
+    # nothing would report a clean result while asserting over zero records -- the decoration this
+    # repository fails checks for.
+    check("the sweep found dated defect records to judge",
+          _t_seen244 > 500,
+          saw="%d record(s) carrying a date — far below the ~1,500 this repository holds, so the "
+              "bracket pattern above stopped matching and this check is asserting over nothing"
+          % (_t_seen244,))
+
+    check("...and the index's own pattern can read every one of them",
+          not _t_blind244,
+          saw="%d record(s) carry a date the reader cannot extract, so the fix each one records is "
+              "missing from the published figure. Widen DATED in research_citations.py to accept "
+              "the shape, or write the record in a shape it accepts:\n        %s"
+          % (len(_t_blind244), "\n        ".join(_t_blind244[:12])))
+# ---- 245_our_own_patterns_are_probed_by_the_instrument_we_judge_others_with.py
+# ------------------ the instrument built to judge other trees is never pointed at this one
+# 🎯 [owner 2026-09-22] A ReDoS probe was written to test three other packages and fired at 2,261 of
+# their patterns. It was never fired at chamnan's own. That is this repository's most-recorded
+# defect wearing a new coat: a rule applied to one member of a set and forgotten in the identical
+# one beside it — and the forgotten member here was us.
+#
+# Run by hand afterwards: 280 quantified patterns in chamnan's own lib, hooks and bin, none of them
+# hung. That number is worth nothing as a one-off. A pattern added next month is the one that will
+# hang, and nobody would have looked.
+#
+# This is deliberately NOT the JS probe. `redos_probe.py` drives node because the packages it reads
+# are TypeScript; chamnan is Python and backtracks in Python's own engine, so the question has to be
+# asked there. Same question, the engine that actually runs the code — which was the first thing the
+# JS probe got wrong and had to be corrected for.
+import ast as _ast245
+import re as _re245
+import signal as _sig245
+
+_t_ws245 = owner_workspace("Our own patterns are probed too")
+# 🐛 [2026-09-22] (self-measured) The first version reached straight for `signal.setitimer`, which
+# does not exist on Windows — a check written to guard against a hang that itself crashes on the
+# platform where this package's hardest defects live. Found by the sweep that exists for exactly
+# this ("nothing shipped reaches for an API Windows does not have") the moment it was folded.
+#
+# There is no portable way to interrupt a regex that has stopped yielding: it holds the interpreter
+# and no other thread can take it back. So on a platform without the alarm this SKIPS and says so,
+# rather than passing over an empty population and reading as evidence.
+if _t_ws245 is None:
+    pass
+# The capability test sits INSIDE the `if`, not in a variable above it: check 90 reads the test
+# expression to decide whether a call is guarded, and a precomputed boolean tells it nothing.
+elif not (hasattr(_sig245, "setitimer") and hasattr(_sig245, "SIGALRM")):
+    skip("  [SKIP] check 245 — this platform has no signal.setitimer, and a catastrophic regex "
+         "cannot be interrupted without it. The probe runs wherever the alarm exists.")
+else:
+    # 🐛 The budget is per PATTERN, not per run: a catastrophic regex cannot be interrupted between
+    # attempts, so the alarm has to be armed around each `search` and disarmed after it. Arming it
+    # once around the loop would let the first slow pattern eat the whole allowance and report the
+    # innocent one after it.
+    _T245 = 1.5
+    _QUANT245 = _re245.compile(r"[+*]|\{\d")
+    # The shapes that actually blow up: a long run the pattern can divide many ways, then one
+    # character that refuses to match so every division has to be tried.
+    _ATTACK245 = [u * n + tail
+                  for n in (26, 36, 48)
+                  for u in ("a", " ", "\t", "ab", "a-", "0", "/", "x=", "a.")
+                  for tail in ("!", "\x00")]
+
+    class _Hang245(Exception):
+        pass
+
+    def _alarm245(_sig, _frm):
+        raise _Hang245()
+
+    _t_prev245 = _sig245.signal(_sig245.SIGALRM, _alarm245)
+    _t_pats245, _t_hung245, _t_bad245 = {}, [], 0
+    try:
+        for _t_f245 in sorted(list((ROOT / "lib").glob("*.py"))
+                              + list((ROOT / "hooks").glob("*.py"))
+                              + [p for p in (ROOT / "bin").iterdir() if p.is_file()]):
+            try:
+                _t_src245 = _t_f245.read_text(encoding="utf-8", errors="replace")
+                _t_tree245 = _ast245.parse(_t_src245)
+            except (OSError, SyntaxError, ValueError):
+                continue
+            for _t_n245 in _ast245.walk(_t_tree245):
+                if not (isinstance(_t_n245, _ast245.Call)
+                        and getattr(_t_n245.func, "attr", "") in
+                        ("compile", "search", "match", "fullmatch", "findall", "finditer", "sub", "split")
+                        and _t_n245.args
+                        and isinstance(_t_n245.args[0], _ast245.Constant)
+                        and isinstance(_t_n245.args[0].value, str)):
+                    continue
+                _t_p245 = _t_n245.args[0].value
+                if _QUANT245.search(_t_p245):
+                    _t_pats245.setdefault(_t_p245,
+                                          "%s:%d" % (_t_f245.name, _t_n245.lineno))
+
+        for _t_p245, _t_where245 in _t_pats245.items():
+            try:
+                _t_rx245 = _re245.compile(_t_p245)
+            except _re245.error:
+                _t_bad245 += 1
+                continue
+            for _t_a245 in _ATTACK245:
+                try:
+                    _sig245.setitimer(_sig245.ITIMER_REAL, _T245)
+                    _t_rx245.search(_t_a245)
+                    _sig245.setitimer(_sig245.ITIMER_REAL, 0)
+                except _Hang245:
+                    _sig245.setitimer(_sig245.ITIMER_REAL, 0)
+                    _t_hung245.append("%s  %s" % (_t_where245, _t_p245[:70]))
+                    break
+                except Exception:              # noqa: BLE001 — a throw is an answer, not a hang
+                    _sig245.setitimer(_sig245.ITIMER_REAL, 0)
+                    break
+    finally:
+        _sig245.setitimer(_sig245.ITIMER_REAL, 0)
+        _sig245.signal(_sig245.SIGALRM, _t_prev245)
+
+    # The population must be real before its emptiness means anything: a sweep whose extractor
+    # silently stopped matching would report zero hangs over zero patterns and read as a pass.
+    check("the sweep found this package's own patterns to judge",
+          len(_t_pats245) > 150,
+          saw="%d quantified pattern(s) — far below the ~280 this package holds, so the AST walk "
+              "above stopped finding them and this check is asserting over nothing"
+          % (len(_t_pats245),))
+
+    check("...and none of them backtracks catastrophically",
+          not _t_hung245,
+          saw="%d pattern(s) ran past %.1fs on a crafted input, which is a session that stops "
+              "responding rather than a slow one:\n        %s"
+          % (len(_t_hung245), _T245, "\n        ".join(_t_hung245[:8])))
 # ---- 24_ignore_matching_agrees_with_real_git.py
 # ------------------------------------------- fnmatch asks the platform, git asks its own config
 # 🐛 [2026-09-09] `fnmatch.fnmatch` normalises case with `os.path.normcase`, which folds on Windows
@@ -46801,11 +47285,24 @@ _t_SUITE_FILE90 = ROOT / "tests" / "run_tests.py"
 
 
 def _t_platform_test90(test_node):
-    """True if an `ast.If` test's dump mentions an attribute name platform code asks about
-    (`os.name`, `sys.platform`, `platform.system()`) — regardless of which local alias the module
-    was imported under, since the alias never appears in the attribute's own name."""
+    """True if an `ast.If` test asks a question whose answer decides whether the API is there.
+
+    Two shapes count. The first is the platform's name (`os.name`, `sys.platform`,
+    `platform.system()`) — matched on the attribute, regardless of which local alias the module was
+    imported under, since the alias never appears in the attribute's own name.
+
+    🐛 [2026-09-22] (self-measured) The second shape is a CAPABILITY test — `hasattr(signal,
+    "setitimer")`, `os.supports_dir_fd` — and it was missing, although the header of this file
+    calls it the better of the two and says why: it stays true on a platform nobody here owns. A
+    check that guarded `signal.setitimer` the recommended way was reported as unguarded, and the
+    only way to satisfy the tool was to adopt the idiom the tool itself argues against. Accepting
+    it is not a loosening: `if os.name:` already passes and asks nothing useful, while
+    `hasattr(x, "y")` asks exactly the question that matters.
+    """
     _dump = _ast90.dump(test_node)
-    return any("attr='%s'" % _attr in _dump for _attr in ("name", "platform", "system"))
+    if any("attr='%s'" % _attr in _dump for _attr in ("name", "platform", "system")):
+        return True
+    return "func=Name(id='hasattr'" in _dump
 
 
 def _t_guarded90(node, parents):

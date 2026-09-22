@@ -121,7 +121,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.29.0](#whats-new-in-1290) · [Commands](#commands)
+[What's new in 1.30.0](#whats-new-in-1300) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -525,6 +525,32 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
+
+## What's new in 1.30.0
+
+**Five new commands, and most of the effort spent on the moment somebody asks the repository a
+question rather than on the moment a session starts.**
+
+`chamnan-where` answers where a name is actually *used* — a comment, a string and a docstring all
+mention it and none of them uses it. `chamnan-vs` prints three numbers measured on **your**
+repository rather than on ours. `/chamnan:why` asks whether the thing you are debugging is the
+machine or the code, before an hour goes into the wrong one. `/chamnan:review` reviews a change
+against what the repository already knows. `/chamnan:decide` counts the evidence on each side and
+shows the count, with no model in the loop.
+
+Naming an edit that will not survive went from **33.5 ms to 0.5 ms** per Edit. The cache behind the
+similarity path went from a **23.5% hit ratio to 90.3%**. A reference scan reads **21 languages**
+instead of one, lexically and labelled as lexical — comments and strings are blanked first, which
+against the AST's verdict on six real symbols removes **98%** of the noise a plain grep returns.
+Instruction files are now checked for claims that stopped being true, and on this machine that was
+**between 50% and 80%** of each file it read.
+
+Homoglyph detection closes the half of Trojan Source the redactor never answered: the bidirectional
+and zero-width halves were already scrubbed, a Cyrillic character standing in for a Latin one was
+not. It detects and names; it never rewrites a path.
+
+Resuming a session no longer pays for a block it already has. A repository whose index has fallen
+behind asks once and then stops asking. A tool call produces one notice, not one per hook.
 
 ## What's new in 1.29.0
 
