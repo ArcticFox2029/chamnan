@@ -1,5 +1,5 @@
 ---
-description: A decision procedure for any gate, check or judgement — name the questions before looking, answer each from counted evidence, set one threshold per action by what being wrong costs, and hand the uncertain ones to a person. Use when deciding whether something is safe, done, duplicated, stale, or worth doing.
+description: A reusable decision procedure, and a copyable prototype for the guard that encodes it — derive the population, set one threshold by what being wrong costs, name the offender, and break it once to prove it can fail. Use when writing a check, guard, gate or validation of any kind, or when deciding whether something is safe, done, duplicated, stale, or worth doing — so the shape is the same every time instead of re-derived per session.
 ---
 
 # Decide from counted evidence, not from an impression
@@ -95,6 +95,56 @@ was right. **A threshold that is never compared with the outcome drifts silently
 only visible against a record.
 
 ---
+
+## 7 · Encode the decision in a guard, so nobody decides it again
+
+Steps 1-6 are how a decision gets made once. This is how it stops costing anything afterwards.
+
+A model can reason its way to a good judgement every time — and pays for it every time, in the
+thinking and in the code it writes to express it. Where the answer is already settled, the cheap
+form is a guard that carries the decision, not a person or a model re-deriving it.
+
+**The prototype. Copy it and change the subject; do not re-invent the shape.**
+
+```python
+# 1 · the population, DERIVED — never a list you typed
+subjects = scan(where)                    # glob, walk, parse — anything but a literal list
+
+# 2 · the measurement is a failure when it finds nothing
+assert_that("the scan found the things it judges", len(subjects) >= floor,
+            saw=f"{len(subjects)} found — every assertion below is vacuously true on zero, "
+                f"which is how a broken measurement reports itself as a pass")
+
+# 3 · one threshold, set by what being wrong costs (step 1), stated here and not in a model
+offenders = [s for s in subjects if not holds(s)]
+
+# 4 · the message says what to DO, and names the offender
+assert_that("<the property, as a sentence that is true when it passes>", not offenders,
+            saw=f"{offenders} — <what goes wrong for the reader if this is false>")
+```
+
+**Six decisions it encodes, so they are made once and not per use:**
+
+| in the prototype | the decision it carries |
+|---|---|
+| `scan(where)` | derive the population; a typed list forgets the member added tomorrow |
+| `len(subjects) >= floor` | an empty population is a failure, not a quiet pass |
+| `offenders` as a list | report WHO, not just that something is wrong |
+| `saw=` | the reader acts without opening the guard |
+| the name as a true sentence | it reads as a property, not as a test id |
+| threshold in the code | not in a prompt, not in a model, not re-argued |
+
+**Then the one step that makes it real: break the thing and watch it go red.** A guard never seen
+to fail has been run, not tested. If breaking it is impractical, assert the inverse in the same
+breath — `assert_that("...", A and not B)` — so a change in either direction is caught.
+
+Four traps, each of which has produced a guard that passed while measuring nothing:
+
+- **searching a whole document** for a name that appears in it twice — slice to the region first
+- **reading a value before the thing that sets it** — compute into a name, then assert
+- **pinning the spelling of an implementation** instead of its behaviour — run it and read the
+  outcome; pin text only where there is no runtime signature, and say why
+- **a mutation that changes no verdict** — it proves nothing; find the case that discriminates
 
 ## What this is not
 
