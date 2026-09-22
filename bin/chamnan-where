@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""chamnan-where — every place a name is actually used, not every line that mentions it.
+
+  chamnan-where whole_graphemes        the references, by file and line
+  chamnan-where --grep whole_graphemes the same, beside what a plain grep would have said
+
+The tool for this repository's most-recorded defect: a fix applied to one member of a set and
+forgotten in the identical ones beside it. `grep` gives every line that contains the name -- the
+docstring, the import, a string literal, a comment, a method of the same name, a local variable
+that shadows it -- and the ones that matter are somewhere in that list.
+
+**Python only, and it says so.** A declaration has a fixed shape and the adapters read twenty-two
+languages of them; a call site does not, and a regex sweep for one across twenty-two languages is a
+false-positive machine. Files it could not judge are COUNTED, because a silent omission is how a
+partial answer becomes a wrong one.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import refs  # noqa: E402
+import workspace as ws  # noqa: E402
+
+
+def main(argv):
+    args = [a for a in argv[1:] if a != "--grep"]
+    show_grep = "--grep" in argv[1:]
+    if not args:
+        print(__doc__.strip().split("\n\n")[1])
+        return 2
+    symbol = args[0]
+    root = ws.find_root(os.getcwd()) or Path(os.getcwd())
+    hits, unjudged = refs.find(root, symbol)
+    if not hits:
+        print(f"chamnan: no use of `{symbol}` in any Python file under {Path(root).name}/.")
+        if unjudged:
+            print(f"  {unjudged} file(s) could not be judged, so this is not a proof of absence.")
+        return 0
+    by_kind = {}
+    for rel, line, kind in hits:
+        by_kind.setdefault(kind, []).append(f"{rel}:{line}")
+    print(f"chamnan: {len(hits)} use(s) of `{symbol}`")
+    for kind in ("def", "call", "attribute"):
+        for one in by_kind.get(kind, []):
+            print(f"  {kind:9} {one}")
+    if unjudged:
+        print(f"  ({unjudged} file(s) too large or unparseable — not judged, not absent)")
+    if show_grep:
+        try:
+            out = subprocess.run(["grep", "-rn", symbol, "--include=*.py", str(root)],
+                                 capture_output=True, text=True, timeout=60).stdout
+            n = len([ln for ln in out.split("\n") if ln.strip()])
+            print(f"\n  a plain `grep -rn` returns {n} line(s); "
+                  f"{max(0, n - len(hits))} of them are not uses of the name.")
+        except Exception:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(ws.never_fail(lambda: main(sys.argv)))
