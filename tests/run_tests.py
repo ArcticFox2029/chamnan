@@ -39066,6 +39066,116 @@ if _t_ws228 is not None:
           "Source has changed since this index was built" in _t_src228,
           saw="the quiet branch is gone — replacing an actionable line with a louder one that asks "
               "a question is a downgrade for the 19.5% of firings that are the ordinary case")
+# ---- 229_the_hand_off_sees_an_edit_no_tool_event_reported.py
+# ---- 229_the_hand_off_sees_an_edit_no_tool_event_reported.py
+# 🐛 [2026-09-22] (self-measured) The session hand-off reads `logs/edits.jsonl`, which is written
+# from the PostToolUse hook on Edit and Write. A session that changes files by RUNNING something --
+# a `sed`, a patch script, a formatter -- writes nothing to it. Claude Code's own auto mode
+# instructs exactly that: *"make file changes with sed, heredocs, or short scripts, rather than
+# using the dedicated Read, Edit, or Write tools."* Found by using the feature: the ledger's newest
+# entry was 15.3 hours old while six files had been changed that day, and the hand-off named last
+# night's work as though nothing had happened since. A hand-off that is confidently wrong about
+# where you stopped is worse than none.
+#
+# git sees a change whatever made it, so it is a SECOND source and not a replacement: the ledger
+# still carries edits nobody has committed, and git carries the ones no tool event saw. Choosing
+# the newer source alone would drop uncommitted work the moment anything was committed.
+#
+# Two things the first working version got wrong, both asserted below:
+#   * it paid for git every session. 32 ms of that call is the process spawn alone and cannot be
+#     tuned away, so a session whose ledger is already current must not make it at all.
+#   * it ranked by recency, and named whatever the newest commit happened to touch -- a tool
+#     registry, a generated state file, `.gitignore` -- while the modules being worked on sat one
+#     commit behind. Right, and useless: a reader who recognises nothing in the line stops reading
+#     the line.
+_t_ws229 = owner_workspace("The hand-off sees an edit no tool event reported")
+if _t_ws229 is not None:
+    import json as _j229
+    import subprocess as _sp229
+    import tempfile as _tf229
+    import time as _tm229
+    from pathlib import Path as _P229
+
+    if not (ROOT / "lib" / "coedit.py").is_file():
+        skip("  [SKIP] hand-off — no lib/coedit.py")
+    else:
+        sys.path.insert(0, str(ROOT / "lib"))
+        import coedit as _c229
+
+        def _t_repo229(tmp, commits, workspace_files=()):
+            """A git repo with `commits` = [(path, ...)] applied one commit each."""
+            r = _P229(tmp)
+            (r / ".chamnan" / "logs").mkdir(parents=True, exist_ok=True)
+            _sp229.run(["git", "-C", str(r), "init", "-q"], check=True)
+            for k, v in (("user.email", "t@example.invalid"), ("user.name", "t")):
+                _sp229.run(["git", "-C", str(r), "config", k, v], check=True)
+            for paths in commits:
+                for name in paths:
+                    f = r / name
+                    f.parent.mkdir(parents=True, exist_ok=True)
+                    f.write_text((f.read_text() if f.is_file() else "") + "x", encoding="utf-8")
+                    _sp229.run(["git", "-C", str(r), "add", name], check=True)
+                _sp229.run(["git", "-C", str(r), "commit", "-q", "-m", "w"], check=True)
+            for name in workspace_files:
+                f = r / name
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text("x", encoding="utf-8")
+                _sp229.run(["git", "-C", str(r), "add", "-f", name], check=True)
+            if workspace_files:
+                _sp229.run(["git", "-C", str(r), "commit", "-q", "-m", "ws"], check=True)
+            return r
+
+        # --- the defect: work that produced no tool event at all --------------------------------
+        with _tf229.TemporaryDirectory() as _t_d229:
+            _t_r229 = _t_repo229(_t_d229, [("src/core.py",), ("src/core.py",), ("src/helper.py",)])
+            _t_f229, _t_ago229 = _c229.last_sitting(_t_r229 / ".chamnan")
+        check("An edit no tool event reported is still found",
+              "src/core.py" in _t_f229 and "src/helper.py" in _t_f229,
+              saw="%r — the ledger is empty in this repository because nothing went through Edit "
+                  "or Write, which is what auto mode instructs, and that was the whole defect"
+              % (_t_f229,))
+        check("...and the file worked on MOST leads, not whatever was touched last",
+              _t_f229[:1] == ["src/core.py"],
+              saw="%r — helper.py was the newest commit and core.py was edited twice; ranking by "
+                  "recency alone is how this line filled up with generated files" % (_t_f229,))
+
+        # --- the workspace's own bookkeeping is not the reader's work ---------------------------
+        with _tf229.TemporaryDirectory() as _t_d229:
+            _t_r229 = _t_repo229(_t_d229, [("src/app.py",)],
+                                 workspace_files=(".chamnan/state/x.json", ".chamnan/STATE.md"))
+            _t_f229, _ = _c229.last_sitting(_t_r229 / ".chamnan")
+        check("...and chamnan's own bookkeeping never appears as the reader's work",
+              not any(f.startswith(".chamnan") for f in _t_f229) and "src/app.py" in _t_f229,
+              saw="%r — `.chamnan/` changes in most commits of any repository that uses chamnan, "
+                  "so without this the line ranks its own housekeeping above the work"
+              % (_t_f229,))
+
+        # --- cost: a current ledger must not pay for git ----------------------------------------
+        with _tf229.TemporaryDirectory() as _t_d229:
+            _t_w229 = _P229(_t_d229) / ".chamnan"
+            (_t_w229 / "logs").mkdir(parents=True)
+            _t_now229 = _tm229.time()
+            (_t_w229 / "logs" / "edits.jsonl").write_text(
+                "".join(_j229.dumps({"at": int(_t_now229 - i * 60), "fp": "src/app.py"}) + "\n"
+                        for i in (1, 2, 3)), encoding="utf-8")
+            _t_t229 = _tm229.perf_counter()
+            _t_fresh229, _ = _c229.last_sitting(_t_w229, now=_t_now229)
+            _t_ms229 = (_tm229.perf_counter() - _t_t229) * 1000
+        check("...and a ledger that is already current does not pay for git at all",
+              _t_ms229 < 25 and _t_fresh229 == ["src/app.py"],
+              saw="%.1f ms, files %r — 32 ms of a git call is the process spawn alone and cannot "
+                  "be tuned away, so a session using Edit and Write must not make it"
+              % (_t_ms229, _t_fresh229))
+
+        # --- no git is not a crash, and not a wrong answer either -------------------------------
+        with _tf229.TemporaryDirectory() as _t_d229:
+            _t_w229 = _P229(_t_d229) / ".chamnan"
+            (_t_w229 / "logs").mkdir(parents=True)
+            _t_none229 = _c229.sitting_line(_t_w229)
+        check("...and a directory that is not a repository says nothing rather than failing",
+              _t_none229 == "",
+              saw="emitted %r with no ledger and no git — inventing a hand-off out of neither is "
+                  "the confident guess this package refuses" % (_t_none229,))
 # ---- 22_a_second_entry_does_not_overwrite_the_first.py
 # ------------------------------------------- one of four stores had the guard
 # 🐛 [2026-09-09] Every store here builds a filename by truncating an ASCII reduction of the title —
@@ -39183,6 +39293,140 @@ for _t_f_22 in sorted((ROOT / "lib").glob("*.py")):
         _t_own_22.append(_t_f_22.name)
 check("the disambiguation is written once, not once per store",
       not _t_own_22, saw=", ".join(_t_own_22) or None)
+# ---- 230_an_index_built_by_an_older_chamnan_is_rebuilt_once.py
+# ---- 230_an_index_built_by_an_older_chamnan_is_rebuilt_once.py
+# 🐛 [2026-09-22] (owner) An index built by an OLDER chamnan is stale in a way no commit can show.
+# The source has not moved, so every measure chamnan had said the index was current -- and it could
+# still be blind to a whole language: when the C family was added to the extractors, an
+# already-indexed C project reported zero files and a C++ one six of 142. The header recorded the
+# commit it was built FROM and never the version that built it, so the question could not be asked.
+#
+# This one acts instead of asking, and the distinction from the plugin-update banner is not a
+# loophole. That banner is about the PLUGIN, which the user chose and which nothing may change for
+# them. An index is regenerable, is not a record, and this package's own rules ask for it to be
+# rebuilt without being told: nothing is lost by doing it and nothing is decided by it. The
+# alternative was measured and refuted -- given a block that NAMES a file worth reading, the agent
+# opened it in 10 of 93 sessions, so a notice has about a one-in-ten chance of being acted on while
+# the cost of it being ignored is an index blind to a language.
+#
+# It costs one slow session per RELEASE and not per session, because the condition stops being true
+# the moment it runs. The checks below are the four things that keep that true.
+_t_ws230 = owner_workspace("An index built by an older chamnan is rebuilt once")
+if _t_ws230 is not None:
+    import re as _re230
+    import tempfile as _tf230
+    from pathlib import Path as _P230
+
+    _t_hookp230 = ROOT / "hooks" / "chamnan_session_start.py"
+    _t_src230 = _t_hookp230.read_text(encoding="utf-8-sig", errors="replace")
+
+    # The map has to record its builder, or nothing below can be asked at all.
+    #
+    # 🐛 This read the file for the words "Built by chamnan" and "_built_by", and a mutation that
+    # deleted the CALL survived it: the function and its docstring still carried both strings.
+    # Presence of text is not evidence that anything runs it — the same trap twice more in this
+    # file, and the third of the four the guard prototype names. Asked of the syntax tree: is
+    # `_built_by` called from the function that renders the header.
+    import ast as _ast230
+    _t_mapper230 = (ROOT / "lib" / "mapper.py").read_text(encoding="utf-8-sig", errors="replace")
+    _t_mtree230 = _ast230.parse(_t_mapper230)
+    _t_render230 = next((n for n in _ast230.walk(_t_mtree230)
+                         if isinstance(n, _ast230.FunctionDef) and n.name == "_render"), None)
+    _t_calls230 = {c.func.id for c in _ast230.walk(_t_render230)
+                   if isinstance(c, _ast230.Call) and isinstance(c.func, _ast230.Name)} \
+        if _t_render230 else set()
+    check("The index records which chamnan built it",
+          "_built_by" in _t_calls230,
+          saw="_render calls %s — the header carries the commit and not the builder, and the "
+              "commit answers whether the SOURCE moved rather than whether the build that read it "
+              "knew how" % (sorted(_t_calls230) or "nothing",))
+
+    import importlib.util as _ilu230
+    _t_spec230 = _ilu230.spec_from_file_location("_ss230", str(_t_hookp230))
+    _t_mod230 = _ilu230.module_from_spec(_t_spec230)
+    try:
+        _t_spec230.loader.exec_module(_t_mod230)
+    except SystemExit:
+        pass
+
+    def _t_hdr230(tmp, text):
+        f = _P230(tmp) / "MAP.md"
+        f.write_text("# m\n\nGenerated by chamnan. 10 source file(s), 1 characters." + text + "\n",
+                     encoding="utf-8")
+        return f
+
+    with _tf230.TemporaryDirectory() as _t_d230:
+        _t_old230 = _t_mod230.map_built_by_older(
+            _t_hdr230(_t_d230, " Built by chamnan 1.20.0."), "1.29.0")
+        _t_same230 = _t_mod230.map_built_by_older(
+            _t_hdr230(_t_d230, " Built by chamnan 1.29.0."), "1.29.0")
+        _t_newer230 = _t_mod230.map_built_by_older(
+            _t_hdr230(_t_d230, " Built by chamnan 1.30.0."), "1.29.0")
+        _t_nostamp230 = _t_mod230.map_built_by_older(_t_hdr230(_t_d230, ""), "1.29.0")
+
+    check("...and only an OLDER builder triggers it",
+          _t_old230 == ("1.20.0", "1.29.0") and _t_same230 is None,
+          saw="older=%r same=%r" % (_t_old230, _t_same230))
+    check("...and a DOWNGRADE never does",
+          _t_newer230 is None,
+          saw="%r — a downgrade is reported elsewhere and means something else; rebuilding on it "
+              "hands the user an index built by the version they are stepping back from"
+          % (_t_newer230,))
+    check("...and an index with no builder recorded is unknown, not old",
+          _t_nostamp230 is None,
+          saw="%r — every index built before the stamp existed would otherwise be rebuilt once, "
+              "for nothing" % (_t_nostamp230,))
+
+    # A repository big enough for the rebuild to be slow is told, not made to wait.
+    check("...and an index too big to rebuild quickly is handed to the reader instead",
+          "MAP_AUTO_REBUILD_MAX_SECONDS" in _t_src230
+          and _re230.search(r"if est > MAP_AUTO_REBUILD_MAX_SECONDS", _t_src230) is not None,
+          saw="nothing declines the job on size — a session start that takes a minute is a worse "
+              "bargain than an index behind on one language, and the reader can spend it when "
+              "they choose")
+
+    # The latch, so a failed or declined rebuild is not retried every session for that version.
+    check("...and it is latched per version, so a failure is not retried every session",
+          _re230.search(r'notice_due\(root, "map-rebuild-%s" % _older\[1\], times=1\)',
+                        _t_src230) is not None,
+          saw="unlatched — a rebuild that fails, or is declined for size, would run or ask again "
+              "on every single session for that version")
+
+    # And it never does it silently: the rule it is allowed to act under is that acting is cheap
+    # and reversible, not that it is invisible.
+    # 🐛 And the same trap again, one check later: this grepped the wiring for `_stale_lines.append`
+    # and a mutation that wrapped it in `if False:` passed, because the text was still there. What
+    # matters is that the line is REACHABLE, so the tree is asked whether the append sits under a
+    # constant-false test.
+    _t_htree230 = _ast230.parse(_t_src230)
+
+    def _t_dead230(node):
+        """Appends under an `if <constant falsy>` — present in the file and unreachable."""
+        out = []
+        for n in _ast230.walk(node):
+            if not (isinstance(n, _ast230.If) and isinstance(n.test, _ast230.Constant)
+                    and not n.test.value):
+                continue
+            for sub in _ast230.walk(n):
+                if (isinstance(sub, _ast230.Call) and isinstance(sub.func, _ast230.Attribute)
+                        and sub.func.attr == "append"
+                        and "rebuilt" in (_ast230.get_source_segment(_t_src230, sub) or "")):
+                    out.append(n.lineno)
+        return out
+
+    _t_saysit230 = [c for c in _ast230.walk(_t_htree230)
+                    if isinstance(c, _ast230.Call) and isinstance(c.func, _ast230.Attribute)
+                    and c.func.attr == "append"
+                    and "has been rebuilt for" in (_ast230.get_source_segment(_t_src230, c) or "")]
+    check("...and it says what it did, rather than rebuilding silently",
+          bool(_t_saysit230) and not _t_dead230(_t_htree230),
+          saw="reachable announcement(s): %d, unreachable at line(s) %s — a tool that changes "
+              "something and says nothing is the half of 'doing it silently is worse' that this "
+              "package refuses" % (len(_t_saysit230), _t_dead230(_t_htree230)))
+    check("...and a failure there can never take the session down",
+          "except Exception" in _t_src230[_t_src230.find("_older = map_built_by_older"):
+                                          _t_src230.find("_older = map_built_by_older") + 2500],
+          saw="unguarded — this runs in the one code path that must never fail a session")
 # ---- 23_named_as_a_credential_and_never_enforced.py
 # ------------------------------------------- the module named them and redacted none of them
 # 🐛 [2026-09-09] `_CREDENTIAL_PREFIX` lists twenty-two vendor prefixes, and six of them were
