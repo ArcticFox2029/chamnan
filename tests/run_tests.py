@@ -10367,14 +10367,22 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # looked like at an earlier commit, and that question is the whole difference between "this path
 # does not exist" (50-80% false positives, measured) and "this path has gone since somebody wrote
 # that line".
+# Raised 2026-09-22 from 26 to 28, and the two came from commits that did not raise it — the gate
+# named the number and nobody ran it until the next batch, which is the failure mode this check is
+# for and the reason it prints the count rather than only failing. `map_commits_behind` asks
+# `git rev-list --count` how many commits have landed since MAP.md was stamped, a NINETEENTH
+# purpose: no other site measures distance from the build, and "far behind" is a different notice
+# from "old". `coedit._git_edits` asks `git log --name-only` what the last sitting touched, a
+# TWENTIETH: the churn ranking answers which files change often, this answers which ones YOU were
+# in last, and the two disagree on exactly the file somebody came back to finish.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 26, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 28, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-six call sites serve eighteen read-only paths"
+      and "Twenty-eight call sites serve twenty read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -18104,7 +18112,21 @@ _rmtree(_so.parent, ignore_errors=True)
 # ceiling is set one above the dirty case, so a single new spawn on this path fails here rather
 # than in CI. Raising it is a decision, not a formality -- multiply it by every session the plugin
 # ever starts, on the platform where it costs the most.
-SESSION_START_SPAWN_CEILING = 4
+# RAISED 2026-09-22 from 4 to 5, and this note is the decision the line above asks for.
+# `coedit._git_edits` runs one `git log --name-only` over the last sitting so a returning session
+# is told which files IT was in. It is NOT unconditional: `edits.jsonl` answers first and git is
+# asked only when that ledger cannot — measured 1.9 ms on the ledger against 62 ms when git is
+# consulted, and the 60 ms difference is almost entirely the spawn.
+#
+# What the spawn buys is the day-one case, which is the one that would otherwise be empty: in a
+# repository chamnan was installed into an hour ago there is no ledger to read, and git history is
+# the only thing that knows what somebody was working on. A steady-state session has a ledger and
+# pays 4, as before; the fixture below has neither ledger nor history, so it always takes the
+# expensive branch and is the right thing to pin.
+#
+# Reversible if that trade is judged wrong: drop the git branch in `coedit.last_sitting` and the
+# hand-off line goes quiet on a fresh install instead of costing a spawn there.
+SESSION_START_SPAWN_CEILING = 5
 
 _sp = Path(tempfile.mkdtemp(prefix="chamnan-spawns-"))
 (_sp / "probe").mkdir()
@@ -21443,6 +21465,10 @@ if _CAN_DENY_WRITE:
         "chamnan-report": None,
         "chamnan-guard": None,
         "chamnan-setup": None,
+        # Read-only, like the other `None` entries: it reads every indexed file and the block
+        # log, estimates, and prints three numbers. It writes nothing anywhere, including the
+        # workspace — the measurement is the whole product.
+        "chamnan-vs": None,
         # Read-only, like the other `None` entries: it parses source and prints, and the argv it
         # needs is a symbol name rather than anything that could write.
         "chamnan-where": None,
@@ -35870,8 +35896,18 @@ if _t_ws196 is not None:
             # `make_brief.py`, `research_citations.py`, `research_screen.py`, `rule_conflicts.py`
             # and `suite_slice.py`, none of which file a round -- a population that catches five
             # innocents teaches its reader to widen the allow-list until it catches nothing.
+            #
+            # 🐛 [2026-09-22] (self-measured) This listed the SPELLINGS of a write, and
+            # `round_report.py` — the filer this check was written about — moved to
+            # `durable.write()` so a reader never catches a report half-written. Same behaviour,
+            # new name, and the detector stopped seeing it: the check reported the real filer as
+            # "a filer nobody checks" while the allow-list below still named it. A detector keyed
+            # on how a thing is SPELLED goes blind the day the spelling improves, which is the
+            # trap this repository records most often. The idioms are enumerated here, in one
+            # place, and any new way of putting bytes in a file has to be added here too.
             _t_writes196 = ('> "$REPORT"' in _t_t196b or '> "$OUT"' in _t_t196b
-                            or ".write_text(" in _t_t196b)
+                            or ".write_text(" in _t_t196b
+                            or "durable.write(" in _t_t196b)
             _t_raw196 = ("$RAW" in _t_t196b or "--raw" in _t_t196b
                          or "args.raw" in _t_t196b)
             if _t_writes196 and _t_raw196:
@@ -36919,6 +36955,18 @@ if _t_ws208 is not None:
         if not _t_open208:
             print("      no open round on disk — the mechanism half stands alone")
         else:
+            # The reports are written by dispatched rounds that file whenever they finish, so this
+            # reads files another process creates. That is safe because every durable writer in the
+            # workspace goes through `workspace.atomic_write_text` — a reader sees the old file or
+            # the complete new one, never a prefix. Check 238 asserts that for the whole SET of
+            # writers rather than here, because the guarantee this block depends on is a property
+            # of the writers and would be invisible from this side the day one of them changed.
+            #
+            # 🐛 [2026-09-22] (self-measured) The first fix was a reader-side `stable_read` that
+            # compared stat() either side of the read. Its own test measured it admitting 3 torn
+            # reads out of 20 against a live writer — a guard that leaks 15% while reading as
+            # protection is worse than none, and it was deleted rather than tuned. The race is
+            # removable at the writer and only detectable at the reader.
             _t_bad208 = []
             for _t_p208 in _t_open208:
                 _t_txt208 = _t_p208.read_text(encoding="utf-8", errors="replace")
@@ -39215,7 +39263,8 @@ if _t_ws229 is not None:
                 for name in paths:
                     f = r / name
                     f.parent.mkdir(parents=True, exist_ok=True)
-                    f.write_text((f.read_text() if f.is_file() else "") + "x", encoding="utf-8")
+                    f.write_text((f.read_text(encoding="utf-8") if f.is_file() else "") + "x",
+                     encoding="utf-8")
                     _sp229.run(["git", "-C", str(r), "add", name], check=True)
                 _sp229.run(["git", "-C", str(r), "commit", "-q", "-m", "w"], check=True)
             for name in workspace_files:
@@ -39819,6 +39868,434 @@ if _t_ws232 is not None:
               _t_fresh232 and "New" in _t_fresh232[0],
               saw="%r — a fresh install must behave exactly as it did, or this is a change to "
                   "every repository rather than to the ones with a history" % (_t_fresh232,))
+# ---- 233_the_comparison_is_the_readers_own_repository.py
+# ---- 233_the_comparison_is_the_readers_own_repository.py
+# 🎯 [owner 2026-09-22] `chamnan-vs`, idea A1, built after the owner asked for the best thing for
+# the user out of what was left. Step 10's finding was that every tool in this space publishes a
+# ratio and none of them ships the command that re-derives it on the reader's own tree — so the
+# figure a reader gets is always somebody else's repository. This is that command.
+#
+# The three numbers, measured on the tree it runs in: every indexed file concatenated, the block
+# this plugin actually injects, and the largest file read whole against the same file peeked. On
+# this repository: 3,585,801 / 4,142 / 289,972 → 294.
+#
+# Three things could turn it from a measurement into a sales line, and each is asserted below.
+#
+# 🐛 The first draft converted the byte ceiling into tokens with a chars-per-token constant that
+# does not exist: `tokens.estimate` weighs every character by script precisely because a single
+# ratio is wrong. Inventing one would have put a fabricated number in the one command whose whole
+# argument is that published figures are not re-derivable. A repository with no recorded sessions
+# now reports the bound in BYTES and says so.
+_t_ws233 = owner_workspace("The comparison is the reader's own repository")
+if _t_ws233 is not None:
+    import json as _j233
+    import re as _re233
+    import subprocess as _sp233
+    import tempfile as _tf233
+    from pathlib import Path as _P233
+
+    _t_cmd233 = ROOT / "bin" / "chamnan-vs"
+    if not _t_cmd233.is_file():
+        skip("  [SKIP] chamnan-vs — the command is not here")
+    else:
+        _t_src233 = _t_cmd233.read_text(encoding="utf-8-sig", errors="replace")
+
+        # 1 · It names nobody. The owner's rule, and the reason is the reader's: a competitor's
+        # name turns a measurement into an argument about whether the comparison was fair, and the
+        # numbers apply whatever they are comparing against. Built at runtime so this file does not
+        # match itself.
+        _t_names233 = [n for n in ("repo" + "mix", "cave" + "man", "claude" + "mem",
+                                   "head" + "room", "pony" + "tail", "super" + "powers")
+                       if n in _t_src233.lower()]
+        check("The comparison names no other tool",
+              not _t_names233,
+              saw="%s — a reader gains nothing from a competitor's name, and naming one invites an "
+                  "argument about the comparison instead of a decision about their own repository"
+              % (_t_names233,))
+
+        # 2 · It says what it does NOT claim — asserted on what a reader is SHOWN, not on the
+        # docstring. First written as a regex over the source with three alternative spellings, and
+        # a mutation removing one of them survived, because another still matched: that is the
+        # "pinned the spelling, not the behaviour" trap, which this repository has now recorded six
+        # times. The caveat a user receives is a printed line, and both output branches are made to
+        # produce one below — the ratio branch and the no-history branch, since the branch with the
+        # least to say is where padding is most tempting.
+        #
+        # 🐛 Both runs also stand in for a defect the check found on its first execution: `--json`
+        # printed through the shadowed `print`, and the redactor replaced the token COUNT with
+        # a placeholder — the packed-token entry is assignment-shaped with a secret word in its
+        # key, which is exactly what it is built to catch. The document stopped being JSON, and
+        # every assertion reading it below reported the measurement as missing.
+        with _tf233.TemporaryDirectory() as _t_d233:
+            _t_r233 = _P233(_t_d233)
+            (_t_r233 / ".chamnan" / "logs").mkdir(parents=True)
+            _sp233.run(["git", "-C", str(_t_r233), "init", "-q"], capture_output=True)
+            (_t_r233 / "app.py").write_text("def f():\n    return 1\n" * 200, encoding="utf-8")
+
+            def _t_run233(*flags):
+                return _sp233.run([sys.executable, str(_t_cmd233), *flags], cwd=str(_t_r233),
+                                  capture_output=True, text=True, timeout=120).stdout
+
+            _t_plain_none233 = _t_run233()
+            _t_out233 = _sp233.run([sys.executable, str(_t_cmd233), "--json"], cwd=str(_t_r233),
+                                   capture_output=True, text=True, timeout=120)
+            # Only NOW does the tree gain a recorded history, so the other output branch runs here
+            # instead of costing a second full pass over the development repository. Written after
+            # the --json run above, because that one is the no-history case and this file would
+            # otherwise hand it the very history it is asserting the absence of.
+            (_t_r233 / ".chamnan" / "logs" / "block_shape.jsonl").write_text(
+                "".join('{"tok": %d}\n' % n for n in (1900, 2000, 2100, 2200, 2300)),
+                encoding="utf-8")
+            _t_plain_some233 = _t_run233()
+
+        _t_nocaveat233 = [w for w, out in (("no history", _t_plain_none233),
+                                           ("with history", _t_plain_some233))
+                          if "not a number" not in out.lower()]
+        check("...and every run tells the reader that a smaller number is not automatically better",
+              not _t_nocaveat233,
+              saw="%s printed the figures with nothing saying that less context can also be the "
+                  "wrong context — which is what R39 #6 measured at up to 24 accuracy points, and "
+                  "publishing the number without it is the sales line this refuses"
+              % (_t_nocaveat233,))
+
+        # 3 · A repository with no history must not be handed an invented figure.
+        _t_json233 = {}
+        try:
+            _t_json233 = _j233.loads(_t_out233.stdout or "{}")
+        except ValueError:
+            _t_json233 = {}
+        check("...and a repository with no recorded sessions reports a BOUND, not a guess",
+              _t_json233.get("block_tokens") is None
+              and "bounded" in str(_t_json233.get("block_basis", "")),
+              saw="block_tokens=%r basis=%r — converting the byte ceiling into tokens needs a "
+                  "chars-per-token ratio that `tokens.estimate` deliberately does not use"
+              % (_t_json233.get("block_tokens"), _t_json233.get("block_basis")))
+        check("...and it still measures what it CAN there, rather than refusing entirely",
+              int(_t_json233.get("packed_tokens") or 0) > 0,
+              saw="packed_tokens=%r — a fresh repository has files to count even with no session "
+                  "history, and answering nothing would make the command useless on exactly the "
+                  "tree somebody is evaluating it on" % (_t_json233.get("packed_tokens"),))
+
+        # 4 · The green case: on a tree WITH history it must report that history rather than the
+        # bound, or the branch above is just the command switched off.
+        _t_here233 = _sp233.run([sys.executable, str(_t_cmd233), "--json"],
+                                cwd=str(_t_ws233.parent), capture_output=True,
+                                text=True, timeout=300)
+        _t_mine233 = {}
+        try:
+            _t_mine233 = _j233.loads(_t_here233.stdout or "{}")
+        except ValueError:
+            _t_mine233 = {}
+        check("...and a repository WITH sessions reports its own median instead",
+              isinstance(_t_mine233.get("block_tokens"), int)
+              and "median" in str(_t_mine233.get("block_basis", "")),
+              saw="block_tokens=%r basis=%r — without this the bound branch is indistinguishable "
+                  "from the measurement never working"
+              % (_t_mine233.get("block_tokens"), _t_mine233.get("block_basis")))
+
+        # 5 · The claim the command exists to make, checked rather than asserted in prose.
+        _t_big233 = _t_mine233.get("largest") or {}
+        check("...and the peeked cost of the largest file is below reading it whole",
+              int(_t_big233.get("peeked") or 0) < int(_t_big233.get("whole") or 0),
+              saw="%r — this is the number the command is FOR, and a version where it does not "
+                  "hold should say so rather than print it" % (_t_big233,))
+# ---- 234_a_file_is_counted_once_not_by_two_names.py
+# ---- 234_a_file_is_counted_once_not_by_two_names.py
+# 🐛 [2026-09-22] (self-measured) `refs.find` returns three things a caller weighs together: the
+# hits, how many files nothing could judge, and `{"exact": n, "lexical": m}` saying which of the
+# two methods produced the answer. The method counter was incremented beside the call and the
+# "nothing could judge this" test came after it, so an unparseable Python file was counted BOTH
+# as answered-by-the-parser and as unjudged — and the three numbers summed to more files than the
+# walk had visited.
+#
+# Why that matters rather than being a cosmetic off-by-one: `unjudged` exists so an answer can say
+# "this is not evidence of absence", and `how` exists so a caller can say how much the answer is
+# worth. A file appearing in both makes each number quietly overstate its own case, in the one
+# place this package put there to stop exactly that.
+#
+# `in_text` has no None return today, so only the Python branch was ever wrong. The assertions
+# below are written over BOTH methods anyway — a check that only knows about the member that
+# happened to break is how this repository's most-recorded defect reproduces itself.
+import sys as _sys234
+import tempfile as _tf234
+from pathlib import Path as _P234
+
+sys.path.insert(0, str(ROOT / "lib"))
+import refs as _refs234                                                   # noqa: E402
+
+with _tf234.TemporaryDirectory() as _d234:
+    _r234 = _P234(_d234)
+    # One file per outcome, so the three numbers can be checked against a population this block
+    # knows exactly: parsed, scanned lexically, and unreadable by either.
+    (_r234 / "ok.py").write_text("def target():\n    return 1\ntarget()\n", encoding="utf-8")
+    (_r234 / "broken.py").write_text("def target(:\n  !!!\n", encoding="utf-8")
+    (_r234 / "app.js").write_text("function target() {}\ntarget();\n", encoding="utf-8")
+    _walked234 = 3
+    _found234, _unjudged234, _how234 = _refs234.find(_r234, "target")
+
+_total234 = _how234.get("exact", 0) + _how234.get("lexical", 0) + _unjudged234
+check("a file is counted once across the three numbers, not twice under two names",
+      _total234 == _walked234,
+      saw="exact=%s lexical=%s unjudged=%s sums to %s over %s file(s) walked — a file in two "
+          "buckets makes both numbers overstate their case"
+      % (_how234.get("exact"), _how234.get("lexical"), _unjudged234, _total234, _walked234))
+check("...and the unparseable file lands in unjudged, not in the parser's count",
+      _how234.get("exact") == 1 and _unjudged234 == 1,
+      saw="exact=%s unjudged=%s — the parser answered one file here, and the file it could not "
+          "read is not evidence of absence" % (_how234.get("exact"), _unjudged234))
+check("...and the lexical scanner still claims the file only it can read",
+      _how234.get("lexical") == 1,
+      saw="lexical=%s — moving the counter past the None test must not stop the branch that never "
+          "returns None from counting at all" % (_how234.get("lexical"),))
+# The oracle: green for the right reason. A run that found nothing would satisfy the sums above
+# while meaning the walk never happened.
+check("...and the walk actually produced hits from both methods",
+      {p for p, _l, _k in _found234} == {"ok.py", "app.js"},
+      saw="%s — the counting assertions above are satisfied by a walk that read nothing, so the "
+          "hits have to be asserted too" % (sorted({p for p, _l, _k in _found234}),))
+# ---- 235_unknown_is_not_zero_at_the_size_gate.py
+# ---- 235_unknown_is_not_zero_at_the_size_gate.py
+# 🐛 [2026-09-22] (self-measured) `rebuild_map_after_upgrade` is the one thing in the session-start
+# hook that spends real seconds on the user's behalf without being asked, and its docstring names
+# the first of its three bounds as "a size estimate that declines the job rather than starting it".
+# The estimate read `indexed * MS_PER_FILE / 1000.0 if indexed else 0`, so an UNKNOWN size produced
+# an estimate of zero, passed the gate, and left that bound not existing on the path where least
+# was known: a known 1,600-file index is declined at 30.4 estimated seconds, while an unknown one
+# of any size was attempted with only the 45-second hard timeout behind it.
+#
+# Two functions in the same file already state the rule. `map_commits_behind` says it outright —
+# *"None is not zero, and the caller must not treat it as such"* — and `map_rebuild_cost` follows
+# it by returning "" rather than quoting a price it cannot know. This was the third member of that
+# set and the only one that pays for the mistake in session-start seconds.
+#
+# 0 is deliberately NOT unknown: an index that names no files is a real answer and rebuilding it
+# is instant. Collapsing the two is how the bug got written, so both are asserted.
+_t_ws235 = owner_workspace("Unknown index size at the rebuild gate")
+if _t_ws235 is not None:
+    import tempfile as _tf235
+    from pathlib import Path as _P235
+
+    _m235 = import_hook_module("chamnan_session_start.py")
+
+    with _tf235.TemporaryDirectory() as _d235:
+        _r235 = _P235(_d235)
+        # pkg_root points at the real package, so a branch that decides to RUN actually can —
+        # otherwise every case below would come back with the missing-binary line and every
+        # assertion would pass for the wrong reason.
+        _unknown235 = _m235.rebuild_map_after_upgrade(_r235, None, ROOT, None)
+        _huge235 = _m235.rebuild_map_after_upgrade(_r235, None, ROOT, 99_999)
+
+    check("an index of UNKNOWN size is declined rather than rebuilt inside session start",
+          bool(_unknown235),
+          saw="returned %r — empty is this function's word for 'rebuilt', so unknown was being "
+              "treated as small enough to run" % (_unknown235,))
+    check("...and it says it could not tell the size, rather than claiming the index is big",
+          "how large" in _unknown235 and "big enough" not in _unknown235,
+          saw="%r — declining for a size nobody measured, in the words used for a size that WAS "
+              "measured, is a reason the reader cannot act on" % (_unknown235,))
+    check("...and a known-large index is still declined, with the size as the stated reason",
+          "big enough" in _huge235,
+          saw="%r — the gate that was already working must keep working" % (_huge235,))
+    check("...and the two refusals do not read the same, so the reader can tell them apart",
+          _unknown235 != _huge235,
+          saw="both branches returned the same sentence")
+
+    # 0 is a real answer, and the fix must not have quietly widened the refusal to cover it.
+    _t_src235 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+    _t_i235 = _t_src235.index("def rebuild_map_after_upgrade(")
+    _t_body235 = _t_src235[_t_i235:_t_src235.index("\ndef ", _t_i235 + 10)]
+    check("...and the refusal tests for None, not for falsiness, so 0 files still rebuilds",
+          "indexed is None" in _t_body235,
+          saw="an index that names no files is a real answer and rebuilding it is instant; "
+              "collapsing it with 'nobody could measure this' is how the defect was written")
+
+    # The measurement the caller's fallback rests on: when a header cannot be parsed it counts
+    # section markers instead, which is only sound while the two agree.
+    #
+    # 🐛 The first version read this working copy's own MAP.md, and the suite failed it for exactly
+    # that — *"NO CHECK TAKES ITS EXPECTED VALUE FROM THIS WORKING COPY'S OWN .chamnan/"*. It was
+    # the wrong instinct for the right reason: a fixture written by hand would agree with itself
+    # and prove nothing. The answer is a fixture INDEXED BY THE CODE UNDER TEST — chamnan-map
+    # writes both the header and the markers, so their agreement is its behaviour rather than this
+    # block's arithmetic, and it holds on any machine.
+    import re as _re235
+    import subprocess as _sp235
+
+    with _tf235.TemporaryDirectory() as _d2_235:
+        _fix235 = _P235(_d2_235)
+        (_fix235 / "pkg").mkdir()
+        # Enough files that a miscount is visible, and more than one directory so the index has
+        # to roll anything up the way it would on a real tree.
+        for _n235 in range(7):
+            (_fix235 / "pkg" / ("mod%d.py" % _n235)).write_text(
+                "def f%d():\n    return %d\n" % (_n235, _n235), encoding="utf-8")
+        (_fix235 / "top.py").write_text("def g():\n    return 1\n", encoding="utf-8")
+        _sp235.run(["git", "-C", str(_fix235), "init", "-q"], capture_output=True)
+        _sp235.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_fix235),
+                   capture_output=True, text=True, timeout=180)
+        _fixmap235 = _fix235 / ".chamnan" / "MAP.md"
+        _txt235 = _fixmap235.read_text(encoding="utf-8-sig", errors="replace") \
+            if _fixmap235.is_file() else ""
+
+    _h235 = _re235.search(r"(\d[\d,]*) source file", _txt235[:600])
+    _hdr235 = int(_h235.group(1).replace(",", "")) if _h235 else None
+    _mark235 = _txt235.count("\n## `")
+    check("the fixture index was actually built, so the comparison below has something to compare",
+          _hdr235 is not None and _mark235 > 0,
+          saw="header=%r markers=%d — chamnan-map wrote no index here, and two numbers that are "
+              "both absent agree with each other" % (_hdr235, _mark235))
+    check("...and the section-marker fallback agrees with the header chamnan-map itself wrote",
+          _hdr235 == _mark235,
+          saw="header says %r, `## \\`path\\`` rows count %d — the caller falls back to those "
+              "markers when it cannot parse a header, and that substitute is sound only while the "
+              "two agree" % (_hdr235, _mark235))
+# ---- 236_two_stores_under_one_roof_are_two_counters.py
+# ---- 236_two_stores_under_one_roof_are_two_counters.py
+# 🐛 [2026-09-22] (self-measured) `block_admission.py` is the instrument STATE.md quotes when it
+# says the session block is saturated and most of it cannot be ranked by usage. It bucketed a
+# session's opens by `named.split("/")[0]` — the FIRST path segment — while the block carries a
+# separate section for rules and for decisions/lessons and both stores sit under `memory/`.
+#
+# The two collapsed into one counter, and the damage ran in both directions at once. "Recorded
+# decisions and lessons" was credited with every RULE a session opened, 42 of them in this
+# workspace's log, so its number overstated it. And "Rules this repository works under" — the
+# largest section in the block at 38% of a ceiling it is already touching — matched no entry at
+# all and was printed as having no counter, which is exactly the gap STATE.md has been carrying as
+# the reason no admission policy could be decided.
+#
+# The policy question is still open and still waits on its research round. This is only the
+# measurement: a number that was wrong is now right, and the biggest section can now be ranked.
+_t_ws236 = owner_workspace("Two stores under one roof are two counters")
+if _t_ws236 is not None:
+    sys.path.insert(0, str(_t_ws236 / "tools"))
+    import importlib as _il236
+    _ba236 = _il236.import_module("block_admission")
+
+    # 1 · The key is the named file's DIRECTORY, so two stores under one parent stay apart.
+    _t_keys236 = {n: _ba236.store_key(n) for n in (
+        "memory/rules/the-set-not-the-member.md",
+        "memory/lessons/statusline-lives-in-two-places.md",
+        "memory/decisions/chamnan-ships-in-batches-not-per-fix.md",
+        "skills/working_a_research_round.md",
+        "threads/held-for-a-batched-release.md",
+        # No directory at all. Every value in the log today has one, so this branch is a
+        # deliberate guard against a future pointer format rather than a live case — which is
+        # exactly why it needs asserting: a mutation renaming it survived until this line existed,
+        # and an untested guard is a claim.
+        "orphan.md")}
+    check("rules and lessons are different stores, not one `memory` bucket",
+          _t_keys236["memory/rules/the-set-not-the-member.md"]
+          != _t_keys236["memory/lessons/statusline-lives-in-two-places.md"],
+          saw="%s — one bucket is how a rule open was counted as a decision open" % (_t_keys236,))
+    check("...and a single-segment store still keys to itself",
+          _t_keys236["skills/working_a_research_round.md"] == "skills"
+          and _t_keys236["threads/held-for-a-batched-release.md"] == "threads",
+          saw="%s — widening the key must not rename the stores that were already right"
+          % (_t_keys236,))
+    check("...and a name with no directory keeps itself rather than joining a shared bucket",
+          _t_keys236["orphan.md"] == "orphan.md",
+          saw="%s — the fallback exists so a pointer format that drops directories cannot bucket "
+              "every store together, which is the failure this whole block is about"
+          % (_t_keys236,))
+
+    # 2 · The section that pays most of the block can now be ranked at all.
+    _t_rules236 = _ba236._store_for("Rules this repository works under")
+    check("the largest section in the block HAS a counter",
+          _t_rules236 and _t_keys236["memory/rules/the-set-not-the-member.md"] in _t_rules236,
+          saw="_store_for gave %r — a section with no counter is dropped from usage ranking "
+              "entirely, and this one is 38%% of a block already at its ceiling" % (_t_rules236,))
+
+    # 3 · ...and the section it used to borrow those opens from no longer does.
+    _t_dec236 = _ba236._store_for("Recorded decisions and lessons — read the one that matches")
+    check("...and decisions no longer claims the rules store",
+          _t_dec236 and _t_keys236["memory/rules/the-set-not-the-member.md"] not in _t_dec236,
+          saw="_store_for gave %r — crediting a section for opens of a store it does not point "
+              "into is a number that argues for keeping something on someone else's evidence"
+          % (_t_dec236,))
+    # The oracle. Everything above is satisfied by a table that maps decisions to nothing, which
+    # would be a counter deleted rather than a counter corrected.
+    check("...and it still counts BOTH stores it really does point into",
+          _t_dec236 and {_t_keys236["memory/lessons/statusline-lives-in-two-places.md"],
+                         _t_keys236["memory/decisions/chamnan-ships-in-batches-not-per-fix.md"]}
+          <= set(_t_dec236),
+          saw="_store_for gave %r — that section is one pointer into two directories, and a "
+              "session that reached either one acted on it" % (_t_dec236,))
+# ---- 238_a_durable_write_is_never_half_a_file.py
+# ---- 238_a_durable_write_is_never_half_a_file.py
+# 🐛 [2026-09-22] (self-measured) Check 208 judges research reports on disk, and those reports are
+# written by dispatched rounds that file whenever they finish. Six workspace tools wrote durable
+# files with a plain `write_text`, which truncates and then fills: a reader landing in between gets
+# a prefix, counts fewer table rows than the report has, and 208 announces a defect about a file
+# that was simply still being written. Two full-gate runs today straddled four such dispatches and
+# BOTH passed — worse than failing, because the verdict depended on timing and nothing said so.
+#
+# **The first fix was at the reader and it was wrong.** A `stable_read` comparing `stat()` either
+# side of the read measured itself admitting 3 torn reads out of 20 against a live writer. A guard
+# that leaks 15% while reading as protection is worse than none, so it was deleted rather than
+# tuned. The race is REMOVABLE at the writer and only ever DETECTABLE at the reader.
+#
+# The finding named one writer. The class had six — `round_report`, `research_citations`,
+# `rule_conflicts`, `test_coverage_map`, `smoke_the_folded_checks`, `build_router_classifier` —
+# which is why this asserts the POPULATION, derived from source, rather than the one that was
+# reported. A list of six names maintained by hand is this repository's most recorded defect.
+_t_ws238 = owner_workspace("A durable write is never half a file")
+if _t_ws238 is not None:
+    import ast as _ast238
+    import re as _re238
+
+    # A durable store: the files the workspace keeps and later reads back to judge something.
+    # Scratch and temp writes are deliberately out — a torn scratch file costs its own run and
+    # nothing else, and demanding atomicity there would be ceremony.
+    _DURABLE238 = _re238.compile(r"OUT|state|STATE|research|memory|skills|index")
+
+    _t_bad238, _t_scanned238 = [], 0
+    for _t_f238 in sorted((_t_ws238 / "tools").glob("*.py")):
+        _t_src238 = _t_f238.read_text(encoding="utf-8", errors="replace")
+        try:
+            _t_tree238 = _ast238.parse(_t_src238)
+        except SyntaxError:
+            continue
+        _t_scanned238 += 1
+        for _t_n238 in _ast238.walk(_t_tree238):
+            if not (isinstance(_t_n238, _ast238.Call)
+                    and isinstance(_t_n238.func, _ast238.Attribute)
+                    and _t_n238.func.attr == "write_text"):
+                continue
+            _t_seg238 = (_ast238.get_source_segment(_t_src238, _t_n238) or "").replace("\n", " ")
+            if _DURABLE238.search(_t_seg238):
+                _t_bad238.append("%s:%d" % (_t_f238.name, _t_n238.lineno))
+
+    check("the sweep read the workspace's tools at all: %d file(s)" % _t_scanned238,
+          _t_scanned238 >= 40,
+          saw="a sweep over an empty population passes while measuring nothing, which is the "
+              "failure this whole block was written after")
+    check("NO DURABLE WORKSPACE FILE IS WRITTEN WITH A PLAIN write_text",
+          not _t_bad238,
+          saw="%s — each truncates then fills, so a reader in between gets a prefix. "
+              "`durable.write(path, text)` replaces the file atomically through the same "
+              "`workspace.atomic_write_text` the plugin already uses." % (_t_bad238,))
+
+    # The oracle: the adapter must actually be reachable and actually replace a file, or the
+    # assertion above is satisfied by six tools that stopped writing anything at all.
+    import importlib as _il238
+    import tempfile as _tf238
+    from pathlib import Path as _P238
+    sys.path.insert(0, str(_t_ws238 / "tools"))
+    _t_dur238 = _il238.import_module("durable")
+    with _tf238.TemporaryDirectory() as _t_d238:
+        _t_p238 = _P238(_t_d238) / "x.md"
+        _t_p238.write_text("old\n", encoding="utf-8")
+        _t_dur238.write(_t_p238, "new and longer\n")
+        _t_got238 = _t_p238.read_text(encoding="utf-8")
+        _t_left238 = sorted(q.name for q in _P238(_t_d238).iterdir())
+    check("...and the adapter replaces the file with exactly what it was given",
+          _t_got238 == "new and longer\n",
+          saw="%r — a writer that cannot write is not an improvement on one that writes badly"
+          % (_t_got238,))
+    check("...and it leaves no staging file behind for the next reader to trip over",
+          _t_left238 == ["x.md"],
+          saw="%s — the temp file is the half-written one, and a glob that finds it judges it"
+          % (_t_left238,))
 # ---- 23_named_as_a_credential_and_never_enforced.py
 # ------------------------------------------- the module named them and redacted none of them
 # 🐛 [2026-09-09] `_CREDENTIAL_PREFIX` lists twenty-two vendor prefixes, and six of them were
