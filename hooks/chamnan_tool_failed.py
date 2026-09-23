@@ -27,6 +27,8 @@ the key is chosen later, from this log.
 
 **An interrupt is not a mistake.** `is_interrupt` means the run was aborted rather than that the
 tool reported an error, and recording it would fill the log with the user changing their mind.
+
+WRITES: logs/failures.jsonl per logs/commands.jsonl
 """
 import json
 import sys

@@ -11,6 +11,8 @@ gets out of the way. Suggesting is the whole job — deciding what deserves to b
 
 Similarity is a Jaccard overlap of long-ish word tokens. Deliberately crude: a fingerprint that
 needed parsing would have to understand every language a user might write a scratch script in.
+
+WRITES: logs/scratch.jsonl per logs/commands.jsonl
 """
 import json
 import re

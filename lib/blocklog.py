@@ -18,6 +18,8 @@ Three real defects from one day, and what each looks like here:
     the downgrade banner lost its cap         -> "bytes" jumps to 34,728
 
 None of those was noticed for hours. All three are obvious in a column of numbers.
+
+WRITES: logs/block_shape.jsonl per logs/commands.jsonl
 """
 import json
 import re

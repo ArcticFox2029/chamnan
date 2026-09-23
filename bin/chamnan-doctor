@@ -109,6 +109,27 @@ def which_hooks(root, wsdir, lines):
         lines.append((BAD, f"registered but not executable: {', '.join(notexec)}"))
 
 
+def which_silence(root, lines):
+    """Silence WITH a denominator — `.chamnan/tools/silence.py`, if this repository has it.
+
+    The crude version below says "nothing in 14 days", which a quiet fortnight also says. This one
+    says "nothing, although the thing that feeds it happened 4,478 times", which only a dead
+    feature says.
+    """
+    tool = root / ".chamnan" / "tools" / "silence.py"
+    if not tool.is_file():
+        return
+    try:
+        out = subprocess.run([sys.executable, str(tool), "--quiet"], capture_output=True,
+                             text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        lines.append((UNKNOWN, "silence.py exists but would not run"))
+        return
+    tail = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+    lines.append((OK if out.returncode == 0 else BAD,
+                  tail[-1][:130] if tail else "silence.py said nothing"))
+
+
 def which_logs(wsdir, lines):
     """A log that stopped growing is a feature that stopped running."""
     logs = wsdir / "logs"
@@ -222,6 +243,7 @@ def main(argv):
     which_artefacts(root, wsdir, lines)
     which_stores(wsdir, lines)
     which_loops(root, lines)
+    which_silence(root, lines)
 
     order = {BAD: 0, UNKNOWN: 1, OK: 2}
     lines.sort(key=lambda row: order.get(row[0], 3))

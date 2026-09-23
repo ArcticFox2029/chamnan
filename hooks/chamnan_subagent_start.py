@@ -29,6 +29,8 @@ Two things are deliberately not here:
 
 Unlike SessionStart, a plain `print()` is NOT context here -- SubagentStart requires the explicit
 `hookSpecificOutput.additionalContext` form. Available from Claude Code 2.0.43.
+
+WRITES: logs/subagent_start.jsonl per logs/agent_results.jsonl
 """
 import json
 import re
