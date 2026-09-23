@@ -23,6 +23,8 @@ mutate the machine", taken from the rule's own enumeration, not a sample of one 
 
 **It never blocks.** Same contract as every hook here: it says what is about to happen and the
 person typing decides. Blocking a write is a decision, and this package does not make decisions.
+
+ENFORCES: memory/rules/which-repositories-this-project-covers.md
 """
 import os
 import pathlib
