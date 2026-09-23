@@ -400,6 +400,22 @@ def _repeat_notice(payload):
         return ""
 
 
+def _wrong_shape(payload):
+    """"you are running this script without the flag it says it needs" — or "".
+
+    The complement to `_repeat_notice`: that one reads what FAILED, this one reads what the script
+    about to run declares about itself. Today's three lost hours were all exit-0 commands that did
+    less than intended, which a failure log cannot see by construction. `lib/canonical.py` carries
+    the reasoning; nothing is blocked and nothing is rewritten.
+    """
+    try:
+        import canonical
+        root = ws.hook_root(payload)
+        command = (payload.get("tool_input") or {}).get("command") or ""
+        return canonical.advice(command, root)
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        return ""
+
 def _long_read_notice(payload):
     """The bulk-read notice, from the module that owns it. "" when it has nothing to say."""
     import io as _io
@@ -529,6 +545,11 @@ def main():
     # what counts as a repeat, and its key is at its tightest setting on purpose: the same tool, the
     # same command, the same error, twice. A first failure says nothing, because a first failure is
     # how anybody learns what the flags are.
+    _shape = _wrong_shape(payload)
+    if _shape:
+        _emit(_shape)
+        # Not a return, for the same reason as the repeat notice below it.
+
     _again = _repeat_notice(payload)
     if _again:
         _emit(_again)

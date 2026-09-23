@@ -48698,6 +48698,59 @@ check("...while a command with no history here is not interrupted",
 _rmtree(_gt_ws.parent, ignore_errors=True)
 
 
+# ---------------------------------- the command that SUCCEEDS while doing less than it should
+# 🎯 [owner 2026-09-23] "ขอโทษแล้ว มันไม่มีอะไรดีขึ้น ฉันเสียเวลา เสียเงิน". Three commands in one
+# hour exited 0 and produced nothing: a research round dispatched around the script that files the
+# report, and `read_agent_report.py` run twice without the flag that writes the extract to disk.
+# `gotcha.py` reads what FAILED and could not see any of them — by construction, because none of
+# them failed. This reads what the script about to run DECLARES about itself instead.
+#
+# 🔴 The declaration lives in the script, never in a table here: a list of known-wrong invocations
+# kept in one place is `the-set-not-the-member.md` with extra steps — it would cover the two
+# commands that burned the hour and miss the other 109 tools in this workspace.
+import canonical as _cn  # noqa: E402
+
+_CN_K1 = "chamnan-" + "canonical"          # assembled: see the 🐛 in lib/canonical.py
+_CN_K2 = "chamnan-" + "instead"
+_cn_ws = Path(tempfile.mkdtemp(prefix="chamnan-canonical-"))
+(_cn_ws / "declares.py").write_text(
+    '"""A tool that says how it must be called."""\n# ' + _CN_K1 + ": --out\n", encoding="utf-8")
+(_cn_ws / "silent.py").write_text('"""A tool that declares nothing."""\n', encoding="utf-8")
+(_cn_ws / "redirects.sh").write_text(
+    "#!/bin/sh\n# " + _CN_K2 + ": use the other one, it files the report\n", encoding="utf-8")
+
+_cn_missing = _cn.advice("python3 declares.py report.md", _cn_ws)
+check("A COMMAND THAT WILL SUCCEED AND LOSE ITS RESULT IS NAMED BEFORE IT RUNS",
+      "--out" in _cn_missing and "declares.py" in _cn_missing, saw=_cn_missing[:200])
+check("...and nothing is blocked", "Nothing is blocked" in _cn_missing, saw=_cn_missing[:200])
+check("...while the same command in its declared shape is not interrupted",
+      _cn.advice("python3 declares.py report.md --out", _cn_ws) == "",
+      saw=_cn.advice("python3 declares.py report.md --out", _cn_ws))
+check("...and a script that declares nothing is never spoken about",
+      _cn.advice("python3 silent.py x", _cn_ws) == "",
+      saw=_cn.advice("python3 silent.py x", _cn_ws))
+# A required token is a TOKEN. `--out` satisfied by `--output-dir` is the substring bug recorded in
+# another shape as the blanket-replace lesson.
+check("...and a required flag is not satisfied by a LONGER flag that merely contains it",
+      "--out" in _cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws),
+      saw=_cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws)[:160])
+check("a script can also redirect to the tool that does the whole job",
+      "files the report" in _cn.advice("bash redirects.sh brief.md", _cn_ws),
+      saw=_cn.advice("bash redirects.sh brief.md", _cn_ws)[:160])
+# 🐛 [2026-09-23] The first version put a literal example in its own docstring, read its own source
+# and reported ITSELF as wrongly invoked. `a-passing-check-may-be-a-decoration.md` names this: a
+# check that reads source matches its own source.
+check("THE GUARD DOES NOT MATCH ITS OWN SOURCE",
+      _cn.declarations(ROOT / "lib" / "canonical.py") == {},
+      saw=_cn.declarations(ROOT / "lib" / "canonical.py"))
+# The population check — "every declaring script in the workspace actually parses" — belongs to
+# the WORKSPACE suite, not here: this plugin ships to repositories that have no such scripts,
+# and a plugin test that needs THIS repository's tools is the machine-specific exception
+# `no-exception-for-one-machines-configuration.md` forbids. See
+# `.chamnan/tests/test_canonical_declarations.py`.
+_rmtree(_cn_ws, ignore_errors=True)
+
+
 # ---------------------------------- a mistake nobody had to type in, so a new workspace has some
 # 🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ" — then the correction that
 # decided the design: the system has to work for somebody else's repository and somebody else's
