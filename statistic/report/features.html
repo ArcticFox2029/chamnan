@@ -63,14 +63,31 @@ M.append(panel("guards that have proved they can fail",
   ]));
 
 /* ---- the gate */
-M.append(panel("what the gate finds",
-  "ด่านตรวจเจออะไรบ้าง",
-  "logs/gate_runs.jsonl",
+/* 🎯 [owner, 2026-09-23] "ข้อมูลมันชวนงง … แก้นิยาม failing sec คืออะไร". Four rows all
+   reading 2026-09-10 made a reader decode the table before using it, and two of its four column
+   headings were abbreviations of words that were never written out anywhere. One row per day —
+   the LAST run of that day, because the gate is run repeatedly while a failure is chased and
+   what matters afterwards is where the day ended — and the columns say what they hold. */
+M.append(panel("what the gate finds", "ด่านตรวจเจออะไรบ้าง",
+  "logs/gate_runs.jsonl · the last run of each day",
   [
     spark((fd.gate_runs || []).map((g) => g.checks || 0), { colour: PAL[2] }),
-    table(["run", { t: "checks", n: 1 }, { t: "failing", n: 1 }, { t: "sec", n: 1 }],
-      (fd.gate_runs || []).slice().reverse().slice(0, 6).map((g) =>
-        [g.day, { t: n(g.checks), n: 1 }, { t: n(g.failing), n: 1 }, { t: n(g.seconds), n: 1 }])),
+    table([{ t: "day" }, { t: "checks run", n: 1 }, { t: "failed", n: 1 },
+           { t: "took", n: 1 }, { t: "runs that day", n: 1 }],
+      (fd.gate_runs || []).slice(0, 8).map((g) => [
+        g.day,
+        { t: n(g.checks), n: 1 },
+        { t: g.failing === null || g.failing === undefined ? "—"
+             : (g.failing ? String(g.failing) : "none"), n: 1 },
+        { t: g.seconds ? (g.seconds >= 90 ? `${Math.round(g.seconds / 60)} min`
+                                          : `${g.seconds}s`) : "—", n: 1 },
+        { t: g.runs > 1 ? String(g.runs) : "", n: 1 }])),
+    el("p", { class: "note" },
+      T("“failed” is how many individual checks did not pass in that run; “took” is how long the "
+        + "whole run took. Where a day was run more than once, this is the last one — the count "
+        + "beside it says how many there were.",
+        "“failed” คือจำนวนเช็คที่ไม่ผ่านในรอบนั้น · “took” คือเวลาที่รันทั้งรอบ · "
+        + "วันไหนรันหลายรอบ แสดงรอบสุดท้าย และบอกจำนวนรอบกำกับ")),
   ]));
 
 /* ---- the model's own mistakes, and the lessons they turned into.

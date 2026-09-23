@@ -627,9 +627,19 @@ def found():
         marks = int(marks.get("marks", 0))
     except (OSError, ValueError, AttributeError):
         marks = 0
-    return {"gate_runs": [{"day": day_of(g), "checks": g.get("checks"),
-                           "failing": g.get("failing"), "seconds": g.get("seconds")}
-                          for g in gates[-20:]][::-1],
+    # \U0001F3AF [owner, 2026-09-23] "\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e21\u0e31\u0e19\u0e0a\u0e27\u0e19\u0e07\u0e07 \u0e1b\u0e23\u0e31\u0e1a\u0e43\u0e2b\u0e49\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e27\u0e31\u0e19\u0e25\u0e30\u0e2d\u0e31\u0e19" \u2014 four rows all reading
+    # 2026-09-10 is a table a reader has to decode before they can use it. The gate is run several
+    # times a day while a failure is being chased, and what matters afterwards is where the day
+    # ENDED, so the last run of each day is the row. Said on the panel rather than assumed.
+    by_day = {}
+    for g in gates:
+        d = day_of(g)
+        if d:
+            by_day[d] = g            # later rows overwrite: the last run of that day wins
+    return {"gate_runs": [{"day": d, "checks": g.get("checks"),
+                           "failing": g.get("failing"), "seconds": g.get("seconds"),
+                           "runs": sum(1 for x in gates if day_of(x) == d)}
+                          for d, g in sorted(by_day.items())[-20:]][::-1],
             "mutation_proved": len({v.get("check") for v in proofs.values()
                                     if isinstance(v, dict) and v.get("check")}),
             "guard_pool": pool, "recorded_lessons": marks}
