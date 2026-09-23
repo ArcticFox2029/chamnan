@@ -427,6 +427,19 @@ def _outside_the_checkout(payload):
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
         return ""
 
+def _the_others_in_the_set(payload):
+    """"this text is also in N files beside it" — the most-recorded failure here, with a search.
+
+    `lib/siblings.py` carries the reasoning and the bounds. It names them and stops: whether the
+    others need the same cut is a judgement, and this package does not make judgements.
+    """
+    try:
+        import siblings
+        return siblings.advice(payload.get("tool_name") or "",
+                               payload.get("tool_input") or {}, ws.hook_root(payload))
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        return ""
+
 def _wrong_shape(payload):
     """"you are running this script without the flag it says it needs" — or "".
 
@@ -549,6 +562,11 @@ def main():
         if _already:
             _emit(_already)
             return 0
+    if _tool == "Edit":
+        _set = _the_others_in_the_set(payload)
+        if _set:
+            _emit(_set)
+            # Not a return: the operator notice below is about WHO cuts, this is about WHERE.
     if _tool in ("Edit", "Write"):
         return _surgery_belongs_to_the_operator(payload)
     if _tool != "Bash":

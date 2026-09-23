@@ -48762,6 +48762,52 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- the identical ones beside it
+# ENFORCES: memory/rules/the-set-not-the-member.md
+# 🎯 The most-recorded failure in this workspace — eighteen instances counted before this was
+# written. A rule cannot catch it: at the moment of the edit the other members are not on screen,
+# which is exactly why they are missed.
+import siblings as _sb  # noqa: E402
+
+_sb_root = Path(tempfile.mkdtemp(prefix="chamnan-siblings-")) / "repo"
+(_sb_root / "adapters").mkdir(parents=True)
+for _n in ("one", "two", "three"):
+    (_sb_root / "adapters" / f"{_n}.py").write_text(
+        "def run():\n    return _shared_guard(x)   # the line a fix lands on\n", encoding="utf-8")
+(_sb_root / "adapters" / "alone.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+(_sb_root / "adapters" / "notes.md").write_text("_shared_guard(x)   # the line a fix lands on\n",
+                                                encoding="utf-8")
+
+_sb_said = _sb.advice("Edit", {"file_path": str(_sb_root / "adapters" / "one.py"),
+                               "old_string": "_shared_guard(x)   # the line a fix lands on"},
+                      _sb_root)
+check("THE OTHER MEMBERS OF THE SET ARE NAMED BEFORE THE CUT",
+      "two.py" in _sb_said and "three.py" in _sb_said, saw=_sb_said[:200])
+# 🔴 Same suffix only. A `.md` note quoting the line is prose about the set, not a member of it —
+# and a notice that names it teaches people the notice is unreliable.
+check("...and a file of a different KIND quoting the same line is not one of them",
+      "notes.md" not in _sb_said, saw=_sb_said[:200])
+check("...while an edit that is genuinely local says nothing",
+      _sb.advice("Edit", {"file_path": str(_sb_root / "adapters" / "alone.py"),
+                          "old_string": "def run():\n    return 1"}, _sb_root) == "",
+      saw=_sb.advice("Edit", {"file_path": str(_sb_root / "adapters" / "alone.py"),
+                              "old_string": "def run():\n    return 1"}, _sb_root))
+# A short needle matches everywhere and means nothing; the guard would fire on every edit.
+check("...and a needle too short to mean anything is not searched for",
+      _sb.advice("Edit", {"file_path": str(_sb_root / "adapters" / "one.py"),
+                          "old_string": "run"}, _sb_root) == "")
+check("...and it names them without deciding for anybody",
+      "Nothing is blocked" in _sb_said and "check whether" in _sb_said, saw=_sb_said[-90:])
+# 🐛 [2026-09-23] The first version walked the whole repository: 2.7 seconds on a real edit, for a
+# notice, on every edit. It now starts beside the file and widens only while it has too few peers.
+_sb_t0 = time.time()
+_sb.advice("Edit", {"file_path": str(_sb_root / "adapters" / "one.py"),
+                    "old_string": "_shared_guard(x)   # the line a fix lands on"}, _sb_root)
+_sb_ms = (time.time() - _sb_t0) * 1000
+check(f"...in a time an editor can afford — {_sb_ms:.0f}ms", _sb_ms < 400, saw=_sb_ms)
+_rmtree(_sb_root.parent, ignore_errors=True)
+
 # ---------------------------------- nothing machine-specific and nothing borrowed ships
 # ENFORCES: memory/rules/no-exception-for-one-machines-configuration.md
 # ENFORCES: memory/rules/reading-real-work-is-fine-writing-it-down-is-not.md
