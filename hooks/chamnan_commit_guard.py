@@ -28,7 +28,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import workspace as ws                                            # noqa: E402
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# 🐛 [2026-09-24] (self-measured) The control-character half of the redactor had no default here.
+# Every string this hook prints is assembled from repository text — a commit message, a file path,
+# a recorded lesson — and an ESC/OSC sequence or a bidi override in any of them reaches a terminal
+# and the transcript unchanged. The credential half is already applied where each piece is read,
+# which is why this is `emit_prescrubbed` rather than `emit`: one more full pass over an already
+# scrubbed string buys nothing and costs the whole output. The sweep asserts the SET of hooks, and
+# these two were the ones it had never covered.
+print = redact.emit_prescrubbed  # noqa: A001
 
 # 🐛 [2026-09-23] (self-measured) The first version matched `git` anywhere in the command, so `echo git commit`
 # fired it. That is the mention-is-not-use error this workspace has recorded six times, made here

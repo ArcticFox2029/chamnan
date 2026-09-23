@@ -29858,6 +29858,7 @@ check("a block scalar under an ordinary name is left alone",
 # The assertion derives its own population: any `try` whose body is nothing but independent calls
 # and whose handler swallows. That is the shape, stated once, rather than the one site that had it.
 import ast as _ast133
+import re as _re133
 import pathlib as _pl133
 
 _t_roots133 = [ROOT / "lib", ROOT / "bin", ROOT / "hooks"]
@@ -29912,18 +29913,34 @@ check(f"no swallowed `try` cancels work beside it ({_t_files133} source file(s) 
 # when the one before it raises.
 _t_hook133 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
 _t_tree133 = _ast133.parse(_t_hook133)
+# 🐛 [2026-09-24] (self-measured) The set was WRITTEN OUT — `{prune_logs, prune_orphaned_temps,
+# prune_sessions}` — and a fourth prune was added to the hook. The loop then matched nothing, the
+# check reported "0 loop(s) over the three prunes", and the thing it guards had been correct the
+# whole time. A hand-typed population is the defect this repository records most often, and here
+# it was inside the check that exists to catch that class.
+#
+# Derived now: every `prune_*` this loop runs, asserted against every `prune_*` the workspace
+# module defines, so the next one added has to be in the loop or this fails.
 _t_loops133 = [
     _t_n133 for _t_n133 in _ast133.walk(_t_tree133)
     if isinstance(_t_n133, _ast133.For)
     and isinstance(_t_n133.iter, _ast133.Tuple)
-    and {getattr(_e133, "attr", "") for _e133 in _t_n133.iter.elts}
-        == {"prune_logs", "prune_orphaned_temps", "prune_sessions"}
+    and _t_n133.iter.elts
+    and all(getattr(_e133, "attr", "").startswith("prune_") for _e133 in _t_n133.iter.elts)
 ]
-check("the three prunes are independent of one another",
+_t_ws_src133 = (ROOT / "lib" / "workspace.py").read_text(encoding="utf-8")
+_t_defined133 = {_m133.group(1) for _m133 in
+                 _re133.finditer(r"^def (prune_\w+)\(", _t_ws_src133, _re133.M)}
+_t_in_loop133 = ({getattr(_e133, "attr", "") for _e133 in _t_loops133[0].iter.elts}
+                 if _t_loops133 else set())
+check("the prunes are independent of one another",
       len(_t_loops133) == 1 and all(isinstance(_b133, _ast133.Try)
                                     for _b133 in _t_loops133[0].body),
-      saw=f"{len(_t_loops133)} loop(s) over the three prunes; a shared `try` around them means a "
-          f"failure in the first stops the retention policy the other two enforce.")
+      saw=f"{len(_t_loops133)} loop(s) over the prunes; a shared `try` around them means a "
+          f"failure in the first stops the retention policy the others enforce.")
+check("...and the loop runs EVERY prune the workspace defines, not the ones somebody listed",
+      _t_defined133 and _t_in_loop133 == _t_defined133,
+      saw=f"in the loop: {sorted(_t_in_loop133)}; defined: {sorted(_t_defined133)}")
 # ---- 134_we_looked_and_it_is_gone_is_not_we_could_not_look.py
 # ------------------ "we looked and it is gone" is a different answer from "we could not look"
 # R12.6, R12.8 and R12.9, measured 2026-09-15 — three findings that are one finding.
