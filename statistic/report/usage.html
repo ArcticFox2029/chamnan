@@ -65,26 +65,104 @@ M.append(panel("which part of the repository",
   hbars((pl.by_directory || []).slice(0, 7).map((r, i) => ({
     label: r[0], value: r[1], text: short(r[1]), colour: PAL[i % PAL.length] })))));
 
+/* ---- the local model.
+
+   🎯 [owner, 2026-09-23] "ตรง local model แน่ใจนะ ว่ามันตรวจจับได้ และ วัดค่าได้แม่นจริงๆ ฉันว่า
+   น่าจะยากอยู่นะ เพราะว่า ไม่รู้ตัวแปรว่า เค้าจะเรียก model อะไร ต่ออะไรยังไง จะ call ยังไง มันไม่เหมือนเรา
+   ที่ใช้จริงแต่วางระบบไว้" — and the doubt is correct. 🔴 This panel is NOT a plugin feature. It
+   reads `state/local_assist/`, which THIS repository's own tooling writes when it hands a long
+   document to a local model before a session reads it. chamnan ships no such caller: it cannot
+   know which model a reader runs, how it is invoked, or whether one exists at all, so it cannot
+   measure this for anybody but us.
+
+   So the panel says that, in the panel, and greys itself out where the recorder is absent rather
+   than printing two confident zeros. A dashboard that shows 0 for a thing it never measured is
+   making a claim; one that says "nothing writes this here" is reporting. */
+const hasLocal = (S.local || []).length > 0 || (row.local_calls || 0) > 0;
+M.append(panel("the local model — this repository's own tooling",
+  "โมเดลในเครื่อง — เครื่องมือของ repo นี้เอง ไม่ใช่ฟีเจอร์ของปลั๊กอิน",
+  hasLocal ? "state/local_assist/daily/*.jsonl — written by this repository, not by the plugin"
+           : "state/local_assist/ — nothing writes it here",
+  [
+    hasLocal ? el("div", { class: "grid2" },
+      stat(short(row.local_calls || 0), "calls answered", "ครั้งที่ตอบ"),
+      stat(short(row.local_chars || 0), "characters read for the session",
+        "ตัวอักษรที่อ่านแทน")) : null,
+    hasLocal ? spark(rows.map((r) => r.local_chars || 0), { colour: PAL[4] }) : null,
+    el("p", { class: "note" },
+      T(hasLocal
+        ? "counted as report minus extract, once — chamnan does not call a local model itself and "
+          + "cannot know which one you run or how, so it measures this only where something on "
+          + "your own machine records it."
+        : "chamnan does not call a local model, and nothing here records one. It cannot know "
+          + "which model you run, how it is invoked, or whether one exists — so this stays empty "
+          + "rather than reporting a zero it never measured.",
+        hasLocal
+          ? "นับแบบ report ลบ extract นับครั้งเดียว · chamnan ไม่ได้เรียกโมเดลในเครื่องเอง และไม่รู้ว่า"
+            + "คุณใช้โมเดลไหนหรือเรียกยังไง จึงวัดได้เฉพาะที่มีอะไรบนเครื่องคุณบันทึกไว้"
+          : "chamnan ไม่ได้เรียกโมเดลในเครื่อง และที่นี่ไม่มีอะไรบันทึกไว้ · มันไม่รู้ว่าคุณใช้โมเดลไหน "
+            + "เรียกยังไง หรือมีหรือเปล่า · จึงปล่อยว่างไว้ ดีกว่ารายงานเลขศูนย์ที่ไม่เคยวัด")),
+  ], { off: !hasLocal }));
+
+/* ---- what is caught before anything leaves this machine.
+
+   🎯 [owner, 2026-09-23] "เพิ่ม การตรวจจับ security … กองได้มีประเภทไหนบ้าง เช่น รหัส, api key,
+   credit card, บัตรประชาชน และหมวดอื่นๆ … แต่ เราทำ ให้มองง่าย", and — the half that matters —
+   "ข้อสุดท้าย คือกรองไม่ได้เพราะไม่มี pattern … ต้องใส่เป็น remark". A list of what a
+   filter catches, with no list of what it cannot, reads as a promise to catch everything. */
+const sec = S.security || {};
+const mm = sec.measured || null;
+M.append(panel("what is caught before anything leaves this machine",
+  "จับอะไรได้บ้าง ก่อนข้อมูลจะออกจากเครื่อง",
+  `lib/redact.py · ${n(sec.total)} compiled pattern(s)`
+  + (mm ? ` · measured ${mm.measured}` : ""),
+  [
+    mm ? el("div", { class: "grid2" },
+      stat(`${mm.recall}%`, `caught — ${mm.hit} of ${mm.cases} test cases`,
+        `จับได้ — ${mm.hit} จาก ${mm.cases} เคส`),
+      stat(`${mm.precision}%`, "of what it redacted deserved it",
+        "ของที่ปิดไป สมควรปิดจริง")) : null,
+    hbars((sec.families || []).map((f, i) => ({
+      label: f.family, th: f.th, value: f.shapes,
+      text: `${n(f.shapes)} ${T("detectors", "ตัวตรวจจับ")}`,
+      colour: PAL[i % PAL.length],
+    }))),
+    el("p", { class: "note" },
+      T("every shape above is replaced before the text reaches a model. The families are read "
+        + "from the redactor itself, so a pattern added tomorrow appears here without this page "
+        + "being edited.",
+        "ทุกรูปแบบข้างบนถูกแทนที่ก่อนข้อความจะถึงโมเดล · หมวดเหล่านี้อ่านมาจากตัว redactor เอง "
+        + "ถ้าพรุ่งนี้เพิ่ม pattern หน้านี้จะขึ้นเอง ไม่ต้องมาแก้")),
+  ]));
+
+/* 🔴 The row the owner asked for by name: what has NO pattern, and why. Its own panel rather
+   than a footnote on the one above — a limitation printed in small grey type under a coverage
+   list is a limitation nobody reads. */
+M.append(panel("what no pattern can catch — and why",
+  "สิ่งที่กรองไม่ได้ และเหตุผล",
+  mm && (mm.missed || []).length
+    ? `measured · ${mm.missed.length} of ${mm.cases} test case(s) still missed: `
+      + mm.missed.join(", ")
+    : "lib/redact.py — stated, not measured",
+  [
+    el("ul", { class: "blind" }, (sec.blind || []).map((b) =>
+      el("li", {},
+        el("span", { class: "blindwhat" }, T(b.what, b.th)),
+        el("span", { class: "blindwhy" }, T(b.why, b.why_th))))),
+    el("p", { class: "note" },
+      T("these are not bugs, and no release fixes them — each one is the price of not "
+        + "covering up ordinary text that was never a secret.",
+        "สามข้อนี้ไม่ใช่บัค และไม่มีเวอร์ชันไหนแก้ได้ · มันคือราคาของการไม่ไปปิดทับข้อความธรรมดาที่ไม่เคยเป็นความลับ")),
+  ]));
+
 /* ---- which files keep being edited. Edited often is NOT fragile: a file under active
    development is edited often and is fine. The lessons column beside it is what separates them. */
 M.append(panel("which files keep being edited",
   "ไฟล์ไหนโดนแก้บ่อย — แก้บ่อยไม่เท่ากับเปราะ ดูคอลัมน์บทเรียนประกอบ",
-  "logs/edits.jsonl · logs/pointer.jsonl · recorded lessons in the file itself",
+  `logs/edits.jsonl · logs/pointer.jsonl · the 10 most edited of ${n(S.files_total)} file(s) changed`,
   table([{ t: "file" }, { t: "edits", n: 1 }, { t: "opens", n: 1 }, { t: "lessons", n: 1 }],
-    (S.files || []).slice(0, 15).map((x) =>
+    (S.files || []).slice(0, 10).map((x) =>
       [el("code", {}, x.path), { t: n(x.edits), n: 1 }, { t: n(x.opens), n: 1 },
        { t: n(x.lessons), n: 1 }])), { wide: true }));
-
-/* ---- the local model */
-M.append(panel("the local model",
-  "โมเดลในเครื่อง — อ่านแทน session ไปเท่าไร",
-  "state/local_assist/daily/*.jsonl",
-  [
-    el("div", { class: "grid2" },
-      stat(short(row.local_calls || 0), "calls answered", "ครั้งที่ตอบ"),
-      stat(short(row.local_chars || 0), "characters read for the session", "ตัวอักษรที่อ่านแทน")),
-    spark(rows.map((r) => r.local_chars || 0), { colour: PAL[4] }),
-    el("p", { class: "src" }, "report minus extract, counted once — the corrected figure"),
-  ], { wide: true }));
 </script>
 </body></html>

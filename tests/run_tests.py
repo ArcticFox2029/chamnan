@@ -22,6 +22,7 @@ import html
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -2606,10 +2607,22 @@ for _cn in ("credentials.py", "credentials.ts", "credentials.rb", "credentials.g
     check(f"a source module named {_cn} is source, not a credential store",
           not redact.is_blocked(Path("/x") / _cn) and not redact.is_never_opened(Path("/x") / _cn))
 # The half that must not move. An extensionless `credentials` IS ~/.aws/credentials.
-for _cs in ("credentials", "credentials.ini", "credentials.cfg", "credentials.json",
-            "credentials.yaml", "credentials.yml", "secrets.yaml"):
-    check(f"...while {_cs} is still refused outright",
-          redact.is_blocked(Path("/x") / _cs) and redact.is_never_opened(Path("/x") / _cs))
+# 🐛 [2026-09-23] This listed `secrets.yaml` and nothing else of that family, and `redact.py`
+# listed `secrets.yml` and `secrets.yaml` — so `secrets.toml`, which is where Streamlit keeps live
+# API keys and where THIS repository keeps its own, was refused by neither. Both sides now derive
+# the population from one place instead of naming members: every config extension a secret store
+# is actually written in has to be refused, and the check fails on the next extension somebody
+# adds to the module without adding it here.
+_CONFIG_EXT = ("", ".ini", ".cfg", ".conf", ".json", ".yaml", ".yml", ".toml", ".env")
+for _stem in ("credentials", "secrets"):
+    for _ext in _CONFIG_EXT:
+        _cs = _stem + _ext
+        check(f"...while {_cs} is still refused outright",
+              redact.is_blocked(Path("/x") / _cs) and redact.is_never_opened(Path("/x") / _cs))
+# 🔴 The set, not the member: no config extension may be left out of the two stems above.
+check("EVERY CONFIG SPELLING OF A SECRET STORE IS REFUSED, NOT JUST THE ONES TYPED OUT",
+      all(redact.is_blocked(Path("/x") / (st + ex))
+          for st in ("credentials", "secrets") for ex in _CONFIG_EXT))
 # 🪤 The trap in the fix, pinned deliberately. The gate asks mapper.EXT_LANG, so the day anyone
 # adds ".json" or ".yaml" to it — both are plausible additions, they are structured text — a GCP
 # service-account credentials.json silently becomes a file chamnan opens and summarises. This
@@ -7817,9 +7830,15 @@ check("every hook is registered under a name carrying the plugin's own",
       _commands and all("/hooks/chamnan_" in c for c in _commands))
 check("...and no two of chamnan's own commands collide either",
       len(set(_commands)) == len(_commands))
+# 🐛 [2026-09-23] This read a command as though it were nothing but a quoted path, so the first
+# hook to take an ARGUMENT failed it — `chamnan_tool_failed.py --post`, registered a second time on
+# PostToolUse because a non-zero exit code arrives there and never on PostToolUseFailure. The
+# argument is the only thing making the two registrations distinct raw strings, which is what stops
+# Claude Code's own dedup from silently dropping one of them, so it cannot be removed to please a
+# parser. A command line is parsed as a command line.
+_program = [shlex.split(c)[0] for c in _commands]
 check("...and every registered command is a file that exists",
-      all((ROOT / c.strip('"').split("${CLAUDE_PLUGIN_ROOT}/", 1)[1]).is_file()
-          for c in _commands))
+      all((ROOT / c.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1]).is_file() for c in _program))
 check("no hook file is left under a name another plugin would choose",
       not [f for f in (ROOT / "hooks").glob("*.py") if not f.name.startswith("chamnan_")])
 

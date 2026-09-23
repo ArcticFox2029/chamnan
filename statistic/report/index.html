@@ -17,75 +17,103 @@ const rows = periodRows(P);
 const row = currentRow(P) || {};
 const key = P.grain === "day" ? "day" : "month";
 
-/* ---- the opening number: the token difference with this and without it, over ONE window.
-   🔴 `handled` is what a local model read, so those characters were never in anybody's context.
-   `carried` is what the session carried anyway. Two measured counts — not a price, not a saving,
-   and no model named, because this plugin does not know which one anybody runs. */
-const H = S.hero || { chars_per_token: 3.8 };
-const handled = Math.round((row.local_chars || 0) / (H.chars_per_token || 3.8));
-const carried = row.carried || 0;
-const share = pct(handled, handled + carried);
+/* ---- the opening panel: how many tokens having the plugin saved, and what it saved them from.
+
+   🐛 [2026-09-23, owner] Three versions before this one. The first printed 0.01% against a
+   denominator that is mostly the same prompt re-sent every turn. The second showed one bare count
+   and answered nothing. The third said "lighter than the same period would have been without the
+   plugin" — accurate, and the owner's reply was that it made things harder to understand, not
+   easier: "มันยิ่งพางง · มันควรใช้คำที่เข้าใจง่าย เช่น เมื่อมีปลั๊กอินประหยัดกว่า". So: SAVED, and the
+   supporting sentence is broken into one short line per fact rather than a Thai run-on.
+
+   🔴 A token is not a token: an output costs several times an ordinary input and a cached read a
+   fraction of it. `without` is what the same period would have weighed if the characters a local
+   model read had entered the context instead — counted once, at the cache-write weight, which is
+   the floor. Page 4 replaces the weights with whatever a reader actually runs. */
+const H = S.hero || {};
+const R = rates();
+const cpt = H.chars_per_token || 3.8;
+const CF = counterfactual();
+/* 🔴 Not every character a local model read would have been read without the plugin. `CF` is the
+   share that really would have been — the owner's own estimate, shipped at a quarter, tunable on
+   page 4, and stated on the panel rather than buried in this file. */
+const readTok = Math.round((row.local_chars || 0) / cpt);
+const avoidedTok = Math.round(readTok * CF);
+const withPlugin = weighted(row, R);
+const avoidedWeight = avoidedTok * (H.avoided_weight ?? R.t_write);
+const without = withPlugin + avoidedWeight;
+const saved = pct(avoidedWeight, without || 1);
+/* 🐛 [2026-09-23, owner] Both bars printed "4.1B" and were drawn the same length, so the chart
+   read as broken. Printing the counts in full fixed the collision and replaced it with two
+   ten-digit numbers nobody can diff by eye — "ปรับบริบท ให้อัตราหลอดมีความต่างของ % การใช้งาน
+   ไม่วัดที่จำนวน".
+
+   A share (100% / 99.98%) was tried next and the owner's answer was that the real figure is
+   clearer: "ปรับ percent เป็น ตัวเลขจริง คนจะเห็นชัดกว่า". 🔴 The label was never the problem — the
+   TRACK was, and `hero()` now zooms its baseline when the gap is too small to draw, and says so
+   on the panel. So the label is the real number again. */
 M.append(hero(
-  { value: short(handled), label: T(H.en, H.th) },
-  T(`over ${row[key] || "—"} a local model read ${n(row.local_chars || 0)} characters — about `
-    + `${n(handled)} tokens that never entered this session's context, beside the `
-    + `${short(carried)} it carried anyway (${share.toFixed(2)}%).`,
-    `ในช่วง ${row[key] || "—"} โมเดลในเครื่องอ่านไป ${n(row.local_chars || 0)} ตัวอักษร ≈ `
-    + `${n(handled)} โทเค็นที่ไม่เคยเข้า context เทียบกับ ${short(carried)} ที่ session แบกไปเอง `
-    + `(${share.toFixed(2)}%)`),
+  { value: short(avoidedWeight),
+    label: T("tokens saved by having the plugin",
+             "โทเค็นที่ประหยัดได้เพราะมีปลั๊กอิน"),
+    sub: T(`${saved.toFixed(2)}% of everything ${row[key] || "—"} carried`,
+           `คิดเป็น ${saved.toFixed(2)}% ของทั้งช่วง ${row[key] || "—"}`) },
   [
-    { label: T("handled by a local model", "โมเดลในเครื่องอ่านแทน"), value: handled,
-      colour: PAL[2] },
-    { label: T("carried by the session", "session แบกเอง"), value: carried, colour: PAL[0] },
+    T(`In ${row[key] || "—"}, a local model read ${n(row.local_chars || 0)} characters instead `
+      + `of the session — about ${n(readTok)} tokens.`,
+      `ใน ${row[key] || "—"} โมเดลในเครื่องอ่านแทน session ไป ${n(row.local_chars || 0)} ตัวอักษร ≈ ${n(readTok)} โทเค็น`),
+    T(`Only ${(CF * 100).toFixed(0)}% of that would really have been read without the plugin, so `
+      + `only that part counts as saved.`,
+      `ถ้าไม่มีปลั๊กอิน จะมีแค่ ${(CF * 100).toFixed(0)}% ของเท่านั้นที่ถูกอ่านจริง จึงนับเฉพาะส่วนนั้น`),
+    T(`Weighted the way a cache write is weighted, that is ${n(avoidedWeight)} tokens saved.`,
+      `ถ่วงน้ำหนักแบบ cache write แล้ว เท่ากับประหยัดได้ ${n(avoidedWeight)} โทเค็น`),
+  ],
+  /* 🎯 [owner, 2026-09-23] "สลับ เอา มีไว้ข้างบน และ ไม่มีไว้ข้างล่าง มันจะทำให้เทียบง่าย" — the
+     row the page is about goes first, and the baseline sits under it to be measured against. */
+  [
+    { label: T("with the plugin", "เมื่อมีปลั๊กอิน"), value: withPlugin, colour: PAL[2],
+      text: n(withPlugin) },
+    { label: T("without it", "ถ้าไม่มีปลั๊กอิน"), value: without, colour: PAL[5],
+      text: n(without) },
   ]));
 
-/* ---- and the rest of the difference, counted as events rather than claimed as a saving */
-const im = S.impact || { rows: [] };
-M.append(panel("with it, and without it", "ความต่างระหว่างมีปลั๊กอินกับไม่มี",
-  [...new Set((im.rows || []).map((r) => r.source))].join(" · "),
-  [
-    hbars((im.rows || []).map((r, i) => ({
-      label: r.what, th: r.th, value: r.with, text: short(r.with),
-      colour: PAL[i % PAL.length], dim: !r.with,
-    }))),
-    el("p", { class: "note" }, T(im.note, im.note_th)),
-  ], { wide: true }));
+/* ---- what kind of tokens, and what each kind is weighted at.
 
-/* ---- the period, as a chart you can click into */
-M.append(panel(`commands per ${P.grain}`, `คำสั่งราย${P.grain === "day" ? "วัน" : "เดือน"}`,
-  "logs/commands.jsonl",
-  [
-    bars(rows.slice(-28).map((r) => ({
-      label: r[key], tick: r[key].slice(P.grain === "day" ? 8 : 5), value: r.commands || 0, row: r,
-    })), { onPick: (b) => P.grain === "month" ? go("day", null) : go("day", b.row.day) }),
-    el("p", { class: "src" },
-      T(`click a bar to open that ${P.grain === "month" ? "period by day" : "day"}`,
-        `คลิกแท่งเพื่อเจาะดู${P.grain === "month" ? "รายวัน" : "วันนั้น"}`)),
-  ], { wide: true }));
-
-/* ---- the three headline counts for the chosen period */
-M.append(panel(`activity in ${row[key] || "—"}`, `กิจกรรมใน ${row[key] || "—"}`,
-  "logs/commands.jsonl · logs/pointer.jsonl · logs/edits.jsonl",
-  [
-    el("div", { class: "grid2" },
-      stat(short(row.commands || 0), "commands", "คำสั่ง"),
-      stat(short(row.opens || 0), "files opened", "ไฟล์ที่เปิด"),
-      stat(short(row.edits || 0), "files changed", "ไฟล์ที่แก้"),
-      stat(short(row.requests || 0), "requests", "รีเควสต์")),
-    spark(rows.map((r) => r.commands || 0)),
-  ], { wide: true }));
-
-/* ---- what kind of tokens. No vendor, no price: the SPLIT is what is true on every host. */
+   🐛 [2026-09-23, owner] "หน้าแรก ข้อมูล ซ้อน". These were two panels — a donut of the four kinds
+   and a bar chart of the same four kinds' weights — which listed the same four labels twice and,
+   because each chart coloured its rows in its own order, gave the same kind two different colours
+   on one screen. One panel now: one colour per kind, share and weight in the same row. */
 const tk = S.token_kinds || { kinds: [] };
-M.append(panel("what kind of tokens", "โทเค็นแต่ละชนิด",
-  `transcripts on this machine · ${n(tk.requests)} request(s)`,
+const KINDOF = { "cache read": "t_read", "cache write": "t_write", "output": "t_out",
+                 "new input": "t_new" };
+M.append(panel("what kind of tokens, and what each one weighs",
+  "โทเค็นแต่ละชนิด และถูกถ่วงน้ำหนักเท่าไร",
+  `transcripts on this machine · ${n(tk.requests)} request(s) · hero.rates`
+  + (ratesAreCustom() ? " · tuned on this machine" : ""),
   [
-    donut((tk.kinds || []).map((k) => ({ label: k.kind.replace(/_/g, " "), value: k.tokens })),
-      { centre: short((tk.kinds || []).reduce((a, k) => a + k.tokens, 0)), sub: "tokens" }),
+    donut((tk.kinds || []).map((k) => {
+      const label = k.kind.replace(/_/g, " ");
+      const w = R[KINDOF[label]];
+      return { label, value: k.tokens, extra: w === undefined ? null : `${w}x` };
+    }), { centre: short((tk.kinds || []).reduce((a, k) => a + k.tokens, 0)), sub: "tokens" }),
     el("p", { class: "note" },
-      T("a cached read is the cheapest kind of token wherever caching exists — no rate and no "
-        + "price is shown, because this plugin does not know which model you run",
-        "cached read คือโทเค็นที่ถูกที่สุดบนโฮสต์ที่มี cache · ไม่แสดงราคาหรือชื่อโมเดล เพราะปลั๊กอินไม่รู้ว่าคุณใช้ค่ายไหน")),
+      T(ratesAreCustom()
+        ? "the weight beside each kind is yours, tuned on page 4"
+        : "the weight beside each kind is the shipped standard — change it on page 4 to match "
+          + "what you actually run",
+        ratesAreCustom()
+          ? "ตัวคูณข้างแต่ละชนิด คือค่าที่คุณปรับไว้เองที่หน้า 4"
+          : "ตัวคูณข้างแต่ละชนิด คือค่ามาตรฐานที่ให้มา · ปรับให้ตรงกับของจริงได้ที่หน้า 4")),
+    /* 🔴 The two judgements everything on page 1 rests on, said in the same place: what a token
+       of each kind is weighted at, and how much of what a local model read would really have been
+       read without the plugin. Both are shipped defaults, both are the reader's to change, and
+       page 4 is where they change them. Stating them anywhere else would leave the hero resting
+       on an assumption the page never named. */
+    el("p", { class: "src", style: "margin:8px 0 0" },
+      T(H.rates_note || "", H.rates_note_th || "")),
+    el("p", { class: "src", style: "margin:6px 0 0" },
+      `${(CF * 100).toFixed(0)}% · `
+      + T(H.counterfactual_note || "", H.counterfactual_note_th || "")),
   ]));
 
 /* ---- what the repository itself puts in front of every session */
@@ -102,6 +130,55 @@ M.append(panel("what this repository puts in front of a session",
         "ส่วนของโฮสต์ไม่ได้อยู่บนดิสก์ จึงไม่ถูกนับ")) : null,
   ]));
 
+/* ---- and the rest of the difference, counted as events rather than claimed as a saving */
+const im = S.impact || { rows: [] };
+M.append(panel("what the plugin did that would not have happened otherwise",
+  "สิ่งที่ปลั๊กอินทำให้ ซึ่งถ้าไม่มีมันจะไม่เกิดขึ้น",
+  [...new Set((im.rows || []).map((r) => r.source))].join(" · "),
+  [
+    hbars((im.rows || []).map((r, i) => ({
+      label: r.what, th: r.th, value: r.with, text: short(r.with),
+      colour: PAL[i % PAL.length], dim: !r.with,
+    }))),
+    el("p", { class: "src", style: "margin:12px 0 0" },
+      T("each row is a thing that happened because the plugin was there — without it, none of "
+        + "them would have. They are counted, never estimated.",
+        "แต่ละแถวคือสิ่งที่เกิดขึ้นเพราะมีปลั๊กอิน ถ้าไม่มีก็จะไม่เกิดสักอย่าง · เป็นการนับจริง ไม่ใช่การประมาณ")),
+  ], { wide: true }));
+
+/* ---- the period, as a chart you can click into */
+/* 🐛 [2026-09-23, owner] This charted whatever the picker was set to, so choosing `month` drew
+   three bars — two of them near zero — which carries no information at all. The chart is always
+   DAYS; the month selection decides WHICH days. A bar chart needs enough bars to have a shape. */
+const dayRows = P.grain === "month" && row.month
+  ? SERIES.days.filter((d) => d.day.startsWith(row.month))
+  : SERIES.days.slice(-30);
+M.append(panel("commands per day", "คำสั่งรายวัน",
+  "logs/commands.jsonl",
+  [
+    dayRows.length > 1
+      ? bars(dayRows.map((r) => ({ label: r.day, tick: r.day.slice(8),
+          value: r.commands || 0, row: r })),
+          { onPick: (b) => go("day", b.row.day) })
+      : el("p", { class: "src" },
+          T("one day of history so far — a chart needs more than one bar to say anything",
+            "มีข้อมูลวันเดียว — กราฟต้องมีมากกว่าหนึ่งแท่งถึงจะบอกอะไรได้")),
+    dayRows.length > 1 ? el("p", { class: "src" },
+      T("click a bar to open that day", "คลิกแท่งเพื่อเจาะดูวันนั้น")) : null,
+  ], { wide: true }));
+
+/* ---- the three headline counts for the chosen period */
+M.append(panel(`activity in ${row[key] || "—"}`, `กิจกรรมใน ${row[key] || "—"}`,
+  "logs/commands.jsonl · logs/pointer.jsonl · logs/edits.jsonl",
+  [
+    el("div", { class: "grid2" },
+      stat(short(row.commands || 0), "commands", "คำสั่ง"),
+      stat(short(row.opens || 0), "files opened", "ไฟล์ที่เปิด"),
+      stat(short(row.edits || 0), "files changed", "ไฟล์ที่แก้"),
+      stat(short(row.requests || 0), "requests", "รีเควสต์")),
+    spark(rows.map((r) => r.commands || 0)),
+  ], { wide: true }));
+
 /* ---- the block itself */
 const bl = S.block || { sections: [] };
 M.append(panel("the block this plugin injects", "บล็อกที่ปลั๊กอินฉีดเข้าไปตอนเปิด session",
@@ -112,8 +189,11 @@ M.append(panel("the block this plugin injects", "บล็อกที่ปล�
       stat(short(bl.tok || 0), "tokens", "โทเค็น"),
       stat(String((bl.sections || []).length), "sections", "หัวข้อ")),
     stackbar((bl.sections || []).map((s) => ({ label: s.title, value: s.bytes }))),
-    hbars((bl.sections || []).slice(0, 6).map((s, i) => ({
-      label: s.title, value: s.bytes, text: short(s.bytes), colour: PAL[i % PAL.length] }))),
+    /* 🐛 [2026-09-23] Sliced BEFORE ranking, so "the six biggest sections" was really the six
+       the block happens to assemble first, re-sorted among themselves. Rank, then take six. */
+    hbars((bl.sections || []).slice()
+      .sort((a, b) => (b.bytes || 0) - (a.bytes || 0)).slice(0, 6).map((s, i) => ({
+        label: s.title, value: s.bytes, text: short(s.bytes), colour: PAL[i % PAL.length] }))),
   ], { wide: true }));
 </script>
 </body></html>

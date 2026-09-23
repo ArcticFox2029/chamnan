@@ -28,6 +28,16 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_agent_result.py\""
           }
         ]
+      },
+      {
+        "_comment": "A shell command that exits non-zero is a tool call that SUCCEEDED and reported a failure, so it arrives here and never on PostToolUseFailure. chamnan_tool_failed.py was taught to read an exit code and stayed registered on the failure event alone, which made that whole branch unreachable: logs/failures.jsonl was empty on a day full of failing commands. The --post flag is not read by the hook; it is there because Claude Code deduplicates hooks by the RAW command string before ${CLAUDE_PLUGIN_ROOT} expands, so the same path under two events would silently drop one of them.",
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_tool_failed.py\" --post"
+          }
+        ]
       }
     ],
     "SessionEnd": [

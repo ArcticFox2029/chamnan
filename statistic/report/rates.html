@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" data-theme="dark"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>statistics · rates</title>
+<link rel="stylesheet" href="app.css">
+</head><body>
+<header></header>
+<main id="main"></main>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+const P = readPeriod();
+head(4, P);
+const M = document.getElementById("main");
+const H = S.hero || {};
+const row = currentRow(P) || {};
+const key = P.grain === "day" ? "day" : "month";
+
+/* 🎯 [owner, 2026-09-23] "มีหน้าสี่ ให้คนปรับเรทได้เอง เพื่อกรณีอยากจูนให้ตรงโมเดลที่ใช้."
+   The shipped weights are a MIDDLE value across providers, because this plugin does not know
+   which model anybody runs. That is the right default and the wrong final answer for a reader who
+   does know — so the numbers are theirs to change, they are kept on this machine only, and
+   nothing here is written to a file or sent anywhere. */
+const preview = el("div", { class: "grid2" });
+const fields = {};
+
+function recompute() {
+  const R = rates(), CF = counterfactual();
+  const cpt = H.chars_per_token || 3.8;
+  const readTok = Math.round((row.local_chars || 0) / cpt);
+  const avoided = Math.round(readTok * CF) * (H.avoided_weight ?? R.t_write);
+  const withPlugin = weighted(row, R);
+  const without = withPlugin + avoided;
+  preview.textContent = "";
+  preview.append(
+    stat(`${pct(avoided, without || 1).toFixed(2)}%`,
+      `lighter in ${row[key] || "—"}`, `เบาลงใน ${row[key] || "—"}`),
+    stat(short(withPlugin), "weighted, with the plugin", "ถ่วงน้ำหนักแล้ว เมื่อมีปลั๊กอิน"),
+    stat(short(without), "weighted, without it", "ถ่วงน้ำหนักแล้ว ถ้าไม่มี"));
+}
+
+function numberRow(label, th, value, step, max, onChange) {
+  const input = el("input", { type: "number", value: String(value), step: String(step),
+    min: "0", max: max === undefined ? null : String(max) });
+  input.addEventListener("input", () => {
+    const v = Number(input.value);
+    if (Number.isFinite(v) && v >= 0 && (max === undefined || v <= max)) { onChange(v); recompute(); }
+  });
+  fields[label] = input;
+  return el("label", { class: "rateRow" },
+    el("span", {}, T(label, th)), input);
+}
+
+const R0 = rates();
+const rateInputs = el("div", { class: "rateGrid" }, RATE_KEYS.map((k) =>
+  numberRow(RATE_LABEL[k][0], RATE_LABEL[k][1], R0[k], 0.05, undefined, (v) => {
+    const next = rates(); next[k] = v; setRates(next);
+  })));
+
+const reset = el("button", { class: "tog", type: "button" },
+  T("reset to the shipped values", "คืนค่าที่มากับปลั๊กอิน"));
+reset.addEventListener("click", () => { setRates({}); setCounterfactual(""); location.reload(); });
+
+M.append(panel("what a token is weighted at", "ถ่วงน้ำหนักโทเค็นแต่ละชนิดเท่าไร",
+  "kept on this machine only — nothing is written to a file or sent anywhere",
+  [
+    el("p", { class: "src", style: "margin:0 0 14px" },
+      T(H.rates_note || "", H.rates_note_th || "")),
+    rateInputs,
+    el("p", { class: "note" },
+      T("multiples of one ordinary input token. Set them to the ratios of the model you actually "
+        + "run — the shipped numbers are a middle value, not a claim about your bill.",
+        "เป็นตัวคูณเทียบกับ input ธรรมดา 1 โทเค็น · ตั้งให้ตรงกับโมเดลที่คุณใช้จริงได้เลย ค่าที่มาให้เป็นค่ากลาง ไม่ใช่บิลของคุณ")),
+  ], { wide: true }));
+
+M.append(panel("how much of it would have been read anyway",
+  "ถ้าไม่มีปลั๊กอิน จะมีการอ่านจริงกี่ %",
+  "hero.counterfactual",
+  [
+    el("p", { class: "src", style: "margin:0 0 14px" },
+      T(H.counterfactual_note || "", H.counterfactual_note_th || "")),
+    numberRow("share that would really have been read", "สัดส่วนที่จะถูกอ่านจริง",
+      counterfactual(), 0.05, 1, (v) => setCounterfactual(v)),
+    el("p", { class: "note" },
+      T("1.00 means every character a local model read would have been read anyway — the most "
+        + "generous reading of the plugin. 0.00 means none of it would, and the plugin saved "
+        + "nothing at all. The shipped 0.25 is the owner's own estimate, and it is a judgement.",
+        "1.00 = ทุกตัวอักษรจะถูกอ่านอยู่ดี (เข้าข้างปลั๊กอินที่สุด) · 0.00 = ไม่มีอะไรถูกอ่านเลย ปลั๊กอินไม่ได้ช่วยอะไร · "
+        + "ค่าที่ให้มา 0.25 เป็นการประเมินของเจ้าของเอง")),
+  ], { wide: true }));
+
+M.append(panel("what that does to the headline", "ผลต่อตัวเลขหน้าแรก",
+  "recomputed here as you type — page 1 uses the same numbers",
+  [preview,
+   el("p", { class: "src", style: "margin:14px 0 0" },
+     T("page 1 reads these same values, so what you see here is what it will say",
+       "หน้า 1 ใช้ค่าเดียวกันนี้ · ที่เห็นตรงนี้คือสิ่งที่หน้า 1 จะแสดง")),
+   reset],
+  { wide: true }));
+
+recompute();
+</script>
+</body></html>

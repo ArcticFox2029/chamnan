@@ -24,7 +24,10 @@ const short = (v) => v >= 1e9 ? (v / 1e9).toFixed(1) + "B"
    flash the other theme on every load. A read that throws — a private window, blocked storage —
    falls back to the default rather than taking the page down with it. */
 function pref(key, fallback) {
-  try { return localStorage.getItem("stat." + key) || fallback; } catch (e) { return fallback; }
+  try {
+    const v = localStorage.getItem("stat." + key);
+    return (v === null || v === "") ? fallback : v;
+  } catch (e) { return fallback; }
 }
 function setPref(key, value) {
   try { localStorage.setItem("stat." + key, value); } catch (e) { /* not worth a failure */ }
@@ -97,10 +100,85 @@ function table(headers, rows) {
           : el("td", {}, c === null || c === undefined ? "—" : String(c)))))));
 }
 
+/* ---------------------------------------------------------------- token weights
+
+   🎯 [owner, 2026-09-23] A token is not a token: an output token costs several times an ordinary
+   input one, and a cached read a fraction of it. The builder ships a MIDDLE value across
+   providers so the page can weight a count without naming a vendor — and page 4 lets a reader
+   replace it with the ratios of whatever model they actually run, because the middle value is a
+   starting point, not a claim about their bill.
+
+   Overrides live in localStorage, so they are this reader's on this machine and reach no file. */
+const RATE_KEYS = ["t_new", "t_read", "t_write", "t_out"];
+const RATE_LABEL = {
+  t_new: ["new input", "input ใหม่"], t_read: ["cached read", "อ่านจาก cache"],
+  t_write: ["cache write", "เขียน cache"], t_out: ["output", "ผลลัพธ์"],
+};
+
+/* The builder ships one standard set in the data; the literal here is only what a page falls back
+   to when the data is missing, and it is kept equal to it so the two cannot quietly disagree. */
+function defaultRates() {
+  return Object.assign({ t_new: 1, t_read: 0.1, t_write: 1.25, t_out: 5 },
+    (S.hero || {}).rates || {});
+}
+
+function rates() {
+  const base = defaultRates();
+  let saved = {};
+  try { saved = JSON.parse(pref("rates", "{}")) || {}; } catch (e) { saved = {}; }
+  for (const k of RATE_KEYS) {
+    const v = Number(saved[k]);
+    if (Number.isFinite(v) && v >= 0) base[k] = v;
+  }
+  return base;
+}
+
+function ratesAreCustom() {
+  const d = defaultRates(), r = rates();
+  return RATE_KEYS.some((k) => Math.abs(d[k] - r[k]) > 1e-9);
+}
+
+function setRates(next) { setPref("rates", JSON.stringify(next || {})); }
+
+/* 🎯 [owner, 2026-09-23] The honest objection to every counterfactual here: without the plugin a
+   session would not have read all of it anyway. Their estimate, shipped as the default, is that
+   about a quarter of it would really have happened — a judgement, said to be one, and movable. */
+function counterfactual() {
+  const d = Number((S.hero || {}).counterfactual);
+  const base = Number.isFinite(d) ? d : 0.25;
+  /* 🐛 [2026-09-23] `Number("")` is 0, and 0 passes every bound below — so an UNSET preference
+     read as "none of it would have been read anyway" and the headline showed 0% for every reader
+     who had never opened page 4. An absent value has to be distinguished from a zero one. */
+  const raw = pref("cf", null);
+  if (raw === null || raw === "") return base;
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : base;
+}
+function setCounterfactual(v) { setPref("cf", String(v)); }
+
+/* What one period's tokens are worth once weighted — the number both the hero and page 4 use, so
+   a change on page 4 cannot mean something different on page 1. */
+function weighted(row, r) {
+  const w = r || rates();
+  return RATE_KEYS.reduce((a, k) => a + (row[k] || 0) * w[k], 0);
+}
+
+
 /* ---------------------------------------------------------------- charts, all inline SVG */
 
-function donut(parts, opts) {
+/* 🎯 [owner, 2026-09-23] "ปรับการเรียงใหม่ ทุกกราฟ ให้เรียงจากจำนวนเยอะอยู่บน" — a chart whose
+   rows sit in the order somebody declared them makes a reader do the ranking themselves, and the
+   whole job of a bar is to rank. Descending is the default for every chart on the page, and a
+   caller whose order carries its own meaning (a sequence, a fixed set of weights) passes
+   `sort: false` rather than each chart quietly choosing. */
+function ranked(rows, opts) {
+  return (opts || {}).sort === false ? rows
+    : rows.slice().sort((a, b) => (b.value || 0) - (a.value || 0));
+}
+
+function donut(partsIn, opts) {
   const o = opts || {}, size = o.size || 132, r = size / 2 - 11, C = 2 * Math.PI * r;
+  const parts = ranked(partsIn, o);
   const total = parts.reduce((a, p) => a + p.value, 0) || 1;
   let at = 0;
   const ring = parts.map((p, i) => {
@@ -129,6 +207,9 @@ function legend(parts) {
     el("li", {},
       el("i", { style: `background:${p.colour || PAL[i % PAL.length]}` }),
       el("span", { class: "lab" }, p.label),
+      /* A second column when the caller has one — the SHARE and what that kind is WEIGHTED at,
+         in one row, so the page does not need a second panel repeating the same four labels. */
+      p.extra ? el("span", { class: "val dimval" }, p.extra) : null,
       el("span", { class: "val" }, `${(100 * p.value / total).toFixed(1)}%`))));
 }
 
@@ -149,15 +230,39 @@ function spark(values, opts) {
 }
 
 /* Bars with the label inside the row, so a long feature name never squeezes the bar. */
-function hbars(rows, opts) {
-  const o = opts || {}, max = Math.max(1, ...rows.map((r) => r.value));
-  return el("ul", { class: "hbars" }, rows.map((r) =>
+/* 🎯 [owner, 2026-09-23] "ปรับความยาวของแท่ง … แต่ 4 แท่งนั้น มันสั้นไป ดูไม่ออก ควรให้มีมิติ".
+   One row at 10.1M beside rows at 191, 40 and 1 draws four invisible stubs on a linear scale: the
+   panel then says nothing about the four, which are the rows a reader is there to compare.
+
+   So the scale switches to logarithmic when the spread demands it — and it says so, from HERE,
+   in the function that made the choice. A caller cannot forget the caption, and a distorted axis
+   that does not announce itself is a chart that lies. The threshold is a hundredfold between the
+   largest bar and the smallest non-zero one, which is the point where the small end stops being
+   drawable at all. */
+function hbars(rowsIn, opts) {
+  const o = opts || {};
+  const rows = ranked(rowsIn, o);
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  const small = Math.min(...rows.map((r) => r.value).filter((v) => v > 0), max);
+  const log = o.log ?? (max / small > 100);
+  const at = (v) => log
+    ? (v <= 0 ? 0 : 100 * Math.log10(1 + v) / Math.log10(1 + max))
+    : pct(v, max);
+  const list = el("ul", { class: "hbars" }, rows.map((r) =>
     el("li", { class: r.dim ? "dim" : "" },
       el("span", { class: "hlab" }, T(r.label, r.th)),
       el("span", { class: "htrack" },
-        el("span", { class: "hfill", style: `width:${Math.max(pct(r.value, max), 1.5)}%;`
+        el("span", { class: "hfill", style: `width:${Math.max(at(r.value), 1.5)}%;`
           + `background:${r.colour || (r.dim ? "var(--grey)" : PAL[0])}` })),
       el("span", { class: "hval" }, r.text ?? n(r.value)))));
+  if (!log) return list;
+  return el("div", {}, list,
+    el("p", { class: "src", style: "margin:9px 0 0" },
+      T("bar length is logarithmic — these counts differ by more than a hundredfold, and on a "
+        + "straight scale every row but the largest would be an invisible stub. The numbers on "
+        + "the right are the real ones.",
+        "ความยาวแท่งเป็นสเกล log · ตัวเลขต่างกันเกินร้อยเท่า ถ้าใช้สเกลตรง ทุกแท่ง"
+        + "นอกจากแท่งที่ยาวสุดจะสั้นจนมองไม่ออก · ตัวเลขทางขวาคือค่าจริง")));
 }
 
 /* Hour-of-day, drawn as a heat strip rather than 24 tiny bars — it reads at a glance and it does
@@ -221,14 +326,21 @@ function bars(rows, opts) {
 function calendar(rowsIn) {
   const max = Math.max(1, ...rowsIn.flatMap((r) => r.cells));
   const band = (h) => h < 8 ? PAL[3] : h < 17 ? PAL[2] : PAL[1];
+  /* 🐛 [2026-09-23, owner] Weight used to be OPACITY, and a coloured square at 20% over a
+     near-black panel comes out muddy brown whatever colour it started as — every band looked the
+     same dirty tone. Mixing the band colour INTO the panel colour instead keeps the hue at every
+     weight and follows the theme, because both sides of the mix are the theme's own values. */
   const grid = el("div", { class: "cal" }, rowsIn.slice().reverse().map((r) =>
     el("div", { class: "calrow" },
       el("span", { class: "calday" }, r.day.slice(5)),
-      el("div", { class: "calcells" }, r.cells.map((v, h) =>
-        el("span", {
-          style: `background:${band(h)};opacity:${(0.07 + 0.93 * (v / max)).toFixed(3)}`,
+      el("div", { class: "calcells" }, r.cells.map((v, h) => {
+        const w = v ? Math.round(18 + 82 * Math.sqrt(v / max)) : 0;
+        return el("span", {
+          class: v ? "" : "empty",
+          style: v ? `background:color-mix(in srgb, ${band(h)} ${w}%, var(--panel2))` : "",
           title: `${r.day} ${String(h).padStart(2, "0")}:00 · ${n(v)}`,
-        }))))));
+        });
+      })))));
   const key = el("div", { class: "calkey" },
     [[PAL[3], T("night 00–08", "กลางคืน 00–08")],
      [PAL[2], T("work hours 08–17", "เวลางาน 08–17")],
@@ -241,20 +353,46 @@ function calendar(rowsIn) {
 }
 
 /* The opening panel: one number, the sentence that explains it, and two bars to the same scale. */
+/* 🎯 [owner, 2026-09-23] "ควรเพิ่ม การแบ่งบรรทัด แบ่งคำ ให้อ่านง่าย แต่ในรูป มันดันติดกัน" — Thai
+   writes without spaces between words, so a long sentence wraps into an unbroken wall that a
+   reader has to parse character by character. `sentence` is now a LIST of short lines, each one
+   a single fact, and the page breaks them rather than leaving it to the browser. */
 function hero(big, sentence, bars2) {
-  const total = Math.max(...bars2.map((b) => b.value), 1);
+  const lines = [].concat(sentence).filter(Boolean);
+  /* 🎯 [owner, 2026-09-23] "ปรับ percent เป็นตัวเลขจริง คนจะเห็นชัดกว่า แต่ ปรับหลอดให้ยาวไม่เท่ากัน
+     ค่าของ with มันต้องใช้งานน้อยกว่า".
+
+     Two totals that differ by hundredths of a percent draw as one length from a zero baseline,
+     whatever is printed beside them. So when the gap is too small to see, the TRACK starts below
+     the smaller bar instead of at zero, and the shorter bar is visibly shorter.
+
+     🔴 A truncated axis is how charts lie, so this one says it is truncated, from here, in the
+     function that truncated it — a caller cannot ship the zoom without the caption. The labels
+     stay the real figures; only the drawing is magnified. */
+  const top = Math.max(...bars2.map((b) => b.value), 1);
+  const low = Math.min(...bars2.map((b) => b.value));
+  const tight = top > 0 && (top - low) / top < 0.2 && top !== low;
+  const floor = tight ? low - (top - low) * 0.7 : 0;
+  const at = (v) => 100 * (v - floor) / ((top - floor) || 1);
   return el("section", { class: "wide heroP" },
     el("div", { class: "heroL" },
       el("p", { class: "herobig" }, big.value),
-      el("p", { class: "herolab" }, big.label)),
+      el("p", { class: "herolab" }, big.label),
+      big.sub ? el("p", { class: "herosub" }, big.sub) : null),
     el("div", { class: "heroR" },
-      el("p", { class: "herosent" }, sentence),
+      el("ul", { class: "herosent" }, lines.map((l) => el("li", {}, l))),
       ...bars2.map((b) => el("div", { class: "herobar" },
         el("div", { class: "herobarhead" },
           el("span", {}, b.label), el("b", {}, b.text ?? short(b.value))),
         el("div", { class: "herotrack" },
-          el("div", { class: "herofill", style: `width:${Math.max(pct(b.value, total), 0.6)}%;`
-            + `background:${b.colour}` }))))));
+          el("div", { class: "herofill", style: `width:${Math.max(at(b.value), 0.6)}%;`
+            + `background:${b.colour}` })))),
+      tight ? el("p", { class: "src", style: "margin:11px 0 0" },
+        T(`the bars start at ${n(Math.round(floor))}, not at zero — the two totals differ by less `
+          + `than a fifth of a percent and would otherwise draw as one length. The figures above `
+          + `them are the real ones.`,
+          `แท่งเริ่มที่ ${n(Math.round(floor))} ไม่ได้เริ่มที่ศูนย์ · สองค่าต่างกันไม่ถึงเศษหนึ่งส่วนห้าของเปอร์เซ็นต์ `
+          + `ถ้าเริ่มที่ศูนย์จะยาวเท่ากันพอดี · ตัวเลขด้านบนคือค่าจริง`)) : null));
 }
 
 
@@ -332,6 +470,7 @@ const PAGES = [
   { file: "index.html", en: "impact", th: "ความต่าง" },
   { file: "features.html", en: "features", th: "ฟีเจอร์" },
   { file: "usage.html", en: "usage", th: "การใช้งาน" },
+  { file: "rates.html", en: "rates", th: "อัตรา" },
 ];
 
 function head(page, p) {

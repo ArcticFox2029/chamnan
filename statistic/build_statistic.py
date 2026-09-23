@@ -215,6 +215,39 @@ KEEP_MONTHS = 12
 KEEP_DAYS = 370
 
 
+# 🎯 [owner, 2026-09-23] "เน้น rate write read out ต่างๆ เป็นค่ากลาง" — a token is not a token:
+# an output token costs several times an ordinary input one, and a cached read a fraction of it.
+#
+# 🔴 [owner, 2026-09-23, and this is the settled shape] "เรทเราจะไม่ปรับ แยกตามค่าย แต่ เอาค่า
+# เรทมาตรฐานกลางๆ ถ้าคนอยากปรับ ก็มาปรับเอง" — ONE standard set, not a per-provider table. An
+# intermediate version averaged seven rate cards and was dropped: it made the page argue a
+# methodology at a reader who only wanted a number they could change. The shipped ratios are one
+# widely-used provider's (Claude's), used as the worked example, and page 4 is the answer for
+# anybody whose own are different.
+#
+# Ratios, never money — and that is the owner's own reason for one fixed set: "ถ้าเราฟิก
+# ตามโมเดลหรือค่าย เหนื่อยไล่แก้แน่ๆ". A table of vendors is a maintenance burden that
+# goes stale the week after it ships; a ratio moves far more slowly than a price, and a vendor
+# halving its prices leaves all three numbers below untouched.
+RATES = {
+    "t_new": 1.0,       # one ordinary input token, the unit everything else is measured in
+    "t_read": 0.1,      # a cached read
+    "t_write": 1.25,    # writing a document into the cache the first time
+    "t_out": 5.0,       # an output token
+}
+RATES_EXAMPLE = "Claude"
+RATES_NOTE = ("a standard middle weighting, taken from one widely-used provider's published "
+              "ratios and read against one ordinary input token rather than as money: a cached "
+              "read 0.1x, a cache write 1.25x, an output token 5x. Page 4 replaces all three.")
+RATES_NOTE_TH = ("ค่ามาตรฐานกลางๆ ชุดเดียว อ้างอิงอัตราที่ประกาศไว้ของค่ายหนึ่ง "
+                 "คิดเทียบ input ธรรมดา 1 โทเค็น ไม่ใช่หน่วยเงิน · "
+                 "cached read 0.1 เท่า, cache write 1.25 เท่า, output 5 เท่า · ปรับเองได้ที่หน้า 4")
+
+# 🎯 [owner, 2026-09-23] "ถ้าไม่มี มันก็อาจไม่ read เยอะก็เป็นได้" — the honest objection to
+# every counterfactual on this page. Their own estimate, shipped: about a quarter of it.
+COUNTERFACTUAL = 0.25
+
+
 def hero():
     """The one number the page opens with, and the comparison beside it.
 
@@ -228,11 +261,34 @@ def hero():
     """
     return {
         "chars_per_token": CHARS_PER_TOKEN,
-        "en": "tokens a local model read, so this session never carried them",
-        "th": "โทเค็นที่โมเดลในเครื่องอ่านแทน จึงไม่เคยเข้า context ของ session",
-        "note": "two measured counts over the same window — not a price, not a saving, "
+        "rates": RATES,
+        "rates_example": RATES_EXAMPLE,
+        "rates_note": RATES_NOTE,
+        "rates_note_th": RATES_NOTE_TH,
+        # A document that enters the context is a cache WRITE once. Counting it once, at the write
+        # weight, is the conservative floor: in a long session it is then re-read on every later
+        # turn, and none of that is claimed here.
+        "avoided_weight": RATES["t_write"],
+        # 🎯 [owner, 2026-09-23] "ถ้าไม่มี มันก็อาจไม่ read เยอะก็เป็นได้" — and that is the honest
+        # objection to every counterfactual on this page. Without the plugin a session would not
+        # have read all of it: some of those reads would never have been attempted, and a reader
+        # who has other tooling might have had part of it answered anyway. Their own estimate, and
+        # the one shipped here: **about a quarter of it would really have happened.** It is a
+        # judgement, it is stated as one, and page 4 lets a reader move it.
+        "counterfactual": COUNTERFACTUAL,
+        "counterfactual_note": ("only about a quarter of what a local model read would really "
+                                "have been read without the plugin — the rest would never have "
+                                "been asked for. A judgement, not a measurement, yours to change."),
+        "counterfactual_note_th": ("ประมาณหนึ่งในสี่ของสิ่งที่โมเดลในเครื่องอ่าน จะถูกอ่านจริงถ้าไม่มีปลั๊กอิน "
+                                   "ที่เหลือคงไม่มีใครไปเรียกดู · เป็นการประเมิน ไม่ใช่การวัด และปรับได้เอง"),
+        # 🎯 [owner, 2026-09-23] "มันควรใช้คำที่เข้าใจง่าย เช่น เมื่อมีปลั๊กอินประหยัดกว่า". "เบากว่า" was
+        # accurate and unreadable — it describes the WEIGHT of a period, which is a notion this
+        # page invented. A reader knows what "saved" means without being taught anything first.
+        "en": "tokens saved by having the plugin",
+        "th": "โทเค็นที่ประหยัดได้เพราะมีปลั๊กอิน",
+        "note": "two measured counts over the same window — not a price, not a bill, "
                 "and no model named",
-        "note_th": "สองตัวเลขที่วัดจริงในช่วงเวลาเดียวกัน ไม่ใช่ราคา ไม่ใช่ยอดประหยัด และไม่มีชื่อโมเดล",
+        "note_th": "สองตัวเลขที่วัดจริงในช่วงเวลาเดียวกัน · ไม่ใช่ราคา ไม่ใช่บิล และไม่มีชื่อโมเดล",
     }
 
 
@@ -289,15 +345,19 @@ def series():
                     d = str(rec.get("timestamp") or "")[:10]
                     if not d:
                         continue
-                    day[d]["carried"] += (int(u.get("cache_read_input_tokens") or 0)
-                                          + int(u.get("cache_creation_input_tokens") or 0)
-                                          + int(u.get("input_tokens") or 0))
+                    day[d]["t_read"] += int(u.get("cache_read_input_tokens") or 0)
+                    day[d]["t_write"] += int(u.get("cache_creation_input_tokens") or 0)
+                    day[d]["t_new"] += int(u.get("input_tokens") or 0)
+                    day[d]["t_out"] += int(u.get("output_tokens") or 0)
+                    day[d]["carried"] = (day[d]["t_read"] + day[d]["t_write"]
+                                         + day[d]["t_new"])
                     day[d]["requests"] += 1
         except OSError:
             continue
 
     fields = ("commands", "opens", "edits", "named", "long_reads", "scratch", "agents",
-              "failures", "local_calls", "local_chars", "carried", "requests")
+              "failures", "local_calls", "local_chars", "carried", "requests",
+              "t_read", "t_write", "t_new", "t_out")
     days = [{"day": d, **{f: day[d].get(f, 0) for f in fields}}
             for d in sorted(day)][-KEEP_DAYS:]
     month = collections.defaultdict(lambda: collections.Counter())
@@ -315,7 +375,9 @@ def series():
         d, w = day_of(r), when_of(r)
         if d and w:
             grid[d][time.localtime(w).tm_hour] += 1
-    recent = [d["day"] for d in days][-21:]
+    # 🎯 [owner, 2026-09-23] "when the work happened 7 วันล่าสุด" — three weeks of rows
+    # made the calendar a wall; a week is what a reader actually compares against today.
+    recent = [d["day"] for d in days][-7:]
     return {"fields": list(fields), "days": days, "months": months,
             "keep_months": KEEP_MONTHS,
             "hours": [{"day": d, "cells": grid.get(d, [0] * 24)} for d in recent]}
@@ -377,8 +439,17 @@ def by_kind_and_place():
             p = str(r.get("path") or r.get("fp") or "")
             if not p:
                 continue
-            ext[pathlib.PurePath(p).suffix or "(none)"] += 1
-            top[p.split("/", 1)[0]] += 1
+            # 🐛 [2026-09-23, owner] `long_reads.jsonl` stores ABSOLUTE paths while the other two
+            # store repository-relative ones, so 39 opens bucketed under an EMPTY directory name
+            # and the chart drew a bar with no label beside it. One shape in, whatever went in.
+            rel = p
+            try:
+                rel = str(pathlib.PurePath(p).relative_to(ROOT)) if p.startswith("/") else p
+            except ValueError:
+                rel = pathlib.PurePath(p).name          # outside the repo: keep the leaf, not ""
+            ext[pathlib.PurePath(rel).suffix or "(none)"] += 1
+            head = rel.split("/", 1)[0]
+            top[head or "(repository root)"] += 1
     return {"by_extension": ext.most_common(10), "by_directory": top.most_common(10)}
 
 
@@ -434,7 +505,13 @@ def features():
     # so `silence.py` cannot see them either — a feature with no recorder is invisible to the tool
     # built to find invisible features, which is exactly why the page has to say the name out loud.
     for name in ("boundary guard", "canonical invocation", "sibling sweep", "recorded lesson"):
-        out.append({"feature": name, "fired": None, "chances": None, "source": "no recorder yet"})
+        # 🐛 [2026-09-23] These carried `source: "no recorder yet"`, and the page split the
+        # two groups on `x.source` being truthy — a non-empty string is truthy, so every guard
+        # landed in the MEASURED group, four of them drew a meaningless 0/0 bar, and the sentence
+        # naming the ones nothing records never rendered at all. The absent half is `fired`, so
+        # `source` is null and the reason moves to its own field.
+        out.append({"feature": name, "fired": None, "chances": None, "source": None,
+                    "why": "no recorder yet"})
     return out
 
 
@@ -469,7 +546,33 @@ def mistakes():
     return {"failures": len(fails),
             "repeats": sum(v - 1 for v in keyed.values() if v > 1),
             "per_day": sorted(per_day.items(), reverse=True)[:DAYS],
-            "note": "the recorder was starved until 2026-09-23; the series starts there"}
+            # 🐛 [2026-09-23] "the recorder was starved" was the symptom, and the cause is worth
+            # saying because it is the shape that hides every other empty panel: the hook was
+            # registered on PostToolUseFailure alone, which fires when a TOOL CALL fails. A shell
+            # command that exits non-zero is a tool call that SUCCEEDED and reported a failure, so
+            # it arrives on PostToolUse and the recorder never saw one.
+            "note": "nothing was recorded before 2026-09-23 — the recorder was listening on the "
+                    "wrong event, so a command that exited non-zero never reached it",
+            "note_th": "ตัวบันทึกเพิ่งทำงานจริง 2026-09-23 กราฟจึงเริ่มที่วันนั้น"}
+
+
+def files_total():
+    """How many distinct files were changed at all — the denominator under the top ten."""
+    return len({str(r.get("fp") or "") for r in rows("edits.jsonl") if r.get("fp")})
+
+
+def lessons():
+    """The recorded-lesson index, so the page can SHOW lessons rather than count them.
+
+    🎯 [owner, 2026-09-23] "ต้องบอกว่า ตัวไหน โดน บ่อย โดนซ้ำ". Built by `tools/gotcha_index.py`
+    rather than here, because scanning 533 files is not the dashboard's job — the dashboard reads.
+    Absent index is said, never guessed.
+    """
+    try:
+        return json.loads((WS / "state" / "gotcha_index.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"marks": 0, "by_file": [], "by_month": [], "recent": [],
+                "note": "run tools/gotcha_index.py — nothing has indexed the marks yet"}
 
 
 def busiest_files():
@@ -526,6 +629,177 @@ def local_model():
     return days
 
 
+# ---------------------------------------------------------------- what the redactor covers
+
+# 🎯 [owner, 2026-09-23] "เพิ่ม การตรวจจับ security ด้วย … เช่น รหัส, api key, credit card, บัตรประชาชน
+# และหมวดอื่นๆ … แต่ เราทำ ให้มองง่าย" — the shapes chamnan recognises before anything it
+# assembles leaves this machine, grouped so a reader can scan them.
+#
+# 🔴 The families are matched against the REGEX SOURCE of every pattern the module actually
+# compiles, not typed out here. A dashboard that lists a hand-written inventory of what a scanner
+# covers drifts away from the scanner the week somebody adds a prefix, and then it is a page that
+# claims a coverage nothing has. `other` is the deliberate catch-all: a pattern this table does
+# not recognise still lands somewhere and is still counted, so the total can never quietly shrink.
+SECURITY_FAMILIES = [
+    # 🐛 [2026-09-23] Three patterns landed in the wrong family on the first run, all from one
+    # cause: a marker that matched a regex's PUNCTUATION rather than the literal it was aimed at.
+    # `://` was written for the `scheme://user:pass@host` rule and matched both webhook URLs
+    # instead; `sk-` missed `sk_live_`, which is an underscore; and the Authorization rule is
+    # compiled from the SCHEME words, so the word "Authorization" appears in its variable name and
+    # nowhere in its pattern. Markers are anchored on what each regex actually contains now, and
+    # the classification is printed by the test rather than trusted.
+    ("api keys and provider tokens", "คีย์/โทเคนของผู้ให้บริการ",
+     ("sk-", "live|test", "gh[", "github_pat", "xox", "AKIA", "AIza", "glpat", "npm_",
+      "SG\\.", "GOCSPX", "hf_", "ya29", "dop_v1", "shp", "dckr_pat", "phc_", "pypi-", "xapp-",
+      "pscale_", "dp\\.", "AGE-SECRET-KEY")),
+    ("private keys and certificates", "กุญแจส่วนตัวและใบรับรอง",
+     ("PRIVATE KEY",)),
+    ("session tokens and auth headers", "โทเคน session และ auth header",
+     ("eyJ", "Bearer")),
+    ("webhooks and signed links", "webhook และลิงก์ที่เซ็นแล้ว",
+     ("hooks\\.slack", "discord", "signature", "amz")),
+]
+
+
+def _pattern_sources():
+    """Every credential regex the shipped redactor compiles, as source strings."""
+    try:
+        sys.path.insert(0, str(PLUGIN / "lib"))
+        import redact                                  # noqa: PLC0415
+    except Exception:                                  # noqa: BLE001
+        return None, None
+    out = []
+    for group in ("PATTERNS", "LATE_PREFIXES"):
+        for pat in getattr(redact, group, []) or []:
+            out.append(getattr(pat, "pattern", str(pat)))
+    return out, redact
+
+
+def _recall():
+    """The measured recall, cached against the redactor's own mtime so it cannot go stale silently.
+
+    🔴 Re-measured whenever `redact.py` changes, never on a clock: a cached figure that outlives
+    the code it describes is the one number on this page nobody would think to doubt.
+    """
+    src = PLUGIN / "lib" / "redact.py"
+    harness = PLUGIN / "tools" / "redactor_recall.py"
+    cache = WS / "state" / "redactor_recall.json"
+    try:
+        stamp = f"{src.stat().st_mtime_ns}:{src.stat().st_size}"
+    except OSError:
+        return None
+    try:
+        was = json.loads(cache.read_text(encoding="utf-8"))
+        if was.get("stamp") == stamp:
+            return was
+    except (OSError, ValueError):
+        pass
+    if not harness.is_file():
+        return None
+    try:
+        import subprocess                              # noqa: PLC0415
+        got = subprocess.run([sys.executable, str(harness)], capture_output=True, text=True,
+                             timeout=180)
+        text = got.stdout
+    except Exception:                                  # noqa: BLE001
+        return None
+    out = {"stamp": stamp, "measured": time.strftime("%Y-%m-%d")}
+    m = re.search(r"recall\s+([\d.]+)%\s+\((\d+)/(\d+)", text)
+    if not m:
+        return None
+    out["recall"], out["hit"], out["cases"] = float(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = re.search(r"precision\s+([\d.]+)%", text)
+    out["precision"] = float(m.group(1)) if m else None
+    m = re.search(r"(\d+)/(\d+) ordinary strings damaged", text)
+    out["damaged"], out["ordinary"] = (int(m.group(1)), int(m.group(2))) if m else (None, None)
+    miss = re.search(r"not caught \((\d+)\)[^\n]*\n((?:  \S[^\n]*\n)+)", text)
+    out["missed"] = [x.strip() for x in miss.group(2).splitlines() if x.strip()] if miss else []
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return out
+
+
+def security():
+    """Which secret and personal-data shapes are recognised — and 🔴 which cannot be, by construction."""
+    pats, mod = _pattern_sources()
+    if pats is None:
+        return {"families": [], "blind": [], "note": "the redactor could not be imported"}
+    seen = [False] * len(pats)
+    fams = []
+    for label, th, marks in SECURITY_FAMILIES:
+        hits = 0
+        for i, src in enumerate(pats):
+            if not seen[i] and any(mk in src for mk in marks):
+                seen[i] = True
+                hits += 1
+        fams.append({"family": label, "th": th, "shapes": hits})
+    rest = sum(1 for x in seen if not x)
+    if rest:
+        fams.append({"family": "other credential shapes", "th": "รูปแบบความลับอื่นๆ", "shapes": rest})
+
+    # 🔴 A password has no prefix to recognise. It is found by the word BESIDE it — `password =`,
+    # `รหัสผ่าน:`, `contrase\u00f1a:` — so counting it among the prefix patterns would have
+    # reported the single strongest family in the module as one or two shapes. The number that
+    # describes it is the size of the credential-word vocabulary those rules run on.
+    stems = getattr(mod, "secret_word_stems", None)
+    words = len(stems() or []) if callable(stems) else 0
+    if words:
+        fams.append({"family": "passwords beside a credential word", "shapes": words,
+                     "th": "รหัสที่มีคำว่าด้วยรหัส/คีย์อยู่ข้างๆ",
+                     "unit": "credential words", "unit_th": "คำที่เฝ้าดู (หลายภาษา)"})
+
+    # Personal data is not a credential and has no keyword to lean on, so it is counted from the
+    # named rules rather than from the prefix list: a checksum is what stands in for the keyword.
+    personal = [
+        ("credit cards", "บัตรเครดิต", ("_CARD_BARE", "_CARD_DASHED", "_CARD_WORD")),
+        ("national ID numbers", "เลขบัตรประชาชน",
+         ("_THAI_ID_BARE", "_THAI_ID_WORD", "_CPF_BARE", "_CPF_WORD", "_CPF_DOTTED",
+          "_AADHAAR_WORD")),
+    ]
+    for label, th, names in personal:
+        have = sum(1 for nm in names if getattr(mod, nm, None) is not None)
+        if have:
+            fams.append({"family": label, "th": th, "shapes": have})
+
+    # 🎯 [owner, 2026-09-23] "แต่ เราเคยตรวจเจอนิ แล้ว ทำการ์ด check ไว้แล้ว" — and they are right: a
+    # secret with no recognisable shape is not helpless, because a file whose NAME says what it
+    # holds is never opened at all. That is a detection category, not a footnote, so it is counted
+    # beside the pattern families rather than left out of the list.
+    names = len(getattr(mod, "BLOCKED_NAMES", ())) + len(getattr(mod, "BLOCKED_SUFFIXES", ()))
+    if names:
+        fams.append({"family": "files refused by name, never opened", "shapes": names,
+                     "th": "ไฟล์ที่ปฏิเสธจากชื่อ — ไม่เปิดอ่านเลย"})
+
+    # 🔴 [owner, 2026-09-23] "ข้อสุดท้าย คือกรองไม่ได้เพราะไม่มี pattern … ต้องใส่เป็น remark".
+    # A coverage list that stops at what IS covered reads as a claim to cover everything. These
+    # are the shapes nothing here can reach, each with the reason it cannot — and the first is
+    # not a guess: it is the one case out of 99 the measured run below still misses.
+    blind = [
+        {"what": "a secret with no prefix and no word naming it",
+         "th": "ความลับที่ไม่มีหัวขึ้นนำ และไม่มีคำกำกับ",
+         "why": "nothing about it says it is a secret — no fixed shape to match and no "
+                "`password:` beside it, so it is a run of letters and digits like any other",
+         "why_th": "ไม่มีอะไรบอกว่ามันเป็นความลับ — ไม่มีรูปแบบตายตัว ไม่มีคำว่า pass: "
+                   "อยู่ข้าง มันจึงเป็นแค่ตัวอักษรกับตัวเลขเหมือนข้อความทั่วไป"},
+        {"what": "a secret that reads as an ordinary phrase",
+         "th": "รหัสที่หน้าตาเหมือนข้อความธรรมดา",
+         "why": "a passphrase built from real words is prose until something names it as a "
+                "credential, and nothing here does",
+         "why_th": "passphrase ที่ประกอบจากคำจริงๆ ก็คือข้อความธรรมดา จนกว่าจะมีคำมาบอกว่า"
+                    "มันคือรหัส ซึ่งตรงนี้ไม่มี"},
+        {"what": "a secret that is not text by the time it gets here",
+         "th": "ความลับที่ไม่ได้มาในรูปตัวหนังสือ",
+         "why": "an image, an archive or a binary is never decoded here, so nothing inside it is "
+                "ever read — or replaced",
+         "why_th": "รูป ไฟล์บีบอัด หรือ binary ไม่ถูกถอดรหัสที่นี่ จึงไม่มีอะไรข้างในถูกอ่าน "
+                    "หรือถูกแทนที่"},
+    ]
+    return {"families": fams, "blind": blind, "total": len(pats), "measured": _recall()}
+
+
 # ---------------------------------------------------------------- writing
 
 def build():
@@ -545,6 +819,12 @@ def build():
         "found": found(),
         "mistakes": mistakes(),
         "files": busiest_files(),
+        # 🎯 [owner, 2026-09-23] "ต้องมีจำนวนเต็มบอก … เพราะไม่มีใครบ้ามานั่งไล่ทุกเคส". A top
+        # ten with no denominator reads as the whole list. The number beside it is what tells a
+        # reader they are looking at a sample, and roughly how big a sample it is.
+        "files_total": files_total(),
+        "lessons": lessons(),
+        "security": security(),
         "local": local_model(),
     }
 
@@ -566,7 +846,7 @@ def main():
     REPORT.mkdir(parents=True, exist_ok=True)
     (REPORT / "data.js").write_text(blob, encoding="utf-8")
     print(f"  report/data.js       {len(blob):,} bytes")
-    for page in ("index.html", "features.html", "usage.html"):
+    for page in ("index.html", "features.html", "usage.html", "rates.html"):
         if not (REPORT / page).is_file():
             print(f"  {page} is missing — the page is not generated, only its data")
     return 0

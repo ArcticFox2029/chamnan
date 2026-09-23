@@ -1078,9 +1078,19 @@ BLOCKED_SUFFIXES = (
 # `.pgpass` and `pgpass.conf` are libpq's password file in its two spellings, and every line in one
 # ends with the password in clear. All four are credential stores whose whole content is the secret,
 # which is the property this list is for — not "a file that might contain one".
+# 🐛 [2026-09-23] `secrets.yml` and `secrets.yaml` were named one by one, so `secrets.toml` —
+# the file Streamlit puts live API keys in, and the one this very repository keeps them in — was
+# not refused. Two members of a set were fixed and the identical ones beside them were not, which
+# is this project's most repeated defect and the reason the entry is now the STEM.
+#
+# `credentials` is already handled that way and shows why it is safe: `_is_blocked_name` blocks a
+# bare stem only when the name does not end in a SOURCE extension, so `secrets.toml`, `.json`,
+# `.ini`, `.yaml`, `.yml` and a bare `secrets` are all refused while `secrets.py` and `secrets.ts`
+# stay ordinary modules. Only the leaf name is judged, so a directory called `secrets/` is
+# untouched and the files inside it are each judged on their own.
 BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc", "_netrc",
                  ".pgpass", "pgpass.conf",
-                 "credentials", "secrets.yml", "secrets.yaml")
+                 "credentials", "secrets")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
 # database at all -- it indexes source, and a .sqlite is not source. peek is asked for one file by

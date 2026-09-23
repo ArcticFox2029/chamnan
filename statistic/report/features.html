@@ -18,23 +18,31 @@ const M = document.getElementById("main");
    never omitted: an empty row that explains itself is how the missing recorder gets built, and
    leaving it out would make the page claim a coverage it does not have. */
 const feats = S.features || [];
-const live = feats.filter((x) => x.source);
-const dark = feats.filter((x) => !x.source);
+/* 🐛 [2026-09-23, owner] "ยังไม่มี sort เรียง ข้อมูลเยอะ อยู่บน". It WAS sorted — by the rate
+   `fired/chances`, while the label printed the count. So a row reading "300 / 6.4k" sat below one
+   reading "191 / 246", and the chart looked unranked to anybody reading the numbers rather than
+   the bars. A chart ranks by the quantity it shows: the bar length and the order are both the
+   count now, and the rate follows it in the same label.
+
+   🐛 And the two groups were split on `x.source` being truthy, which a reason-string also is —
+   see the builder. The measurement is what is absent, so that is what the split tests. */
+const live = feats.filter((x) => x.fired !== null && x.fired !== undefined);
+const dark = feats.filter((x) => x.fired === null || x.fired === undefined);
 M.append(panel("which features actually fire",
   "ฟีเจอร์ไหนทำงานจริง และมีโอกาสกี่ครั้ง",
   "logs/*.jsonl, one per feature",
   [
     hbars(live.map((x, i) => ({
-      label: x.feature, value: pct(x.fired, x.chances),
-      text: `${short(x.fired)} / ${short(x.chances)}`,
+      label: x.feature, value: x.fired,
+      text: `${short(x.fired)} / ${short(x.chances)} · ${pct(x.fired, x.chances).toFixed(1)}%`,
       colour: PAL[i % PAL.length], dim: !x.fired,
     }))),
     dark.length ? el("p", { class: "note" },
-      `${dark.length} guard(s) have no recorder at all — they print and forget: `
-      + dark.map((x) => x.feature).join(", ")
-      + ". Nothing can say whether they have ever fired.") : null,
-    dark.length ? el("p", { class: "th" },
-      "มีการ์ดที่ยังไม่มีตัวบันทึก — ทำงานแล้วลืม จึงบอกไม่ได้ว่าเคยยิงไหม") : null,
+      T(`${dark.length} guard(s) have no recorder at all — they print and forget: `
+        + dark.map((x) => x.feature).join(", ")
+        + ". Nothing can say whether they have ever fired.",
+        `มี ${dark.length} การ์ดที่ยังไม่มีตัวบันทึก — ทำงานแล้วลืม จึงบอกไม่ได้ว่าเคยทำงานไหม · `
+        + dark.map((x) => x.feature).join(", "))) : null,
   ], { wide: true }));
 
 /* ---- guards that have proved they can fail */
@@ -49,9 +57,9 @@ M.append(panel("guards that have proved they can fail",
         colour: "var(--grey)" },
     ], { centre: `${n(fd.mutation_proved)}/${n(fd.guard_pool)}`, sub: "guards" }),
     el("p", { class: "note" },
-      "a test existing is not an invariant being proved — this is the share that has been broken "
-      + "on purpose and watched to go red"),
-    el("p", { class: "th" }, "มีเทสต์ ≠ invariant ถูกพิสูจน์ · นี่คือสัดส่วนที่เคยถูกทำให้พังแล้วดูว่ามันแดงจริง"),
+      T("a test existing is not an invariant being proved — this is the share that has been "
+        + "broken on purpose and watched to go red",
+        "มีเทสต์ ≠ invariant ถูกพิสูจน์ · นี่คือสัดส่วนที่เคยถูกทำให้พังแล้วดูว่ามันแดงจริง")),
   ]));
 
 /* ---- the gate */
@@ -65,21 +73,56 @@ M.append(panel("what the gate finds",
         [g.day, { t: n(g.checks), n: 1 }, { t: n(g.failing), n: 1 }, { t: n(g.seconds), n: 1 }])),
   ]));
 
-/* ---- the model's own mistakes */
+/* ---- the model's own mistakes, and the lessons they turned into.
+
+   🎯 [owner, 2026-09-23] "อาจต้องปรับจากการ์ดสั้น สามแถว เป็นแบบยาว เพราะมันต้องบอกว่า ตัวไหน
+   โดนบ่อย โดนซ้ำ" — three tiles could say 3,114 and nothing else. A lesson is a sentence
+   attached to a line of code, and until now the only thing stored about all 3,114 of them was
+   how many there were. */
 const ms = S.mistakes || {};
-M.append(panel("the model's own mistakes",
-  "ความผิดพลาดของโมเดลเอง และที่ทำซ้ำ",
-  "logs/failures.jsonl via lib/gotcha.py · state/gotcha_marks.json",
+const ls = S.lessons || {};
+M.append(panel("the model's own mistakes, and what they became",
+  "ความผิดพลาดของโมเดลเอง และบทเรียนที่เขียนไว้",
+  "logs/failures.jsonl via lib/gotcha.py · state/gotcha_index.json",
   [
+    /* ð [2026-09-23, owner] "à¹à¸¡à¹à¸à¸§à¸£à¸¡à¸µ repeat à¸à¸° à¸¡à¸±à¸à¸à¸³à¹à¸«à¹à¹à¸à¸¥à¸à¹". "0 of them a repeat" beside
+       "1 failure recorded" is arithmetic nobody needed: with one failure a repeat is impossible,
+       so the tile reports the shape of the data rather than anything about the work. It appears
+       only once a repeat is a thing that could have happened, and could be counted. */
     el("div", { class: "grid2" },
       stat(short(ms.failures || 0), "failures recorded", "ความล้มเหลวที่บันทึก"),
-      stat(short(ms.repeats || 0), "of them a repeat", "ที่เป็นการทำซ้ำ"),
-      stat(short(fd.recorded_lessons || 0), "lessons written into the code",
-        "บทเรียนที่เขียนลงโค้ด")),
-    (ms.per_day || []).length
-      ? spark((ms.per_day || []).map((d) => d.failures || 0), { colour: PAL[5] })
+      (ms.failures || 0) > 1
+        ? stat(short(ms.repeats || 0), "of them a repeat", "ที่เป็นการทำซ้ำ") : null,
+      stat(short(ls.marks || 0), "lessons written into the code", "บทเรียนที่เขียนลงโค้ด"),
+      stat(short(ls.files || 0), "files carrying one", "ไฟล์ที่มีบทเรียน")),
+    (ls.by_month || []).length > 2
+      ? bars((ls.by_month || []).map((r) => ({ label: r[0], tick: r[0].slice(2), value: r[1] })))
       : null,
-    ms.note ? el("p", { class: "note" }, ms.note) : null,
-  ], { wide: true, off: !ms.failures }));
+    ms.note ? el("p", { class: "note" }, T(ms.note, ms.note_th || ms.note)) : null,
+  ], { wide: true, off: !ls.marks }));
+
+/* 🔴 Which file keeps earning them. A file with many lessons is not a bad file — it is a file
+   that gets worked on — but a file at the top of this list twice over is where the same mistake
+   keeps being made, which is the one thing a count of 3,114 could never say. */
+M.append(panel("which files keep earning a lesson",
+  "ไฟล์ไหนโดนซ้ำบ่อยที่สุด",
+  `state/gotcha_index.json · the 10 heaviest of ${n(ls.files)} file(s) carrying a lesson`,
+  [
+    hbars((ls.by_file || []).slice(0, 10).map((r, i) => ({
+      label: r[0], value: r[1], text: `${n(r[1])} ${T("lessons", "บทเรียน")}`,
+      colour: PAL[i % PAL.length] }))),
+    ls.note ? el("p", { class: "src", style: "margin:12px 0 0" }, ls.note) : null,
+  ], { wide: true, off: !(ls.by_file || []).length }));
+
+/* The lessons themselves, newest first — the half a number can never carry. */
+M.append(panel("the most recent lessons, in their own words",
+  "บทเรียนล่าสุด ตามที่มันเขียนไว้จริง",
+  "state/gotcha_index.json — the newest 12 of " + n(ls.marks || 0),
+  table([{ t: "when" }, { t: "where" }, { t: "what went wrong" }],
+    (ls.recent || []).slice(0, 12).map((r) => [
+      r.at || "—",
+      el("code", {}, `${r.file.split("/").pop()}:${r.line}`),
+      r.text])),
+  { wide: true, off: !(ls.recent || []).length }));
 </script>
 </body></html>
