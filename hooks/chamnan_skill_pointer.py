@@ -96,6 +96,24 @@ def _first_steps(path):
     return []
 
 
+# 🐛 [2026-09-23] Caught live: `git commit` whose MESSAGE mentioned `2dspeak/` raised the Live2D
+# procedure. A commit message, a heredoc body and a `-m` string are prose ABOUT work, not the work,
+# and matching them is how a pointer earns its way into being ignored — the same "noise gets a
+# guard switched off" reasoning the nudge budget below is built on.
+
+_PROSE = re.compile(
+    # Greedy and un-anchored: EVERYTHING after a heredoc marker is body. A non-greedy `*?$` under
+    # re.MULTILINE stops at the first newline and leaves the body matching — measured.
+    "<<-?'?\\w+'?[\\s\\S]*"              # a heredoc body: prose handed to a command
+    "|(?:-m|--message)\\s+(?:\"[^\"]*\"|'[^']*')"   # a commit message
+    "|#.*$",                                  # a shell comment
+    re.MULTILINE)
+
+
+def _the_work_itself(command):
+    """`command` with the prose stripped out: what is being RUN, not what is being said about it."""
+    return _PROSE.sub(" ", command)
+
 def _nudge_path(wsdir, session_id):
     """One state file per session, never one shared dict keyed by session id — the same reasoning
     as chamnan_scratch_watch.py's `_nudge_path`: a shared file is a read-modify-write with no lock,
@@ -571,8 +589,9 @@ def main():
     entry["calls"] = entry.get("calls", 0) + 1
     calls = entry["calls"]
 
+    _runnable = _the_work_itself(command)
     hits = [(stem, pats) for stem, pats in _covers(wsdir)
-            if any(pat in command for pat in pats)]
+            if any(pat in _runnable for pat in pats)]
     if not hits:
         _nudge_write(wsdir, session, entry)
         return 0

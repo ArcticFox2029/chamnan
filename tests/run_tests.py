@@ -48760,6 +48760,37 @@ check("THE GUARD DOES NOT MATCH ITS OWN SOURCE",
 _rmtree(_cn_ws, ignore_errors=True)
 
 
+# ---------------------------------- prose ABOUT work is not work
+# 🐛 [2026-09-23] Caught live: `git commit -m "fix 2dspeak/ lipsync"` raised the Live2D procedure,
+# because the pointer matched the COMMIT MESSAGE. A message, a heredoc body and a shell comment all
+# describe work rather than being it, and a pointer that fires on them is how a guard earns its way
+# into being ignored — the same reasoning as the three-nudges-per-session budget.
+import importlib.util as _ilu  # noqa: E402
+
+_pr_spec = _ilu.spec_from_file_location("_sp", ROOT / "hooks" / "chamnan_skill_pointer.py")
+_pr_mod = _ilu.module_from_spec(_pr_spec)
+try:
+    _pr_spec.loader.exec_module(_pr_mod)
+except SystemExit:
+    pass
+_pr_strip = _pr_mod._the_work_itself
+
+check("A COMMIT MESSAGE IS NOT THE WORK IT DESCRIBES",
+      "2dspeak/" not in _pr_strip('git commit -m "fix 2dspeak/ lipsync"'),
+      saw=_pr_strip('git commit -m "fix 2dspeak/ lipsync"'))
+# 🐛 The first pattern was `[\s\S]*?$` under re.MULTILINE, which stops at the first newline and
+# leaves the whole body matching. Greedy and un-anchored: everything after the marker is body.
+check("...and neither is a HEREDOC body, all of it, not just its first line",
+      "work_mode.py" not in _pr_strip("git commit -F - <<'EOF'\nsrc/work_mode.py\nEOF"),
+      saw=_pr_strip("git commit -F - <<'EOF'\nsrc/work_mode.py\nEOF"))
+check("...nor a shell comment",
+      "memory_manager.py" not in _pr_strip("echo hi # about memory_manager.py"),
+      saw=_pr_strip("echo hi # about memory_manager.py"))
+check("...while the command actually being RUN still is, even beside a commit",
+      "tts_manager.py" in _pr_strip("python3 src/tts_manager.py && git commit -m 'x'"),
+      saw=_pr_strip("python3 src/tts_manager.py && git commit -m 'x'"))
+
+
 # ---------------------------------- a mistake nobody had to type in, so a new workspace has some
 # 🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ" — then the correction that
 # decided the design: the system has to work for somebody else's repository and somebody else's
