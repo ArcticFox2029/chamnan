@@ -34,7 +34,11 @@ defect already found and fixed in the sibling hook, `chamnan_scratch_watch.py` (
 to "session" instead of to elapsed work goes quiet exactly when a long session most needs it. Fixed
 the same way here — a procedure may speak up to three times per session, mirroring the sibling's
 own re-ask marks so the two numbers cannot drift apart.
+
+READS: .chamnan/skills/*.md via COVERS: within 1500 except README.md
+READS: .chamnan/skills/*.md via FIRST: within 1500 except README.md
 """
+
 import json
 import os
 import re
