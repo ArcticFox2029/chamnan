@@ -630,7 +630,13 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
     # for `briefed_out`, which has callers.
     if briefed_cost_out is not None:
         for i in briefed_at:
-            briefed_cost_out[title_of(order[i])] = len(order[i].encode())
+            # The rank travels with the cost, because the question they answer together is the
+            # only one either can answer at all: "did the section that gave up the most also rank
+            # lowest". Retention alone says a section kept 21% and cannot say whether that was the
+            # ranking working or the allocator failing. `_rank` is what `droppable` sorted on, so
+            # this is the number the decision was actually made with rather than a re-derivation.
+            briefed_cost_out[title_of(order[i])] = {"whole": len(order[i].encode()),
+                                                    "rank": round(_rank(order[i]), 3)}
     _line = ""
     if _short:
         _named = ", ".join(f"`{_s}`" for _s in _short[:5])

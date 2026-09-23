@@ -60,7 +60,12 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
       resent   present and False only when the block was NOT resent into an existing session
       behind   seconds the architecture index is behind the newest source file
       drop     sections dropped entirely for want of room
-      sfull    {section: the bytes it would have taken whole}, for the sections in `short`. The
+      sfull    {section: {whole, rank}} for the sections in `short`, one entry each. The
+      whole    the bytes that section would have taken if it had not been shortened — knowable
+               only inside the fitter, and nowhere after it
+      rank     the priority `droppable` sorted that section on, carried beside `whole` because
+               the question they answer together — did the section that gave up the most also
+               rank lowest — is the only one either answers alone. The
                DELIVERED size is already in `sec`, so the pair is what the section retained.
                Recorded because the full size is knowable only while the block is being assembled:
                without it, "is the fitter shrinking well" has no answer that is not the calendar.
@@ -131,7 +136,14 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     if nonce:
         rec["nc"] = str(nonce)
     if short_full:
-        rec["sfull"] = {str(k)[:NAME_CHARS]: int(v) for k, v in short_full.items()}
+        _sf = {}
+        for _k, _v in short_full.items():
+            _name = str(_k)[:NAME_CHARS]
+            if isinstance(_v, dict):
+                _sf[_name] = {"whole": int(_v.get("whole", 0)), "rank": _v.get("rank")}
+            else:
+                _sf[_name] = {"whole": int(_v)}
+        rec["sfull"] = _sf
     if model:
         # 🎯 [2026-09-23] The ONLY place the main thread's model is ever offered. The hooks
         # reference: *"Only `SessionStart` hooks can receive a `model` field, and Claude Code

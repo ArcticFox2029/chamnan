@@ -48455,6 +48455,62 @@ check("a resume with no gap field says nothing about handoff",
       _ho_ADVICE not in _ho_fire(0, expired=True))
 
 
+# ---------------------------- the guard was watching a door the bytes do not come through
+# 🐛 [2026-09-23] (self-measured) `chamnan_bulk_read_notice` enforces the rule that a long file
+# goes to the local model first, and it was registered for `Read` alone. Its own `main()` has
+# accepted `("Read", "Bash")` and carried `_file_a_shell_command_reads` the whole time. In one real
+# session 68 KB of research reports entered the context through `sed` and `grep`, and the hook
+# never fired once: the capability was there and the wiring was not.
+_br_reg = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+_br_match = [_g.get("matcher", "") for _g in _br_reg["PreToolUse"]
+             for _h in _g.get("hooks", []) if "bulk_read_notice" in str(_h.get("command", ""))]
+check("THE BULK-READ GUARD WATCHES THE TOOL THE BYTES ACTUALLY ARRIVE THROUGH",
+      _br_match and "Bash" in _br_match[0], saw=_br_match)
+import importlib.util as _br_ilu  # noqa: E402
+_br_spec = _br_ilu.spec_from_file_location("_br", str(ROOT / "hooks" / "chamnan_bulk_read_notice.py"))
+_br_mod = _br_ilu.module_from_spec(_br_spec)
+_br_spec.loader.exec_module(_br_mod)
+check("...and a whole-file read through the shell is recognised",
+      _br_mod._file_a_shell_command_reads("cat big.md") == "big.md")
+# A slice is the CHEAPER behaviour this hook exists to encourage. Announcing it would train people
+# out of the habit it wants.
+check("...while a slice is not, because a slice is the thing to encourage",
+      _br_mod._file_a_shell_command_reads("sed -n '1,40p' big.md") == "")
+
+# 🐛 And the half that made the first fix insufficient: no single slice is bulk, but a RUN of them
+# over one file adds up past what one pass would have cost. The session that prompted this read a
+# 33,000-character report in six slices, each correctly judged cheap.
+_br_dir = Path(tempfile.mkdtemp(prefix="chamnan-slices-")) / "r"
+(_br_dir / ".git").mkdir(parents=True)
+ws.ensure(_br_dir)
+(_br_dir / "big.md").write_text("x\n" * 5000, encoding="utf-8")
+
+
+def _br_fire(cmd):
+    _pl = {"cwd": str(_br_dir), "hook_event_name": "PreToolUse", "tool_name": "Bash",
+           "tool_input": {"command": cmd}, "session_id": "s-slice"}
+    _out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_bulk_read_notice.py")],
+                          input=json.dumps(_pl), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
+    for _l in _out.splitlines():
+        try:
+            return json.loads(_l)["hookSpecificOutput"].get("additionalContext", "")
+        except Exception:      # noqa: BLE001 — other lines are other notices
+            continue
+    return ""
+
+
+_br_said = [_br_fire(f"sed -n '{_i}0,{_i}9p' {_br_dir / 'big.md'}") for _i in range(1, 6)]
+check("a run of slices over ONE file is noticed once it stops being cheap",
+      "separate slices" in _br_said[_br_mod.SLICE_RUN - 1], saw=_br_said[_br_mod.SLICE_RUN - 1][:120])
+check("...and the first few say nothing, because that is how anybody reads a file",
+      all("separate slices" not in _s for _s in _br_said[:_br_mod.SLICE_RUN - 1]),
+      saw=[_s[:40] for _s in _br_said[:_br_mod.SLICE_RUN - 1]])
+check("...counting only the file it is actually about",
+      _br_mod._file_a_shell_slice_reads("grep -n foo /nonexistent-path-xyz.md") == "")
+_rmtree(_br_dir.parent, ignore_errors=True)
+
+
 # ------------------------------- a corpus of secrets is a leak with a test suite attached
 # 🎯 [owner 2026-09-23] The redactor's next step is evidence, not another rule: 99% is a figure
 # about 147 hand-written cases and this package's own limitations say so. `tests/corpus/redaction/`

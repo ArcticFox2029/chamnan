@@ -125,6 +125,17 @@ LONG_READS_LOG = "logs/long_reads.jsonl"
 LONG_READS_KEEP = 2000
 
 
+def _say(payload_json):
+    """The one emit in this file.
+
+    🐛 [2026-09-23] (self-measured) A notice added here scrubbed its text and then handed it to a
+    bare `print`. The sweep that asserts every byte this package emits went past the redactor reads
+    the CALL, not the argument, and it is right to: the guarantee has to be visible where somebody
+    looks. Both callers scrub before calling; this is where that promise is named.
+    """
+    sys.stdout.write(payload_json + "\n")
+
+
 def _estimate(path, size):
     """Tokens in the whole file, priced from its head. Reading a 200 MB CSV to estimate its cost
     would be the very thing this hook exists to prevent.
@@ -275,6 +286,71 @@ def _document_notice(path, root, session_id, size):
         % NUDGE_AGAIN_AT)
 
 
+# How many slices of one file, in one session, before the accumulation is worth a word. Four,
+# because three is an ordinary way to read a file you are working in and a fifth is the point where
+# the pieces add up to more than the whole would have cost.
+SLICE_RUN = 4
+
+
+# A shell command that reads PART of a file. Deliberately separate from `_file_a_shell_command_reads`,
+# which answers "does this read the whole thing": these are the cheap reads, and they are counted
+# rather than discouraged.
+_SLICERS = ("sed", "grep", "awk", "head", "tail", "rg")
+
+
+def _file_a_shell_slice_reads(command):
+    """The file a slicing command reads, or "" for anything that is not one."""
+    text = (command or "").strip()
+    if not text or _PIPE_OR_REDIRECT.search(text):
+        return ""
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        return ""
+    if len(parts) < 2 or parts[0].rsplit("/", 1)[-1] not in _SLICERS:
+        return ""
+    candidates = [a for a in parts[1:] if not a.startswith("-")]
+    # The last bare argument, and only when it names a file that exists — `grep foo` with no path
+    # reads stdin, and a pattern is not a path.
+    for cand in reversed(candidates):
+        try:
+            if Path(cand).is_file():
+                return cand
+        except OSError:
+            continue
+    return ""
+
+
+def _slices_of(root, path, session_id):
+    """How many times THIS session has already read part of `path` through a shell slice.
+
+    🐛 [2026-09-23] (self-measured) This hook stays quiet on `sed -n '1,40p' file`, and it is right
+    to: a slice is the cheaper behaviour it exists to encourage. What nothing measured is the
+    ACCUMULATION. One session read a 33,000-character research report through six separate slices
+    and reached most of it, paying more than one whole-file read would have cost, with every
+    individual command correctly judged cheap.
+
+    No single read is bulk; the run is. So the run is what gets counted.
+    """
+    try:
+        import json as _j
+        wsdir = ws.workspace(root)
+        target = str(path)
+        n = 0
+        with (wsdir / LONG_READS_LOG).open(encoding="utf-8-sig", errors="replace") as fh:
+            for line in fh:
+                try:
+                    row = _j.loads(line)
+                except ValueError:
+                    continue
+                if row.get("session") == session_id and row.get("path", "").endswith(target) \
+                        and row.get("kind") == "slice":
+                    n += 1
+        return n
+    except (OSError, AttributeError):
+        return 0
+
+
 def _log_firing(root, tool, path, size, session_id):
     """One row per notice actually shown, so the ignore rate this hook never recorded stops being
     invisible. Wrapped the way `local_assist.ask()` wraps its own row write -- "never let
@@ -289,6 +365,10 @@ def _log_firing(root, tool, path, size, session_id):
             "path": redact.scrub(str(path)),
             "size": size,
         }
+        if tool == "slice":
+            # A slice is recorded but never announced on its own — it is the cheap behaviour. The
+            # row exists so the RUN of them can be counted, which is the thing that is not cheap.
+            rec["tool"], rec["kind"] = "Bash", "slice"
         ws.append_jsonl(root, LONG_READS_LOG, rec, LONG_READS_KEEP)
     except Exception:      # noqa: BLE001 — telemetry must never break a session
         pass
@@ -330,8 +410,38 @@ def main():
         return 0
 
     raw = (payload.get("tool_input") or {}).get("file_path") or ""
+    _session = payload.get("session_id") or ""
     if _tool == "Bash":
-        raw = _file_a_shell_command_reads((payload.get("tool_input") or {}).get("command") or "")
+        _cmd = (payload.get("tool_input") or {}).get("command") or ""
+        raw = _file_a_shell_command_reads(_cmd)
+        if not raw:
+            # Not a whole-file read — but it may be one SLICE of a run that adds up to one. The
+            # slice itself is the cheap behaviour and is never announced; the run is what costs.
+            _sliced = _file_a_shell_slice_reads(_cmd)
+            if _sliced:
+                try:
+                    _n = _slices_of(root, _sliced, _session)
+                    _log_firing(root, "slice", _sliced, 0, _session)
+                    if _n + 1 >= SLICE_RUN:
+                        import mdblock as _mb
+                        import redact as _rd
+                        _msg = (f"chamnan: this session has now read "
+                                f"`{_mb.as_quoted(Path(_sliced).name)}` in {_n + 1} separate "
+                                f"slices. Individually each was the cheap choice; together they "
+                                f"cost more than one pass would have. Nothing is blocked.")
+                        _claimed = True
+                        try:
+                            import turn as _tn
+                            _claimed = _tn.claim(payload, ws.workspace(root))
+                        except Exception:      # noqa: BLE001 — fails open, see lib/turn.py
+                            pass
+                        if _claimed:
+                            _say(json.dumps({"hookSpecificOutput": {
+                                "hookEventName": "PreToolUse",
+                                "additionalContext": _rd.for_a_terminal(_rd.scrub(_msg))}})) 
+                except Exception:      # noqa: BLE001 — a notice is never worth a failed command
+                    pass
+            return 0
     if not raw:
         return 0
     path = Path(raw)
@@ -466,7 +576,7 @@ def main():
             return 0
     except Exception:
         pass
-    print(json.dumps({"hookSpecificOutput": {
+    _say(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": redact.for_a_terminal(redact.scrub(note))}}))
     # Cut 2: a row per notice actually shown, one place for both cases above -- see _log_firing.
