@@ -42,6 +42,63 @@ MAX_FAMILIES = 120
 DIGEST_NAME = "repeat_digest.json"
 
 
+# ENFORCES: memory/rules/a-bad-result-earns-a-gotcha.md
+# 🎯 "A result that came out badly earns a gotcha — every time, whatever produced it." The rule is
+# about the thing nobody does when tired: the failure is fixed, the session ends, and the reason is
+# never written down, so the next session repeats it. This is asked at the one moment the answer is
+# known — the end — and it compares two numbers rather than trusting a memory.
+GOTCHA_MARK = "\U0001F41B"
+MARK_STATE = "state/gotcha_marks.json"
+_COUNTED = (".py", ".sh", ".md", ".js", ".ts", ".json")
+
+
+def _marks(root):
+    """How many recorded gotchas exist right now, across the places they are written."""
+    n = 0
+    for base in (Path(root) / ws.WORKSPACE_DIRNAME, Path(root)):
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if (path.is_file() and path.suffix in _COUNTED
+                    and ".git" not in path.parts and "__pycache__" not in path.parts):
+                try:
+                    n += path.read_text(encoding="utf-8", errors="replace").count(GOTCHA_MARK)
+                except OSError:
+                    continue
+        break                      # the workspace alone: the whole repo is too slow to sweep here
+    return n
+
+
+def _repeated_failures(wsdir):
+    """Failures that happened more than once today — the ones a gotcha is owed for."""
+    try:
+        import gotcha
+        return sum(1 for _k, v in gotcha.repeats(wsdir).items() if v[0] >= gotcha.REPEATS)
+    except Exception:              # noqa: BLE001
+        return 0
+
+
+def _a_gotcha_is_owed(root, wsdir):
+    """"today went wrong N times and nothing was written down" — or "", which is the good case."""
+    try:
+        import json as _json
+        repeats = _repeated_failures(wsdir)
+        state = wsdir / MARK_STATE
+        before = 0
+        if state.is_file():
+            before = int(_json.loads(state.read_text(encoding="utf-8")).get("marks", 0))
+        now = _marks(root)
+        state.parent.mkdir(parents=True, exist_ok=True)
+        ws.atomic_write_text(state, _json.dumps({"marks": now}), encoding="utf-8")
+        if repeats and now <= before:
+            return ("chamnan: %d thing(s) failed more than once here and no gotcha was written "
+                    "(%d recorded, unchanged). A result that came out badly earns one — every "
+                    "time, whatever produced it. `memory/rules/a-bad-result-earns-a-gotcha.md`."
+                    % (repeats, now))
+        return ""
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed hook
+        return ""
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -53,6 +110,10 @@ def main():
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
         return 0
+    _owed = _a_gotcha_is_owed(root, wsdir)
+    if _owed:
+        print(_owed)
+
     log = wsdir / "logs" / "scratch.jsonl"
     if not log.is_file():
         return 0

@@ -50,7 +50,11 @@ _OS_MUTATORS = (
 _WRITERS = re.compile(
     r"(?:^|[|;&]\s*)(?:sudo\s+)?(rm|mv|cp|tee|install|truncate|chmod|chown|ln|mkdir|touch"
     r"|sed\s+-i)\b([^|;&]*)", re.MULTILINE)
-_REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}\s*([^\s|;&]+)")
+_REDIRECT_OP = re.compile(r"(?<![0-9<>])>{1,2}(?![>&])")
+# 🐛 [2026-09-23, second correction] `sed -i '' '0,/^import /s//from pathlib import Path/'`
+# raised "this writes to `/s//from`" — the slashes came out of the sed SCRIPT, which is quoted.
+# A quoted argument is a pattern, a message or a script; the path a writer touches is unquoted.
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _PATHISH = re.compile(r"(?:^|(?<=\s))(?:~|/)[^\s'\"]*")
 
 
@@ -86,8 +90,19 @@ def _outside_targets(command, root):
     seen, out = set(), []
     candidates = []
     for m in _WRITERS.finditer(command):
-        candidates += _PATHISH.findall(m.group(2))
-    candidates += _REDIRECT.findall(command)
+        candidates += _PATHISH.findall(_QUOTED.sub(" ", m.group(2)))
+    # 🐛 A redirect INSIDE a quoted string is text, not a redirect: `echo 'hi > /etc/passwd'`
+    # writes nothing. Quoted regions are masked to spaces so offsets survive, the operator is found
+    # in the masked copy, and the target is then read from the ORIGINAL — because a quoted PATH,
+    # `echo x > "/etc/hosts"`, is a real write and must still be seen.
+    masked = _QUOTED.sub(lambda m: " " * len(m.group(0)), command)
+    for m in _REDIRECT_OP.finditer(masked):
+        # 🐛 The masked copy is searched for the OPERATOR only: a quoted target is spaces there, so
+        # a pattern that also demands a target finds nothing and `echo x > "/etc/hosts"` goes
+        # unseen. The target is then taken from the original, quotes and all.
+        raw = re.sub(r"^>{1,2}\s*", "", command[m.start():]).split()
+        if raw:
+            candidates.append(raw[0].strip("'\""))
     for raw in candidates:
         p = os.path.expanduser(raw.strip().strip("'\""))
         if not p.startswith(("/", "~")) or len(p) < 2 or p in seen:

@@ -48919,6 +48919,20 @@ check("A SED SCRIPT IS NOT A PATH, and plain sed writes nothing",
       saw=_bd.advice("Bash", {"command": "grep -n x f | sed 's/^/    /'"}, _bd_root))
 check("...while `sed -i` on a dotfile is exactly the thing",
       bool(_bd.advice("Bash", {"command": "sed -i '' 's/a/b/' ~/.zshrc"}, _bd_root)))
+# 🐛 [2026-09-23, twice more, both caught live] A QUOTED argument is a script, a pattern or a
+# message — never the path a writer touches. `sed -i '' '0,/^import /s//from x/' f.py` read its own
+# sed script as `/s//from`, and `echo 'hi > /etc/passwd'` read a printed string as a redirect. The
+# target is taken from the ORIGINAL though, because `echo x > "/etc/hosts"` is a real write.
+_bd_quoting = [
+    ("a sed script is a script", "sed -i '' '0,/^import /s//from x/' hooks/y.py", False),
+    ("a printed string is not a redirect", "echo 'hi > /etc/passwd'", False),
+    ("a QUOTED path is still a path", 'echo x > "/etc/hosts"', True),
+    ("an append to a dotfile", "cat a >> ~/.zshrc", True),
+    ("stderr redirection is not a write", "python3 t.py 2>&1 | tail -3", False),
+]
+_bd_qbad = [n for n, cmd, want in _bd_quoting
+            if bool(_bd.advice("Bash", {"command": cmd}, _bd_root)) != want]
+check("QUOTING DECIDES WHAT IS A PATH — all five", _bd_qbad == [], saw=_bd_qbad)
 _rmtree(_bd_root.parent, ignore_errors=True)
 
 # ---------------------------------- prose ABOUT work is not work
