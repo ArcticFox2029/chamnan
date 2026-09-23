@@ -50037,6 +50037,36 @@ check("and the workspace wrapper reads the configured window rather than a liter
 _rmtree(_se.parent, ignore_errors=True)
 
 
+# ------------------------- a credential the SOURCE split in half, and the language puts back together
+# 🐛 [2026-09-24] chamnan-corpus, case A9. A deploy key written the way a formatter leaves it --
+# `("ghp_"\n "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234")` -- reached `MAP.md` whole. Every prefix rule in
+# redact.py requires the prefix and the body to be CONTIGUOUS, and here they are two quoted
+# strings that Python, C and every human reader join back together. The file this plugin
+# encourages committing published a GitHub token with a quote-space-quote in the middle.
+_sj_split = ('The deploy key, wrapped by the formatter: "ghp_" '
+             '"EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234" -- one value, two lines.')
+check("A CREDENTIAL SPLIT ACROSS TWO STRING LITERALS IS STILL REDACTED",
+      "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234" not in redact.scrub(_sj_split),
+      saw=redact.scrub(_sj_split))
+check("...across a newline, which is where a formatter actually leaves it",
+      "AAAABBBBCCCCDDDD1234" not in redact.scrub('TOKEN = ("sk_live_"\n         "AAAABBBBCCCCDDDD1234")'),
+      saw=redact.scrub('TOKEN = ("sk_live_"\n         "AAAABBBBCCCCDDDD1234")'))
+check("...and with an explicit + between the halves",
+      "AAAABBBBCCCCDDDD1234" not in redact.scrub('T = "sk_live_" + "AAAABBBBCCCCDDDD1234"'),
+      saw=redact.scrub('T = "sk_live_" + "AAAABBBBCCCCDDDD1234"'))
+# The other half, and the reason this rule is allowed to be shaped as broadly as it is: joining is
+# a change to the reader's text, so `scrub` keeps the joined form only when it redacts MORE.
+# Ordinary adjacent strings are rewritten, found to buy nothing, and thrown away.
+for _sj_ok in ('He said "hello" "world" and then left.',
+               'msg = "user" "name"  # two words, deliberately adjacent',
+               "SELECT 'a' 'b' FROM t"):
+    check(f"...while ordinary adjacent strings are returned untouched: {_sj_ok[:28]}",
+          redact.scrub(_sj_ok) == _sj_ok, saw=redact.scrub(_sj_ok))
+check("...and a contiguous token is still caught, which is what this must not regress",
+      "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234" not in
+      redact.scrub("token = ghp_EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234"))
+
+
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
 # reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all
