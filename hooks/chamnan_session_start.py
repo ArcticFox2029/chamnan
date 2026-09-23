@@ -1401,7 +1401,8 @@ def main():
         # of non-fatal errors the software had ALREADY signalled, and this is that shape at its
         # smallest: three independent jobs, one shared failure mode. Swept the whole package for
         # the pattern and this was the only instance. (R12.1.)
-        for _prune in (ws.prune_logs, ws.prune_orphaned_temps, ws.prune_sessions):
+        for _prune in (ws.prune_logs, ws.prune_orphaned_temps, ws.prune_sessions,
+                       ws.prune_scratch):
             try:
                 _prune(root)
             except Exception:

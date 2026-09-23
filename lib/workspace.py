@@ -1014,6 +1014,87 @@ def _own_process_started():
     return _OWN_PROCESS_STARTED[0]
 
 
+# 🎯 [owner, 2026-09-23] "chamnan ก็ควรมีระบบเคลียร์ได้เองนะ เพราะ repo คนใช้งานคนอื่น มันก็ควรมี
+# ระบบเคลียร์ให้ แต่จะวางระบบยังไงให้ปลอดภัยกับคนใช้ทั่วไป" — and the scope they set: "เราไม่แตะพื้นที่นอก repo
+# chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ".
+#
+# `prune_orphaned_temps` covers a killed atomic WRITE, which leaves a `.tmp` file. It does not
+# cover the other half: a tool that made itself a working DIRECTORY inside the workspace and
+# finished without removing it. That is not hypothetical — `corpus_coverage.py` cleaned its copy
+# at the start of the NEXT run rather than the end of this one, so the workspace permanently
+# carried 795 files and 8.8 MB of somebody else's repository, and it confused two other tools
+# before anybody noticed it was there.
+#
+# 🔴 The safety property, which is the whole design: **only a directory chamnan created and
+# MARKED is ever removed.** An unmarked directory under `logs/` is something the user put there
+# and is never touched, at any age. That inverts the usual retention question from "can I prove
+# this is safe to delete" — which nothing in a stranger's repository can answer — to "did I make
+# this myself", which is a fact written down at creation time.
+SCRATCH_MARK = ".chamnan-scratch"
+
+
+def scratch_dir(root, name):
+    """A working directory under `logs/`, marked as ours so the sweep may remove it later.
+
+    The marker is written FIRST. A run killed between mkdir and mark leaves an unmarked directory,
+    which this sweep will then refuse to touch for ever — the safe direction, and the reason the
+    order is not the other way round.
+    """
+    base = workspace(root)
+    if base is None:
+        return None
+    d = base / "logs" / name
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        (d / SCRATCH_MARK).write_text("chamnan scratch; safe to delete when quiet\n",
+                                      encoding="utf-8")
+    except OSError:
+        return None
+    return d
+
+
+def prune_scratch(root=None, max_age=None):
+    """Remove MARKED scratch directories whose every file has gone quiet. Silent, best effort."""
+    import time
+    ws_dir = workspace(root)
+    if ws_dir is None or not ws_dir.is_dir():
+        return 0
+    logs = ws_dir / "logs"
+    if not logs.is_dir():
+        return 0
+    # The same window `prune_logs` uses, read from the same place, so a reader who changes
+    # `log_retention_days` does not find one of the two sweeps still on an old number.
+    days = load_config(root).get("log_retention_days", 7)
+    cutoff = time.time() - (max_age if max_age is not None else days * 86400)
+    removed = 0
+    try:
+        entries = list(logs.iterdir())
+    except OSError:
+        return 0
+    for path in entries:
+        try:
+            # A symlink is never followed and never removed as a tree: the one incident that
+            # taught this module anything was a link to `/` under logs/.
+            if not path.is_dir() or path.is_symlink():
+                continue
+            if not (path / SCRATCH_MARK).is_file():
+                continue                      # not ours — not our business, at any age
+            fresh = False
+            for f in path.rglob("*"):
+                if not f.is_file() or f.name == SCRATCH_MARK:
+                    continue
+                mt = _mtime_or_none(f)
+                if mt is not None and mt >= cutoff:
+                    fresh = True
+                    break
+            if not fresh:
+                _rmtree_quietly(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def prune_orphaned_temps(root=None):
     """Remove staging files a killed write left behind. Best effort and silent, like every prune.
 
