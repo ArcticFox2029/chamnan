@@ -21,6 +21,7 @@
 bin/chamnan-age         text eol=lf
 bin/chamnan-candidates  text eol=lf
 bin/chamnan-context     text eol=lf
+bin/chamnan-doctor      text eol=lf
 bin/chamnan-env         text eol=lf
 bin/chamnan-guard       text eol=lf
 bin/chamnan-impact      text eol=lf

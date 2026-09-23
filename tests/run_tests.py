@@ -33710,6 +33710,37 @@ check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
 check("A FILESYSTEM FAILURE AT ANY STEP LEAVES THE DESTINATION WHOLE AND NAMES ITSELF",
       not _bad172,
       saw="the claim R2.6.1 refused fsync on does not hold:\n        " + "\n        ".join(_bad172))
+
+# ------------------ and the final swap is os.replace, which is a SOURCE property on this platform
+# 🐛 [2026-09-23] Found by mutation: replacing `os.replace(tmp, dest)` with `tmp.rename(dest)` in
+# `_replace_with_retry` passed every check above. On POSIX both overwrite, so no behavioural test
+# run on this machine can tell them apart — and on Windows `rename` raises FileExistsError when the
+# destination exists, which is the exact failure that function's own docstring says it is there to
+# survive. A property that only differs on a platform the suite cannot run is a SOURCE property,
+# guarded the way the LF pinning of shipped commands is.
+import ast as _ast172s
+
+# `ROOT` is the plugin root the pool already provides — the same one check 103 uses.
+_ws_src172 = (ROOT / "lib" / "workspace.py").read_text(encoding="utf-8", errors="replace")
+_tree172 = _ast172s.parse(_ws_src172)
+# The population is derived: every function whose job is the swap, found by what it calls, never
+# by a name kept here.
+_swappers172 = []
+for _fn172 in _ast172s.walk(_tree172):
+    if not isinstance(_fn172, (_ast172s.FunctionDef, _ast172s.AsyncFunctionDef)):
+        continue
+    _calls172 = {_ast172s.unparse(_c172.func) for _c172 in _ast172s.walk(_fn172)
+                 if isinstance(_c172, _ast172s.Call)}
+    if {"os.replace"} & _calls172 or any(c.endswith(".rename") for c in _calls172):
+        _swappers172.append((_fn172.name, _calls172))
+
+_renamers172 = sorted(n for n, calls in _swappers172 if any(c.endswith(".rename") for c in calls))
+check("THE POPULATION OF SWAPPERS IS NOT EMPTY, so this is not a pass over nothing",
+      len(_swappers172) >= 1, saw="no function in workspace.py performs the final swap")
+check("THE FINAL SWAP IS os.replace, NEVER rename — the difference is Windows-only and real",
+      _renamers172 == [],
+      saw="%s call .rename(); on Windows that raises FileExistsError when the destination exists, "
+          "which is what _replace_with_retry exists to survive" % ", ".join(_renamers172))
 # ---- 173_a_search_of_the_index_is_recorded_as_one.py
 # ------------------ the two artefacts nobody opens are the two this plugin exists for
 # 🎯 [R3.11.5, 2026-09-16] `pointer.note_opened` can only see a Read, and `MAP.md` and `STATE.md` are
@@ -43530,8 +43561,12 @@ else:
 
     # `"${CLAUDE_PLUGIN_ROOT}/hooks/x.py"` -> the file on disk.
     _t_files55, _t_unresolved55 = [], []
+    # 🐛 [2026-09-23] The sibling of this check, 40,000 lines up, read a hook command as a
+    # bare quoted path and was fixed to use shlex; this one was written the same way and was
+    # missed in the same edit — this project's most repeated defect, repeating inside the fix
+    # for itself. A command line is parsed as a command line, in both places.
     for _t_c55 in _t_cmds55:
-        _t_rel55 = _t_c55.strip().strip('"').replace("${CLAUDE_PLUGIN_ROOT}/", "")
+        _t_rel55 = shlex.split(_t_c55)[0].replace("${CLAUDE_PLUGIN_ROOT}/", "")
         _t_p55 = ROOT / _t_rel55
         if _t_p55.is_file():
             _t_files55.append(_t_p55)
@@ -47873,10 +47908,18 @@ _T_SPAWN96 = {"run", "Popen", "call", "check_call", "check_output"}
 # The module, however it was imported. A call on anything else named `run` is not a process.
 _T_MODULES96 = {"subprocess", "sp", "_sp", "_sp89"}
 # What an argv head may be, and why. `sys.executable` is this interpreter; a name is resolved below.
-# `ps` added 2026-09-23 with the README row that discloses it: `lib/inuse.py` asks whether a
-# file is being executed before an edit lands in the middle of it. A read of the process
-# table, never given anything from the repository.
-_T_ALLOWED_CONST96 = {"git", "ps"}
+# \U0001F41B [2026-09-23] Hardcoded `{"git"}` while the README's own sentence had long since named
+# `ps` as well, with the reason \u2014 so the check reported the README as false when the README was
+# the half that was right. `lib/inuse.py` asks the process table one question before an edit. The
+# allow list is READ from that sentence now: the two cannot drift, because there is one of them.
+import re as _t_re96
+_t_readme96 = (ROOT / "README.md").read_text(encoding="utf-8")
+_t_row96 = next((ln for ln in _t_readme96.splitlines()
+                 if ln.startswith("| `subprocess` |")), "")
+_T_ALLOWED_CONST96 = set(_t_re96.findall(r"`([a-z][a-z0-9_-]{1,12})`", _t_row96)) - {"subprocess"}
+check("the allowed-binary list was read from the README, not typed here",
+      "git" in _T_ALLOWED_CONST96 and len(_T_ALLOWED_CONST96) >= 2,
+      saw=sorted(_T_ALLOWED_CONST96) or "the README's subprocess row was not found")
 
 _t_spawns96, _t_unknown96 = [], []
 for _t_f96 in _t_files96:

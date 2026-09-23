@@ -749,6 +749,15 @@ SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.
                     # having only if it is long enough to compare against, which an age sweep would
                     # make it not.
                     "agent_results.jsonl",
+                    # 🐛 [2026-09-23] `recovered.jsonl` was already bounded by record at its one
+                    # call site — `append_jsonl(root, QUARANTINE_LOG, …, 500)` — and was simply never
+                    # declared here, so the check that every jsonl is self-pruning or disposable
+                    # counted it as neither. It belongs on this side rather than among the
+                    # disposable ones: each row records a store that could not be read and was
+                    # moved aside, which is a note about the reader's own data going wrong. Five
+                    # hundred of those is a small file and an age sweep deleting it would answer
+                    # "that never happened" to the one question it exists to answer.
+                    "recovered.jsonl",
                     # 🐛 [2026-09-10] `state-ages.json` records WHEN each STATE.md section last
                     # changed, which is the whole input to `state.age_out`. It lived in `logs/`
                     # and was not exempt, so the 7-day file sweep deleted it — while
