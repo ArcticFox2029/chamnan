@@ -274,7 +274,7 @@ DEFAULT_CONFIG = {
     # repository already does. A key absent from DEFAULT_CONFIG is dropped by `load_config`, so
     # the entry has to exist even though it holds nothing.
     "test_patterns": {},
-    # 🐛 [2026-09-23] `chamnan-guard` shipped with a `--strict` mode documented as "for a
+    # 🐛 [2026-09-23] (self-measured) `chamnan-guard` shipped with a `--strict` mode documented as "for a
     # hook somebody opted into", and there was no hook and no key to opt in WITH. It had run
     # zero times in thirteen days against 294 recorded `git commit` calls. On by default
     # because it only ever WARNS; the strict version is still opt-in by being a separate

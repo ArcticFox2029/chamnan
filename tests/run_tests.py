@@ -35222,6 +35222,23 @@ else:
             _AGENT_NAMES186 = _re186.compile(
                 r"\b(?:" + "|".join(_re186.escape(_t_n186) for _t_n186 in _t_agent_names186) + r")\b")
 
+    # The words `STATED_SOURCE` accepts, and every command this package ships — recognised INSIDE
+    # a record's own bracket, where the parens `STATED_SOURCE` requires cannot be written. Derived
+    # from `bin/` so a new command needs no edit here.
+    _t_bin186 = ROOT.parent.parent / "Work-Mode" / "chamnan" / "bin"
+    _t_cmd_names186 = sorted(
+        (q.name for q in _t_bin186.iterdir()
+         if q.is_file() and q.name.startswith("chamnan-") and q.suffix != ".cmd"),
+        key=len, reverse=True) if _t_bin186.is_dir() else []
+    _BRACKET_SOURCE186 = _re186.compile(
+        r"\b(?:self-measured|owner|agent"
+        + ("|" + "|".join(_re186.escape(_t_c186) for _t_c186 in _t_cmd_names186)
+           if _t_cmd_names186 else "")
+        + r")\b", _re186.I)
+    if not _t_cmd_names186:
+        print("      [note] check 186 — could not read %s; a command name written inside a "
+              "record's bracket will not be recognised this run" % (_t_bin186,))
+
     _t_recent186 = 0
     _t_offenders186 = []
     _t_round_cited186 = 0      # recent records that carry a round citation (the CITE186 form)
@@ -35266,10 +35283,28 @@ else:
             # check a second pattern that would mean the same thing.
             _t_bracket_round186 = bool(CITE186.search("(" + _t_bracket186 + ")"))
             _t_bracket_agent186 = bool(_AGENT_NAMES186 and _AGENT_NAMES186.search(_t_bracket186))
+            # 🐛 [2026-09-24] (self-measured) THE THIRD TIME this exact shape has been fixed here,
+            # and the first two are recorded thirty lines up: the bracket was widened to hold a
+            # record's own source, then taught to read a ROUND in there, then taught to read an
+            # AGENT NAME in there — and each time the identical remaining case was left. A record
+            # reading `🐛 [2026-09-23, found by chamnan-doctor]` or `🐛 [2026-09-23, owner]` says
+            # exactly what `(owner)` in the window beside it says, and was rejected for writing it
+            # one bracket to the left.
+            #
+            # Measured on this repository: of 101 records the check rejects, 16 name a source
+            # inside the bracket — a command that found it, or the owner. Rejecting an honest
+            # record teaches people that the check is noise, which is the failure mode this
+            # package names more often than any other.
+            #
+            # The command names are derived from `bin/`, not typed, for the same reason the agent
+            # roster is: a hand-typed list is the defect this repository records most often, and
+            # the next command added would otherwise be silently rejected.
+            _t_bracket_stated186 = bool(_BRACKET_SOURCE186
+                                        and _BRACKET_SOURCE186.search(_t_bracket186))
 
             if _t_cited186 or _t_bracket_round186:
                 _t_round_cited186 += 1
-            elif _t_bracket_agent186 or any(
+            elif _t_bracket_agent186 or _t_bracket_stated186 or any(
                     _t_rc186.STATED_SOURCE.search(_t_l186) for _t_l186 in _t_window186):
                 _t_other_cited186 += 1
             else:
