@@ -43,6 +43,37 @@ already reports the last released number while running newer code.
 - **`bin/chamnan-doctor`** is pinned to LF, so a Windows checkout under `core.autocrlf=true` does
   not receive a shebang no shell recognises.
 
+**Six defects found by running chamnan against a corpus nobody on this project wrote.**
+`chamnan-corpus` gained a hundred cases asked from the other side — somebody installed this in a
+codebase they care about, and the repository was already in one of these states. Sixty-seven are
+planted, twelve were already there, and the twenty-one no corpus can hold are listed with the
+reason rather than dropped.
+
+- **A credential the source split in half no longer reaches `MAP.md`.** A deploy key written the
+  way a formatter leaves it — `("ghp_"` on one line, the rest on the next — was copied into the
+  index complete, because every prefix rule needs the prefix and the body contiguous and the
+  language rejoins them where a pattern cannot. `MAP.md` is the file this plugin tells people to
+  commit. Adjacent string literals are now joined before matching, and the joined form is kept
+  only when it actually redacts more, so ordinary text is returned untouched.
+- **Session records are named before they are deleted.** `prune_sessions` removes a handoff
+  somebody wrote on the retention window at every session start; in a committed workspace that is
+  a `D` in a teammate's `git status` nobody asked for, and a failed `git diff --exit-code` in CI.
+  The sweep over `logs/` had named its files first since the release before; sessions had not.
+- **Four warnings were being deleted on their way out of the block.** Standalone notices are moved
+  to the end of the block for the prompt cache, and the fitter treats a bare line after a section
+  as that section's footnote — so a session-wide warning that merely sat behind the last section
+  was dropped with it, while `dropped` reported nothing at all. Measured on the corpus: log
+  expiry, session expiry, "source has changed since this index was built" and "25 of 576 file(s)
+  this index names no longer exist", gone in one firing from a block that looked complete.
+- **Three state files left everybody's diff.** `drift.json` is a function of HEAD, `.temps-swept`
+  is this machine's last sweep, and `notices.json` counts how often one person has been shown a
+  notice — so committing it let the first teammate who saw one silence it for the whole team. The
+  rule that already excluded two derived files stopped one short of the identical cases beside
+  them; the population is now declared and derived from the source instead of enumerated.
+- **`chamnan-explain-context` reads both shapes of its own log.** The writer began recording
+  `{whole, rank}` where it had written a plain size, and the reader was never taught; any
+  workspace with two shortened sections crashed it, which is every recent firing here.
+
 ## What's new in 1.30.0
 
 **Five new questions you can ask the repository, and the answers arrive faster than the last release
