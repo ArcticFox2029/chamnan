@@ -48778,6 +48778,52 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- the commonest line in every README is not a credential
+# 🐛 [2026-09-23, found by growing the corpus past its seed cases] `API_KEY=<your-api-key-here>`
+# was redacted by ALL SEVEN assignment carriers — bare, quoted, spaced, colon, rocket, flag and
+# YAML block. An exemption for it existed and was scoped to WEAK key names only, so the commonest
+# line in every quickstart in every README came back as `API_KEY=<REDACTED>`, destroying the
+# instruction it was giving.
+#
+# 🔴 A value wrapped in angle brackets is a placeholder WHATEVER the key is called: `<` and `>` are
+# in no issuer's alphabet and a shell reads `<` as redirection, so a credential cannot arrive in
+# that shape. Derived from the delimiters, not from a list of placeholder words.
+import redact as _ph  # noqa: E402
+
+_ph_carriers = {
+    "bare": "API_KEY=<your-api-key-here>",
+    "quoted": 'API_KEY="<your-api-key-here>"',
+    "spaced": "api_key = <your-api-key-here>",
+    "colon": "api_key: <your-api-key-here>",
+    "rocket": "'api_key' => '<your-api-key-here>'",
+    "flag": "--api-key <your-api-key-here>",
+    "yaml": "api_key: |\n  <your-api-key-here>",
+}
+_ph_hit = [k for k, v in _ph_carriers.items() if _ph.PLACEHOLDER in _ph.scrub(v)]
+check(f"A README PLACEHOLDER SURVIVES EVERY ASSIGNMENT CARRIER — {len(_ph_carriers)} of them",
+      _ph_hit == [], saw=_ph_hit)
+# 🐛 Two of the seven were left behind by the first fix, and the reason in the rocket rule was
+# that it passed group(2) — the QUOTE CHARACTER — to the helper as the value, so every question
+# that helper asks about a value was being asked about `'`.
+_ph_real = {
+    "bare": "API_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYzz",
+    "quoted": 'password = "tr0ub4dor-0123456789abcdefghij"',
+    "rocket": "'api_key' => 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLE'",
+    "flag": "--api-key AKIA_FIXTURE_ID1234",
+}
+_ph_missed = [k for k, v in _ph_real.items() if _ph.PLACEHOLDER not in _ph.scrub(v)]
+check("...and a real value in the same carrier is still redacted", _ph_missed == [],
+      saw=_ph_missed)
+# The delimiters are the rule. A value with a space inside the brackets is prose, and one with no
+# brackets is a value.
+check("...and the exemption is the DELIMITERS, not the words inside them",
+      _ph._is_an_angle_placeholder("<anything-at-all>")
+      and not _ph._is_an_angle_placeholder("<your key here>")
+      and not _ph._is_an_angle_placeholder("your-api-key-here"),
+      saw=[_ph._is_an_angle_placeholder(x) for x in
+           ("<anything-at-all>", "<your key here>", "your-api-key-here")])
+
 # ---------------------------------- one fixture, every adapter, the same contract
 # 🎯 [1.31, a second reader's #6] "Supports 22 hosts" is worth something only if all 22 can be
 # shown to keep the same behaviour contract. Each adapter has had its own checks; none of them
