@@ -63,13 +63,29 @@ def declarations(path):
     return out
 
 
+# 🐛 [2026-09-23] Caught live, minutes after this shipped: `git add .chamnan/tools/ask-acc5.sh`
+# raised the notice for a script that was being COMMITTED, not run. A script name is an invocation
+# only in command position — first word of a segment, or straight after an interpreter.
+_INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "dash", "ksh", "perl", "ruby",
+                 "node", "uv", "pipx", "poetry", "nohup", "caffeinate", "exec", "command"}
+_SEGMENT = re.compile(r"\s*(?:\|\||&&|[;|&\n])\s*")
+
+
 def _scripts_in(command):
-    """Every token of `command` that looks like a script being invoked."""
-    try:
-        words = shlex.split(command)
-    except ValueError:             # unbalanced quotes — fall back to whitespace
-        words = command.split()
-    return [w for w in words if _SCRIPT.search(w)]
+    """Every token of `command` that is a script being INVOKED, not merely named."""
+    found = []
+    for segment in _SEGMENT.split(command):
+        try:
+            words = shlex.split(segment)
+        except ValueError:         # unbalanced quotes — fall back to whitespace
+            words = segment.split()
+        for i, w in enumerate(words):
+            if not _SCRIPT.search(w):
+                continue
+            before = [x for x in words[:i] if not x.startswith("-") and "=" not in x]
+            if not before or pathlib.PurePath(before[-1]).name in _INTERPRETERS:
+                found.append(w)
+    return found
 
 
 def _resolve(word, root):

@@ -48734,6 +48734,15 @@ check("...and a script that declares nothing is never spoken about",
 check("...and a required flag is not satisfied by a LONGER flag that merely contains it",
       "--out" in _cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws),
       saw=_cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws)[:160])
+# 🐛 [2026-09-23] Caught live minutes after shipping: `git add .../ask-acc5.sh` raised the notice
+# for a script being COMMITTED. A name is an invocation only in command position.
+check("A SCRIPT MERELY NAMED AS AN ARGUMENT IS NOT AN INVOCATION",
+      _cn.advice("git add declares.py", _cn_ws) == ""
+      and _cn.advice("cat declares.py", _cn_ws) == "",
+      saw=_cn.advice("git add declares.py", _cn_ws))
+check("...and it is still caught after an interpreter, a cd, or an && ",
+      "--out" in _cn.advice("cd /x && python3 declares.py r.md", _cn_ws),
+      saw=_cn.advice("cd /x && python3 declares.py r.md", _cn_ws)[:120])
 check("a script can also redirect to the tool that does the whole job",
       "files the report" in _cn.advice("bash redirects.sh brief.md", _cn_ws),
       saw=_cn.advice("bash redirects.sh brief.md", _cn_ws)[:160])
