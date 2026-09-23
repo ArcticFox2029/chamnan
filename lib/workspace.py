@@ -2305,7 +2305,45 @@ IGNORE_LINES = [
     "# before the two research stores were split into per-section entries) and changes every time",
     "# any of them does, so committing it would put the whole corpus in the diff twice.",
     "state/store_index.json",
+    "",
+    # 🐛 [2026-09-24] Found by running chamnan against chamnan-corpus as an ordinary user would.
+    # The two rules above reason correctly -- a file that is a FUNCTION of the commit does not
+    # belong in the diff -- and then stop, one file short of the identical cases beside them. This
+    # package encourages committing the workspace, so every session start in a shared repository
+    # was producing a diff in files nobody edits by hand, and `notices.json` was worse than noise:
+    # it counts how many times a one-off piece of advice has been shown to THIS person, so sharing
+    # it means the first teammate to see a notice silences it for everybody.
+    #
+    # `drift.json` is `{\"head\": \"<sha>\", \"notice\": \"\"}` -- literally a function of HEAD, the
+    # same argument as churn-*.json one paragraph up. `.temps-swept` is a housekeeping timestamp
+    # for THIS machine's last sweep.
+    #
+    # Enumerating was the bug, so the set is declared below and a check derives the population from
+    # the source: a new `state/` writer that is in neither list fails it.
+    "state/drift.json",
+    "state/.temps-swept",
+    "state/notices.json",
 ]
+
+# Every path chamnan itself writes under `state/`, classified, because the list above was built by
+# enumeration three times and missed a sibling each time. DERIVED is a function of something else
+# and is rebuilt on demand; RECORDED is memory a team is meant to share, and committing it is the
+# entire reason the workspace lives beside the code. A `state/` write in the source that appears in
+# neither is a file nobody has decided about, which is how the three above were missed.
+DERIVED_STATE = (
+    "state/churn-*.json",           # a function of the commit
+    "state/store_index.json",       # rebuilt from the stores in ~30 ms
+    "state/drift.json",             # a function of HEAD
+    "state/.temps-swept",           # this machine's last sweep
+    "state/notices.json",           # how often THIS person has been shown a one-off notice
+)
+RECORDED_STATE = (
+    "state/written_artefacts.json", # what was written, and by which run
+    "state/scheduled.json",         # the schedule the team agreed
+    "state/gotcha_marks.json",      # lessons marked against a path
+    "state/tool_usage.json",        # which stores this workspace actually opens; fit.shrink ranks on it
+    "state/agent_model_mismatches.jsonl",
+)
 
 
 # Rules appended to .chamnan/.gitignore by the last `_mark_ignored` that changed it, so a caller can

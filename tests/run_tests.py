@@ -50067,6 +50067,66 @@ check("...and a contiguous token is still caught, which is what this must not re
       redact.scrub("token = ghp_EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234"))
 
 
+# ------------------- every state/ file the plugin writes has been DECIDED about, not enumerated
+# 🐛 [2026-09-24] Found by running chamnan against chamnan-corpus as an ordinary user would.
+# `.chamnan/.gitignore` excluded `state/churn-*.json` and `state/store_index.json` with a correct
+# argument — a file that is a FUNCTION of something else does not belong in a diff — and stopped
+# one file short of the identical cases beside them. This package encourages committing the
+# workspace, so `drift.json` (literally `{"head": "<sha>"}`), `.temps-swept` (this machine's last
+# sweep) and `notices.json` landed in every teammate's diff on every session start. `notices.json`
+# is worse than noise: it counts how often THIS person has been shown a one-off notice, so sharing
+# it lets the first teammate to see one silence it for everybody.
+#
+# Enumeration was the bug, so this derives the population from the source instead: every
+# `state/<name>` path any of lib/, bin/ or hooks/ writes must be in DERIVED_STATE or in
+# RECORDED_STATE, and a new writer in neither fails here.
+_ss_src = []
+for _ss_dir in ("lib", "bin", "hooks"):
+    for _ss_f in sorted((ROOT / _ss_dir).rglob("*")):
+        if _ss_f.is_file() and (_ss_f.suffix in (".py", "") and "__pycache__" not in str(_ss_f)):
+            try:
+                _ss_src.append(_ss_f.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+_ss_all = "\n".join(_ss_src)
+# Both spellings the codebase uses: a literal `state/x.json`, and `"state" / "x.json"` via pathlib.
+# `jsonl` BEFORE `json`, and a boundary after: the first spelling of this alternation matched the
+# `.json` prefix of `agent_model_mismatches.jsonl` and reported a file that does not exist. The
+# check fired on its own first run, which is the only reason that was caught rather than pinned.
+_ss_found = set(re.findall(r"state/([A-Za-z_.][\w.*-]*\.(?:jsonl|json))(?!\w)", _ss_all))
+_ss_found |= set(re.findall(r'"state"\s*/\s*"([A-Za-z_.][\w.*-]*)"', _ss_all))
+_ss_known = {n.split("/", 1)[1] for n in ws.DERIVED_STATE + ws.RECORDED_STATE}
+_ss_undecided = sorted(_ss_found - _ss_known)
+check("EVERY state/ FILE THE PLUGIN WRITES IS CLASSIFIED derived OR recorded",
+      not _ss_undecided, saw=_ss_undecided)
+check("...and nothing is in both lists, which would make the classification meaningless",
+      not (set(ws.DERIVED_STATE) & set(ws.RECORDED_STATE)))
+check("...and every derived one is actually in the rules written into the workspace",
+      [d for d in ws.DERIVED_STATE if d not in ws.IGNORE_LINES] == [],
+      saw=[d for d in ws.DERIVED_STATE if d not in ws.IGNORE_LINES])
+# The end-to-end half: a real workspace, and git's own answer rather than a string comparison.
+_ss_ws = Path(tempfile.mkdtemp(prefix="chamnan-state-ignore-")) / "r"
+(_ss_ws / ".git").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", "."], cwd=_ss_ws, capture_output=True)
+ws.ensure(_ss_ws)
+(_ss_ws / ".chamnan" / "state").mkdir(parents=True, exist_ok=True)
+for _ss_n in ("drift.json", "notices.json", ".temps-swept", "gotcha_marks.json"):
+    (_ss_ws / ".chamnan" / "state" / _ss_n).write_text("{}\n", encoding="utf-8")
+
+
+def _ss_ignored(rel):
+    return subprocess.run(["git", "check-ignore", "-q", rel],
+                          cwd=_ss_ws, capture_output=True).returncode == 0
+
+
+check("git itself ignores the per-machine state, in a workspace chamnan just created",
+      all(_ss_ignored(f".chamnan/state/{n}") for n in ("drift.json", "notices.json", ".temps-swept")),
+      saw={n: _ss_ignored(f".chamnan/state/{n}") for n in ("drift.json", "notices.json", ".temps-swept")})
+check("...and does NOT ignore the memory a team is meant to share",
+      not _ss_ignored(".chamnan/state/gotcha_marks.json"))
+_rmtree(_ss_ws.parent, ignore_errors=True)
+
+
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
 # reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all
