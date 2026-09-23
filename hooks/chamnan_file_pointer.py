@@ -160,8 +160,12 @@ def main():
     if not block:
         return 0
 
+    # "look" or "change": the distinction a second reader asked for, taken from the tool the host
+    # actually used rather than from anything this code decides. A field derived from a guess
+    # would be worse than no field, because a later reader cannot tell the two apart.
     pointer.note(wsdir, session_id, rel, hits, (time.time() - started) * 1000,
-                 actor=ws.actor(payload))
+                 actor=ws.actor(payload),
+                 why="look" if _tool == "Read" else "change")
     # 🐛 Every title in this block is the first line of a committed file, and none of it went
     # through the redactor. That made this the cheapest leak in the plugin to trigger: no command
     # to run and nothing to opt into, just an ordinary `Read` of any file a stored lesson happens

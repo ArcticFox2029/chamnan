@@ -49078,6 +49078,31 @@ _tel_undoc = [k for k in ("pointer_triggered", "costly_named", "session")
 check("...and each new field is documented where it is written", _tel_undoc == [], saw=_tel_undoc)
 _rmtree(_tel_dir.parent, ignore_errors=True)
 
+# 🎯 [1.31 queue item 3, the third field] The two above are the subagent's half. The third a
+# second reader asked for is about the FILE POINTER: an open is an undifferentiated event until
+# something says why, and "the agent opened the file anyway" has two completely different
+# meanings. A `Read` of something the index could have answered is the case worth counting; an
+# `Edit` is a declared intent to change that file, and opening a file you are about to edit is
+# correct behaviour that must never be scored as the pointer failing.
+#
+# 🔴 The reason is the TOOL the host used — taken, never inferred. A field derived from a guess
+# would be worse than no field, because a later reader cannot tell a guess from an observation.
+_why_src = (ROOT / "hooks" / "chamnan_file_pointer.py").read_text(encoding="utf-8")
+check("the pointer takes its reason from the tool that fired, not from a guess",
+      'why="look" if _tool == "Read" else "change"' in _why_src,
+      saw="the reason is not derived from the tool name")
+_why_lib = (ROOT / "lib" / "pointer.py").read_text(encoding="utf-8")
+check("...and the record carries it", 'rec["why"] = why' in _why_lib)
+# The two readings have to be DIFFERENT, or the field records nothing. Derived from the source so
+# a later edit that collapses them to one value fails here rather than in six weeks of flat data.
+# 🐛 [2026-09-23] The first version matched `why="([a-z]+)"`, which finds the FIRST branch of
+# a conditional and not the second — `why="look" if ... else "change"` reported one value and
+# failed a correct implementation. Read the whole expression, then every string in it.
+_why_expr = next((l for l in _why_src.splitlines() if "why=" in l and "_tool ==" in l), "")
+_why_values = set(re.findall(r'"([a-z]+)"', _why_expr)) - {"Read"}
+check("...and the two readings are distinct, so the field can separate them",
+      len(_why_values) >= 2, saw=sorted(_why_values))
+
 # ---------------------------------- an edit that lands in the middle of a running program
 # ENFORCES: memory/rules/the-full-gate-runs-twice.md
 # 🐛 [2026-09-23] Twice in one hour, the second an hour AFTER the first was recorded as a lesson
