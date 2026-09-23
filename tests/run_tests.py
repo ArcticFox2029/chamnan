@@ -49685,7 +49685,7 @@ _ex = Path(tempfile.mkdtemp(prefix="chamnan-explain-")) / "r"
 (_ex / ".git").mkdir(parents=True)
 ws.ensure(_ex)
 (_ex / ".chamnan" / "logs").mkdir(parents=True, exist_ok=True)
-# 🐛 [2026-09-24] Both shapes of `sfull` are in this fixture on purpose. It was written as a bare
+# 🐛 [2026-09-24] (self-measured) Both shapes of `sfull` are in this fixture on purpose. It was written as a bare
 # int and became `{"whole", "rank"}` when the fitter's ranking was recorded beside the size; old
 # records cannot be backfilled, so one log holds both forever. The fixture pinned only the int, the
 # reader was never taught the dict, and on real data it died at the sort with
@@ -49931,7 +49931,7 @@ shutil.rmtree(_ac_ws.parent, ignore_errors=True)
 
 
 # ------------------- a session-wide warning is not the last section's footnote, and was deleted as one
-# 🐛 [2026-09-24] Measured on chamnan-corpus, not imagined. `reorder` moves every standalone `_⚠`
+# 🐛 [2026-09-24] (self-measured) Measured on chamnan-corpus, not imagined. `reorder` moves every standalone `_⚠`
 # notice to the END of the block -- correct, and done for the prompt cache. `_followers` treats
 # every bare line after a section as that section's footnote -- correct, and done so a dropped
 # index does not leave "Full detail lives in MAP.md" pointing at nothing. Put together, a notice
@@ -49990,7 +49990,7 @@ check("with reorder never called, _followers is exactly what it was",
 
 
 # ------------------------------------ the sweep that deletes a person's handoff now names it first
-# 🐛 [2026-09-24] `expiring_logs` exists because `prune_logs` was deleting a dated `.md` note
+# 🐛 [2026-09-24] (self-measured) `expiring_logs` exists because `prune_logs` was deleting a dated `.md` note
 # somebody had typed, in silence, and the fix was to NAME it once before it goes. `prune_sessions`
 # deletes `sessions/*.md` -- every one written by a person, in a directory this plugin tells people
 # to commit -- and never got the same treatment, though `sessions.prune`'s own comment calls a
@@ -50038,7 +50038,7 @@ _rmtree(_se.parent, ignore_errors=True)
 
 
 # ------------------------- a credential the SOURCE split in half, and the language puts back together
-# 🐛 [2026-09-24] chamnan-corpus, case A9. A deploy key written the way a formatter leaves it --
+# 🐛 [2026-09-24] (self-measured) chamnan-corpus, case A9. A deploy key written the way a formatter leaves it --
 # `("ghp_"\n "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234")` -- reached `MAP.md` whole. Every prefix rule in
 # redact.py requires the prefix and the body to be CONTIGUOUS, and here they are two quoted
 # strings that Python, C and every human reader join back together. The file this plugin
@@ -50068,7 +50068,8 @@ check("...and a contiguous token is still caught, which is what this must not re
 
 
 # ------------------- every state/ file the plugin writes has been DECIDED about, not enumerated
-# 🐛 [2026-09-24] Found by running chamnan against chamnan-corpus as an ordinary user would.
+# 🐛 [2026-09-24] (self-measured) Found by running chamnan against chamnan-corpus as an
+# ordinary user would.
 # `.chamnan/.gitignore` excluded `state/churn-*.json` and `state/store_index.json` with a correct
 # argument — a file that is a FUNCTION of something else does not belong in a diff — and stopped
 # one file short of the identical cases beside them. This package encourages committing the

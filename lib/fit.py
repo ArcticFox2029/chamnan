@@ -236,7 +236,7 @@ def reorder(parts):
                 return (2, i)
         return (1, 0)
 
-    # 🐛 [2026-09-24] Recorded here because this is the only place that KNOWS it. `_followers`
+    # 🐛 [2026-09-24] (self-measured) Recorded here because this is the only place that KNOWS it. `_followers`
     # treats every bare line after a section as that section's footnote, which was true until this
     # function started moving standalone notices to the end of the block -- and a notice sitting
     # after the last section then reads as that section's footnote to code that can only see

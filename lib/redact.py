@@ -2623,7 +2623,7 @@ _SPLIT_JOIN = _lazy(lambda: re.compile(
 def _unmask_split_credentials(text):
     """`text` with adjacent string literals joined, so a value the source splits is seen whole.
 
-    🐛 [2026-09-24] Found by running chamnan over chamnan-corpus, case A9. A deploy key written the
+    🐛 [2026-09-24] (self-measured) Found by running chamnan over chamnan-corpus, case A9. A deploy key written the
     way a formatter leaves it -- `("ghp_"\n "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234")` -- reached
     `MAP.md` complete, because every prefix rule in this module requires the prefix and the body to
     be CONTIGUOUS and here they are two quoted strings. The file the plugin encourages committing

@@ -525,7 +525,7 @@ def _age(path):
 def expiring(root, days, within_days=1.0):
     """Records that `prune` will delete within `within_days`, newest first. Names, never paths.
 
-    🐛 [2026-09-24] `expiring_logs` exists because `prune_logs` was silently deleting a dated `.md`
+    🐛 [2026-09-24] (self-measured) `expiring_logs` exists because `prune_logs` was silently deleting a dated `.md`
     note somebody had typed, and its fix was to NAME the file once before it goes. `prune_sessions`
     deletes `sessions/*.md` -- every one of which is a handoff a person wrote, in a directory this
     plugin encourages committing -- and never got the same treatment. `prune`'s own comment already

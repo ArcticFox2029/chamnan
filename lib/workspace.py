@@ -2306,7 +2306,8 @@ IGNORE_LINES = [
     "# any of them does, so committing it would put the whole corpus in the diff twice.",
     "state/store_index.json",
     "",
-    # 🐛 [2026-09-24] Found by running chamnan against chamnan-corpus as an ordinary user would.
+    # 🐛 [2026-09-24] (self-measured) Found by running chamnan against chamnan-corpus as an
+    # ordinary user would.
     # The two rules above reason correctly -- a file that is a FUNCTION of the commit does not
     # belong in the diff -- and then stop, one file short of the identical cases beside them. This
     # package encourages committing the workspace, so every session start in a shared repository
