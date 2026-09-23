@@ -1592,7 +1592,9 @@ def main():
     # Where the last sitting stopped, from the edit ledger that is already on disk. This is the one
     # thing a resume is actually wanted FOR, and a resume pays for it by re-transmitting the entire
     # conversation: measured at 843,816-859,794 cache_WRITE tokens on the first request of three
-    # real resumes, at 12.5x the cache_read price, to re-send a transcript that never left the
+    # real resumes, at 12.5x the cache_read price — 25x on Opus 5.5 and 50x on Fable 5.1, whose
+    # cache reads are priced at 5% and 2.5% of input (corrected 2026-09-23) — to re-send a
+    # transcript that never left the
     # machine. The line below carries the same fact for 37 tokens.
     #
     # It states where the work was and stops there. An earlier version of this advised the reader to

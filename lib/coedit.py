@@ -345,7 +345,10 @@ def last_sitting(wsdir, now=None):
 
     Why this exists, measured rather than assumed. Resuming a long conversation re-sends the whole
     transcript, and on a resume the cache has expired -- so every token is charged at the
-    cache_WRITE price, which is 12.5x cache_read. Three real resumes of one repository cost 843,816,
+    cache_WRITE price, which is 12.5x cache_read on most models and **25x on Opus 5.5, 50x on
+    Fable 5.1** — the two whose cache READ is priced at 5% and 2.5% of input rather than 10%
+    (corrected 2026-09-23; Opus 5.5 has been the default since 2026-09-22, so the figure below
+    understates a resume on it by half). Three real resumes of one repository cost 843,816,
     849,857 and 859,794 tokens on their FIRST request, before the user had said anything. The
     transcript those tokens re-transmit is 161 MB sitting on the same disk as this ledger.
 
