@@ -19,6 +19,30 @@ already reports the last released number while running newer code.
 
 ---
 
+## Unreleased
+
+**Three recorders that were writing nothing, and the lessons already in the code became readable.**
+
+- **The failure recorder now listens where failures arrive.** `chamnan_tool_failed.py` had been
+  taught to read a non-zero exit code and stayed registered on `PostToolUseFailure` alone — an
+  event that fires when a TOOL CALL fails, not when a command exits 1. A shell command that exits
+  non-zero is a tool call that succeeded and reported a failure, so it arrives on `PostToolUse`,
+  and the branch written for it could never run. `logs/failures.jsonl` did not exist at all, and
+  everything built on top of it had no input.
+- **`secrets.toml` is refused by name.** `secrets.yml` and `secrets.yaml` were listed and the
+  third spelling was not — the one Streamlit puts live API keys in. The entry is the stem now,
+  so every config spelling is covered while `secrets.py` stays an ordinary module.
+- **A `statistic/` site**, four pages built from the workspace's own logs: what the plugin
+  changed about a period's token weight, which features fire and how often, what the redactor
+  catches and what no pattern can, and an editor for the weights. No money and no model names on
+  any page, because the plugin does not know which model a reader runs. Nothing is generated into
+  the repository — a fresh clone opens to panels that name the file they read and say it is
+  missing, which is the honest first view.
+- **`tools/gotcha_index.py`** reads every recorded lesson in the tree instead of counting them.
+  3,118 of them across 533 files, with the file, the line, the date and what went wrong.
+- **`bin/chamnan-doctor`** is pinned to LF, so a Windows checkout under `core.autocrlf=true` does
+  not receive a shebang no shell recognises.
+
 ## What's new in 1.30.0
 
 **Five new questions you can ask the repository, and the answers arrive faster than the last release
