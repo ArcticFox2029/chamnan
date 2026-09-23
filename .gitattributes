@@ -27,6 +27,7 @@ bin/chamnan-impact      text eol=lf
 bin/chamnan-map         text eol=lf
 bin/chamnan-explain-context        text eol=lf
 bin/chamnan-open        text eol=lf
+bin/chamnan-gotcha      text eol=lf
 bin/chamnan-peek        text eol=lf
 bin/chamnan-promote     text eol=lf
 bin/chamnan-report      text eol=lf

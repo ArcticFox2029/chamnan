@@ -99,13 +99,13 @@ def _outside_targets(command, root):
     candidates = []
     for m in _WRITERS.finditer(command):
         candidates += _PATHISH.findall(_QUOTED.sub(" ", m.group(2)))
-    # 🐛 A redirect INSIDE a quoted string is text, not a redirect: `echo 'hi > /etc/passwd'`
+    # 🐛 [2026-09-23] A redirect INSIDE a quoted string is text, not a redirect: `echo 'hi > /etc/passwd'`
     # writes nothing. Quoted regions are masked to spaces so offsets survive, the operator is found
     # in the masked copy, and the target is then read from the ORIGINAL — because a quoted PATH,
     # `echo x > "/etc/hosts"`, is a real write and must still be seen.
     masked = _QUOTED.sub(lambda m: " " * len(m.group(0)), command)
     for m in _REDIRECT_OP.finditer(masked):
-        # 🐛 The masked copy is searched for the OPERATOR only: a quoted target is spaces there, so
+        # 🐛 [2026-09-23] The masked copy is searched for the OPERATOR only: a quoted target is spaces there, so
         # a pattern that also demands a target finds nothing and `echo x > "/etc/hosts"` goes
         # unseen. The target is then taken from the original, quotes and all.
         raw = re.sub(r"^>{1,2}\s*", "", command[m.start():]).split()

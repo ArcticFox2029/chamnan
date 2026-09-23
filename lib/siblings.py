@@ -89,7 +89,7 @@ def advice(tool, tool_input, root):
     target = tool_input.get("file_path") or ""
     if not target:
         return ""
-    # 🐛 A replace_all edit is already the whole-set answer for THIS file, but says nothing about
+    # 🐛 [2026-09-23] A replace_all edit is already the whole-set answer for THIS file, but says nothing about
     # the files beside it — so it is checked exactly like any other.
     hits = also_in(needle, target, root)
     if not hits:

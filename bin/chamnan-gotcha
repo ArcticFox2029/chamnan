@@ -22,6 +22,11 @@ import datetime
 import pathlib
 import sys
 
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import workspace as ws  # noqa: E402
+
 MARK = "\U0001F41B"
 # How a line comment starts, per language. A file whose kind is not here is refused rather than
 # commented wrongly: a note that does not parse is a syntax error somebody else has to find.
@@ -77,7 +82,9 @@ def main():
     when = a.date or datetime.date.today().isoformat()
     body = _wrap(f"{MARK} [{when}] {a.lesson}", f"{indent}{marker} ")
     lines[at:at] = [b + "\n" for b in body]
-    path.write_text("".join(lines), encoding="utf-8")
+    # Through the atomic writer, like every other write that ships: a plain `write_text` truncates
+    # on open, so a reader arriving mid-write gets a short file and a crash leaves one behind.
+    ws.atomic_write_text(path, "".join(lines), encoding="utf-8")
     print(f"chamnan-gotcha: recorded at {path}:{at + 1}")
     print(f"  {body[0].strip()[:100]}")
     print("  bugnotes.py will surface it the next time anything edits that line.")

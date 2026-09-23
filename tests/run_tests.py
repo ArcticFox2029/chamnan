@@ -47854,7 +47854,10 @@ _T_SPAWN96 = {"run", "Popen", "call", "check_call", "check_output"}
 # The module, however it was imported. A call on anything else named `run` is not a process.
 _T_MODULES96 = {"subprocess", "sp", "_sp", "_sp89"}
 # What an argv head may be, and why. `sys.executable` is this interpreter; a name is resolved below.
-_T_ALLOWED_CONST96 = {"git"}
+# `ps` added 2026-09-23 with the README row that discloses it: `lib/inuse.py` asks whether a
+# file is being executed before an edit lands in the middle of it. A read of the process
+# table, never given anything from the repository.
+_T_ALLOWED_CONST96 = {"git", "ps"}
 
 _t_spawns96, _t_unknown96 = [], []
 for _t_f96 in _t_files96:
@@ -48438,7 +48441,12 @@ def _ho_fire(gap_hours, expired=True):
 
 
 _ho_ADVICE = "picks between the two before a session starts"
-_ho_short, _ho_long = _ho_fire(4), _ho_fire(14)
+# 🐛 [2026-09-23] `_ho_fire(14)` stopped advising and the check read as a regression. It is not:
+# the owner refined the threshold on 2026-09-23 to BOTH conditions — a new day AND a gap past the
+# cache window — so a 14-hour gap measured from late afternoon lands earlier the SAME day and is
+# correctly silent. 30 hours cannot land on the same day whatever the clock says, which is what a
+# fixture for a day-boundary rule has to guarantee rather than assume.
+_ho_short, _ho_long = _ho_fire(4), _ho_fire(30)
 check("a stale resume is still told what it cost", "to write again" in _ho_long)
 check("...and a night apart is told what to do about it", _ho_ADVICE in _ho_long)
 check("...while one sitting that ran past midnight is told the cost and nothing else",
@@ -49306,15 +49314,28 @@ ws.ensure(_rc_ws)
     "- `apply_promo_code(order)` — works out the discount a coupon is worth\n"
     "- `no_description_here(x)`\n", encoding="utf-8")
 _rc_sym = _rc._symbol_entries(_rc_ws / ".chamnan")
-check("every symbol the index names becomes an entry, described or not", len(_rc_sym) == 2,
+# 🐛 [2026-09-23] This asserted "described or not" and `_symbol_entries` had stopped indexing the
+# undescribed ones hours earlier: indexing all 3,302 put the index at **119% of the files it is
+# built from**, and an index larger than its documents is not an index. The cut is not arbitrary —
+# this feature answers "what is the function that DOES x", which a bare identifier cannot answer,
+# and searching by name is what `chamnan-where` already did. 1,081 of 3,302 rows carry a
+# description; those are the ones that add the capability.
+#
+# 🔴 It also read `_rc_sym[1]` with no default, so the mismatch did not FAIL — it raised
+# IndexError and took the whole 17-minute gate with it, which is the bare-`next()` lesson in
+# another shape. Every index below is guarded.
+_rc_described = [e for e in _rc_sym if "apply_promo_code" in e["title"]]
+_rc_bare = [e for e in _rc_sym if "no_description_here" in e["title"]]
+check("A SYMBOL WITH A DESCRIPTION BECOMES AN ENTRY", len(_rc_described) == 1,
       saw=[e["title"] for e in _rc_sym])
+check("...and one WITHOUT a description does not, or the index outgrows its own sources",
+      _rc_bare == [], saw=[e["title"] for e in _rc_sym])
 check("...each one pointing at the file it is defined in",
       all(e["path"] == "src/billing.py" for e in _rc_sym), saw=[e["path"] for e in _rc_sym])
-check("...and a described one is findable by its DESCRIPTION, not only its name",
-      "discount" in _rc_sym[0]["body"] and "coupon" in _rc_sym[0]["body"],
-      saw=sorted(_rc_sym[0]["body"]))
-check("...while an undescribed one is still findable by the parts of its name",
-      "description" in _rc_sym[1]["body"], saw=sorted(_rc_sym[1]["body"]))
+check("...and it is findable by its DESCRIPTION, not only its name",
+      bool(_rc_described) and "discount" in _rc_described[0]["body"]
+      and "coupon" in _rc_described[0]["body"],
+      saw=sorted(_rc_described[0]["body"]) if _rc_described else "no described entry at all")
 # Weight is the floor on purpose: a rule that governs a function outranks the function's own row.
 check("a symbol never outranks a recorded rule",
       all(e["weight"] <= min(w for _f, _k, w in _rc.KINDS) for e in _rc_sym),

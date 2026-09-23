@@ -361,8 +361,8 @@ def _symbol_entries(ws):
     index is rebuilt only when asked.
 
     Measured on this repository: MAP.md is 510 KB, 3,302 symbols, and **1,081 of them (33%) carry
-    a description**. The other two thirds are indexed on their name alone, which the compound
-    splitting in `terms()` makes searchable — `apply_promo_code` answers to `promo`.
+    a description**. Only those are indexed — see the 🐛 below. The other two thirds would
+    contribute a name, and searching by name is what `chamnan-where` already answers.
 
     Weight 1.0, the floor. A recorded decision that mentions a function is about that decision; the
     function's own row is a pointer to code, which is a weaker answer to "what do we already know
