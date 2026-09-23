@@ -2282,7 +2282,12 @@ def _render(files, root):
     # per-file relationship listing in front of a session that was never going to touch those
     # files is exactly the cost this plugin exists to remove. It is read at the moment of changing
     # one path, by grepping for that path.
-    impact_section = impact_mod.render(impact_mod.build(files))
+    # Tier 3 of the test mapping: a layout this repository declares for itself, for the projects
+    # whose tests neither import what they cover nor follow a naming convention anybody would
+    # recognise. Empty for almost everybody, and it has to be, because a default here would be
+    # this project's conventions imposed on somebody else's tree.
+    impact_section = impact_mod.render(
+        impact_mod.build(files, ws.load_config(root).get("test_patterns")))
     if impact_section:
         lines += [impact_section, ""]
 

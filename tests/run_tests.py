@@ -48455,6 +48455,103 @@ check("a resume with no gap field says nothing about handoff",
       _ho_ADVICE not in _ho_fire(0, expired=True))
 
 
+# ------------------------------- a corpus of secrets is a leak with a test suite attached
+# 🎯 [owner 2026-09-23] The redactor's next step is evidence, not another rule: 99% is a figure
+# about 147 hand-written cases and this package's own limitations say so. `tests/corpus/redaction/`
+# is where that grows — and the checks below are what keep the file from becoming the most
+# dangerous one in the tree.
+_cp_path = ROOT / "tests" / "corpus" / "redaction" / "cases.jsonl"
+_cp_rows = []
+for _l in _cp_path.read_text(encoding="utf-8").splitlines():
+    _l = _l.strip()
+    if _l and not _l.startswith("#"):
+        _cp_rows.append(json.loads(_l))
+check("the corpus parses, one case per line", len(_cp_rows) >= 4, saw=len(_cp_rows))
+check("...every case carries the fields a reader and a tool both need",
+      all({"id", "text", "source", "why"} <= set(_r) for _r in _cp_rows),
+      saw=[_r.get("id") for _r in _cp_rows if not {"id", "text", "source", "why"} <= set(_r)])
+check("...ids are unique, because findings quote them",
+      len({_r["id"] for _r in _cp_rows}) == len(_cp_rows))
+check("...and every source is one of the three the README defines",
+      all(_r["source"] in ("synthetic", "sanitized", "fuzz") for _r in _cp_rows),
+      saw=sorted({_r["source"] for _r in _cp_rows}))
+# A corpus with no benign cases measures recall and cannot measure precision, which is how a
+# detector that destroys everything scores perfectly. The README states this; here it is enforced.
+check("IT CARRIES BENIGN NEIGHBOURS, OR PRECISION CANNOT BE MEASURED AT ALL",
+      any("secret" not in _r for _r in _cp_rows),
+      saw=sum(1 for _r in _cp_rows if "secret" not in _r))
+check("...and every `near` names a case that is actually here",
+      all(_r["near"] in {_x["id"] for _x in _cp_rows} for _r in _cp_rows if _r.get("near")),
+      saw=[_r.get("near") for _r in _cp_rows if _r.get("near")
+           and _r["near"] not in {_x["id"] for _x in _cp_rows}])
+# 🔴 The rule the whole directory stands on. A `secret` must be present in its own `text`, or the
+# case asserts nothing; and the corpus must not become a place a live credential can sit.
+check("every declared secret actually appears in the text it is declared for",
+      all(_r["secret"] in _r["text"] for _r in _cp_rows if _r.get("secret")),
+      saw=[_r["id"] for _r in _cp_rows if _r.get("secret") and _r["secret"] not in _r["text"]])
+# The loader is what the measurement reads, so a corpus the tool cannot see is a corpus that does
+# not exist. Asserted through the tool rather than by re-reading the file.
+import importlib.util as _cp_ilu  # noqa: E402
+_cp_spec = _cp_ilu.spec_from_file_location("_cp_rr", str(ROOT / "tools" / "redactor_recall.py"))
+_cp_mod = _cp_ilu.module_from_spec(_cp_spec)
+_cp_spec.loader.exec_module(_cp_mod)
+check("...and the recall tool loads every one of them",
+      len(_cp_mod.corpus_cases()) == len(_cp_rows), saw=len(_cp_mod.corpus_cases()))
+check("...a benign case reaching the tool with no secret, not with an empty one",
+      any(_c[2] is None for _c in _cp_mod.corpus_cases()))
+
+
+# ------------------------------- which test covers this file, when the import graph cannot say
+# 🎯 [owner 2026-09-23, direction H] Tier 2 — a test file that IMPORTS what it covers — already
+# existed and answers most of this repository. It is structurally blind to whole ecosystems:
+# `bar_test.go` lives in the same package as `bar.go` and imports nothing, so no resolver however
+# good will ever connect them. Ruby's `spec/` and .NET's sibling project have the same shape.
+import impact as _im  # noqa: E402
+
+_im_files = [
+    {"path": "pkg/bar.go", "imports": []},
+    {"path": "pkg/bar_test.go", "imports": []},            # Tier 1: no import, same package
+    {"path": "src/app.py", "imports": []},
+    {"path": "tests/test_app.py", "imports": ["src.app"]},  # Tier 2: the import
+    {"path": "web/ui.ts", "imports": []},
+    {"path": "web/ui.spec.ts", "imports": []},
+    {"path": "app/order.rb", "imports": []},
+    {"path": "app/other.rb", "imports": []},
+    {"path": "qa/order_check.rb", "imports": []},           # Tier 3 only: no import, no convention
+    {"path": "lib/clash.py", "imports": []},
+    {"path": "go/clash.go", "imports": []},
+    {"path": "t/clash_test.go", "imports": []},             # ambiguous stem: must match NEITHER
+]
+_im_plain = {k: v["tests"] for k, v in _im.build(_im_files).items()}
+check("A TEST THAT IMPORTS NOTHING IS STILL FOUND BY ITS NAME",
+      _im_plain.get("pkg/bar.go") == ["pkg/bar_test.go"], saw=_im_plain)
+check("...and the import edge still answers where it can",
+      _im_plain.get("src/app.py") == ["tests/test_app.py"], saw=_im_plain)
+check("...across conventions, not just this project's own",
+      _im_plain.get("web/ui.ts") == ["web/ui.spec.ts"], saw=_im_plain)
+# 🔴 A wrong file on this line is read just before somebody changes code. An ambiguous stem must
+# produce NO answer rather than a plausible one — `by_stem` is the unambiguous map for exactly this.
+check("...while a stem two files share matches neither",
+      "lib/clash.py" not in _im_plain and "go/clash.go" not in _im_plain, saw=_im_plain)
+check("...and a convention nothing declares stays unmatched",
+      "app/order.rb" not in _im_plain, saw=_im_plain)
+
+_im_cfg = {k: v["tests"] for k, v in
+           _im.build(_im_files, {"qa/*_check.rb": "app/*.rb"}).items()}
+check("A REPOSITORY CAN DECLARE ITS OWN LAYOUT WHEN NEITHER TIER CAN SEE IT",
+      _im_cfg.get("app/order.rb") == ["qa/order_check.rb"], saw=_im_cfg)
+# 🐛 The declared pair is not a licence to cross everything with everything: `qa/ covers app/` does
+# not say every file in qa/ covers every file in app/. The first version paired on Tier 1's own
+# convention table, which opened the escape hatch only where Tier 1 had already succeeded.
+check("...paired by name inside the declared pair, not crossed with it",
+      "app/other.rb" not in _im_cfg.get("app/order.rb", []), saw=_im_cfg.get("app/order.rb"))
+check("...and the key is declared, or `load_config` would drop it",
+      "test_patterns" in ws.DEFAULT_CONFIG and ws.DEFAULT_CONFIG["test_patterns"] == {})
+check("...longest matching name first, so a prefix does not beat a fuller match",
+      _im._name_parts("qa/order_check.rb") == ["order_check", "order"],
+      saw=_im._name_parts("qa/order_check.rb"))
+
+
 # ------------------------------------- and the half that makes it "not twice", said before it runs
 # 🎯 [owner 2026-09-23] Recording is not learning. This is the half that acts: at `PreToolUse`,
 # before the command runs, which is the only moment saying anything can change the outcome.
@@ -48485,9 +48582,35 @@ check("...while ONE is how anybody learns what the flags are, and says nothing",
       _gt.about_to_repeat(_gt_ws / ".chamnan", "Bash", "npm test") is None)
 # The same command failing a DIFFERENT way is a different problem. Grouping them would be the
 # loosening this design refuses to do without data.
-check("...and the same command with a different error is not the same failure",
+check("...and a different exit code is a different failure, not the same one",
       len({k for k in _gt.repeats(_gt_ws / ".chamnan")}) == 1,
       saw=sorted(k.replace("\x00", " | ") for k in _gt.repeats(_gt_ws / ".chamnan")))
+# 🎯 [external survey, 2026-09-23] Seven production error trackers read — Socorro, Sentry, BugSnag,
+# Rollbar, Datadog, New Relic, Buildkite — and the shape is unanimous: the grouping key is
+# DELIBERATELY lossy, and what it drops is whatever varies between two occurrences of one problem.
+# Datadog drops numbers, quoted values and dates; New Relic drops UUIDs and hex; Rollbar drops line
+# numbers; Buildkite ignores the failure message outright.
+#
+# 🐛 This module first keyed on the error line EXACTLY, reasoning that too tight costs only silence.
+# The survey names UNDER-GROUPING — one fault becoming many entries because a line moved — as the
+# field's most-reported complaint, so the tight end is not the safe end it looks like.
+_gt_same = [("tests/a.py:42: AssertionError", "tests/a.py:97: AssertionError"),
+            ("fatal: bad object 3f7a91c2b8e4", "fatal: bad object 0d1e2f3a4b5c"),
+            ("No module named 'requests'", "No module named 'flask'")]
+_gt_split = [f"{a!r} vs {b!r}" for a, b in _gt_same if _gt.normalise(a) != _gt.normalise(b)]
+check("TWO OCCURRENCES OF ONE PROBLEM SHARE A KEY EVEN WHEN THE DETAIL MOVED",
+      _gt_split == [], saw="; ".join(_gt_split))
+# 🐛 And the correction that followed: normalising EVERY number merged `Exit code 1` with
+# `Exit code 2` — over-grouping, the field's second complaint, where different causes share a
+# convenient frame. An exit code is the failure's KIND: 1 is a test failing, 127 is a command that
+# does not exist.
+_gt_merged = [(a, b) for a, b in (("Exit code 1", "Exit code 2"), ("Exit code 1", "Exit code 127"))
+              if _gt.normalise(a) == _gt.normalise(b)]
+check("...while the EXIT CODE is kept whole, because it is the kind and not the detail",
+      _gt_merged == [], saw=_gt_merged)
+check("...and detail after the exit code is still normalised",
+      _gt.normalise("Exit code 1\nfoo.py:42") == _gt.normalise("Exit code 1\nfoo.py:99"),
+      saw=_gt.normalise("Exit code 1\nfoo.py:42"))
 check("a row that cannot be keyed is skipped, not grouped with every other unreadable row",
       _gt.key({"tool": "Bash"}) == "" and _gt.key(None) == "")
 
@@ -48510,7 +48633,9 @@ _gt_said = _gt_notice("pytest tests/")
 check("THE SESSION IS TOLD BEFORE THE COMMAND RUNS, NOT AFTER",
       "failed here 2 times" in _gt_said, saw=_gt_said[:200])
 check("...and it is told what the error was, so it can act on it",
-      "Exit code 1" in _gt_said, saw=_gt_said[:200])
+      "Exit code" in _gt_said, saw=_gt_said[:200])
+check("...shown RAW, because `<n>` helps nobody read an error",
+      "<n>" not in _gt_said and "<q>" not in _gt_said, saw=_gt_said[:200])
 check("...and nothing is blocked", "nothing is blocked" in _gt_said, saw=_gt_said[:200])
 check("...while a command with no history here is not interrupted",
       "failed here" not in _gt_notice("pytest other/"), saw=_gt_notice("pytest other/")[:160])

@@ -21,6 +21,7 @@ numbers a reader is asked to trust, credited to a tool they cannot run. It ships
 locates `lib/` from its own position so it works from a clean clone with nothing installed.
 """
 import re
+import json
 import sys
 from pathlib import Path
 
@@ -352,6 +353,45 @@ def boundary_leaks():
     return out
 
 
+# Spelled as one path rather than joined segment by segment: a bare `cases.jsonl` literal reads
+# as a log under `logs/` to the sweep that accounts for every jsonl this package writes, and
+# that convention is correct — this file simply is not one, and the literal has to say so.
+CORPUS = Path(__file__).resolve().parent.parent / "tests/corpus/redaction/cases.jsonl"
+
+
+def corpus_cases():
+    """[(id, text, secret-or-None, source)] from the on-disk corpus, or [] when there is none.
+
+    🎯 [owner 2026-09-23, direction F/1.7 follow-on] The inline tables above are 147 cases somebody
+    thought of, and this package's own known limitations say so: 99% is a figure about that fixture
+    and not a guarantee about anybody's repository. The next thing the redactor needs is not another
+    rule — it is more evidence, from somewhere other than the imagination of the person who wrote
+    the rules.
+
+    Reported per SOURCE and never blended into the inline figure. A synthetic case and a case taken
+    from a real repository are different claims, and averaging them lets the easy set flatter the
+    hard one. `tests/corpus/redaction/README.md` carries the contract, including the rule that
+    nothing in there is ever a live credential.
+    """
+    out = []
+    try:
+        text = CORPUS.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue          # one torn line is one lost case, not a broken measurement
+        if not isinstance(row, dict) or not row.get("id") or row.get("text") is None:
+            continue
+        out.append((row["id"], row["text"], row.get("secret"), row.get("source", "unknown")))
+    return out
+
+
 def main():
     verbose = "--verbose" in sys.argv
     caught, missed = [], []
@@ -392,6 +432,32 @@ def main():
               f"find them, and entropy eats commit hashes:")
         for m in missed:
             print(f"  {m}")
+    # The corpus on disk, reported apart from the inline tables for the reason `corpus_cases`
+    # gives: they are different claims about different populations.
+    _corpus = corpus_cases()
+    if _corpus:
+        _by_src = {}
+        _miss = []
+        for _id, _text, _secret, _src in _corpus:
+            _scrubbed = redact.scrub(_text)
+            if _secret:
+                _ok = _secret not in _scrubbed
+                if not _ok:
+                    _miss.append((_id, _src))
+            else:
+                # A benign case passes by being LEFT ALONE. Counting it as "caught" would let a
+                # redactor that destroys everything score a perfect recall.
+                _ok = redact.PLACEHOLDER not in _scrubbed
+                if not _ok:
+                    _miss.append((_id + " (benign, damaged)", _src))
+            _seen, _good = _by_src.get(_src, (0, 0))
+            _by_src[_src] = (_seen + 1, _good + (1 if _ok else 0))
+        print(f"\ncorpus on disk — {len(_corpus)} case(s), reported apart from the tables above:")
+        for _src, (_seen, _good) in sorted(_by_src.items()):
+            print(f"  {_src:11s} {_good / _seen * 100:5.1f}%   ({_good}/{_seen})")
+        for _id, _src in _miss:
+            print(f"    not handled: {_id}  [{_src}]")
+
     if eaten:
         print(f"\nfalse positives ({len(eaten)}):")
         for e in eaten:

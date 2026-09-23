@@ -19,6 +19,7 @@ Measured on a 2,365-file polyglot corpus, the whole map including this section t
 time it did without it.
 """
 import os
+import fnmatch
 import re
 
 from unicode_marks import mark_aware
@@ -391,7 +392,51 @@ def _only_suffix_match(key, by_noext, by_last_segment=None):
     return by_noext[matches[0]] if len(matches) == 1 else None
 
 
-def build(files):
+# What a test file's name says it covers, per ecosystem. A table rather than one clever regex,
+# because the conventions genuinely disagree and a table can be read and argued with.
+_NAME_CONVENTIONS = (
+    re.compile(r"(?:^|/)test_(?P<stem>[^/]+)\.(?P<ext>[A-Za-z0-9]+)$"),
+    re.compile(r"(?:^|/)(?P<stem>[^/]+)_test\.(?P<ext>[A-Za-z0-9]+)$"),
+    re.compile(r"(?:^|/)(?P<stem>[^/]+)\.test\.(?P<ext>[A-Za-z0-9]+)$"),
+    re.compile(r"(?:^|/)(?P<stem>[^/]+)\.spec\.(?P<ext>[A-Za-z0-9]+)$"),
+    re.compile(r"(?:^|/)(?P<stem>[^/]+)_spec\.(?P<ext>[A-Za-z0-9]+)$"),
+    re.compile(r"(?:^|/)(?P<stem>[^/]+?)Tests?\.(?P<ext>[A-Za-z0-9]+)$"),
+)
+
+
+def _name_parts(path):
+    """A test file's bare name, then each shorter prefix of it, longest first.
+
+    `qa/order_check.rb` yields `order_check`, then `order`. Tier 3 pairs on these because the
+    layouts it exists for are exactly the ones Tier 1's convention table does not recognise —
+    pairing by that table would open the escape hatch only where nobody needs it.
+
+    Longest first, and the caller stops at the first hit: `order_check` is a better answer than
+    `order` when both exist, and a bare `order` should not win over a file that matched more of
+    the name.
+    """
+    bare = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    parts = re.split(r"[._-]", bare)
+    return ["_".join(parts[:i]) for i in range(len(parts), 0, -1)]
+
+
+def _source_stem(path):
+    """(bare stem, extension) a test's NAME points at, or ("", "") for no known convention.
+
+    The stem is bare because `by_stem` is keyed that way — and that key is already the
+    `unambiguous` map, so a name carried by two files in the tree is absent from it rather than
+    resolving to one of them. The extension comes back separately so the caller can refuse a
+    cross-language match: a `.go` test must not be recorded as covering a `.py` file that happens
+    to share a name.
+    """
+    for pattern in _NAME_CONVENTIONS:
+        m = pattern.search(path)
+        if m:
+            return m.group("stem"), m.group("ext")
+    return "", ""
+
+
+def build(files, test_patterns=None):
     """{path: {"used_by": [...], "tests": [...]}} for files that something else refers to.
 
     Only files with an incoming edge or a covering test appear. A leaf nobody imports has nothing
@@ -418,6 +463,64 @@ def build(files):
                 used_by.setdefault(target, [])
                 if importer not in used_by[target]:
                     used_by[target].append(importer)
+
+    # 🎯 [owner 2026-09-23, direction H — Tier 1] The loop above finds a test by its IMPORT, and
+    # that is structurally blind to whole ecosystems: `bar_test.go` lives in the same package as
+    # `bar.go` and imports nothing, so Go's tests are invisible to it no matter how good the
+    # resolver gets. Ruby's `spec/` and .NET's sibling project have the same shape.
+    #
+    # The name is the other half of the evidence, and it is the half every ecosystem announces.
+    # A test whose NAME points at a file that exists here covers it, whether or not an import
+    # says so.
+    #
+    # Only when the stem resolves to exactly one file — `by_stem` already refuses an ambiguous
+    # tail for the import path, and guessing here would put a wrong file on a line somebody reads
+    # before changing code.
+    for f in files:
+        path_ = f["path"]
+        if not is_test(path_):
+            continue
+        stem, ext = _source_stem(path_)
+        if not stem:
+            continue
+        target = by_stem.get(stem)
+        if not target or target == path_ or is_test(target):
+            continue
+        if not target.lower().endswith("." + ext.lower()):
+            continue          # a Go test does not cover a Python file that shares its name
+        tests.setdefault(target, [])
+        if path_ not in tests[target]:
+            tests[target].append(path_)
+        tests.setdefault(target, [])
+        if path_ not in tests[target]:
+            tests[target].append(path_)
+
+    # Tier 3: the layout a repository declares for itself, when neither an import nor a convention
+    # can see it. `{"<test glob>": "<source glob>"}` from `.chamnan/config.json`. Empty for almost
+    # everybody, and that is correct — this is the escape hatch, not the mechanism.
+    for test_glob, src_glob in (test_patterns or {}).items():
+        matched = [f["path"] for f in files if fnmatch.fnmatchcase(f["path"], str(test_glob))]
+        sources = [f["path"] for f in files if fnmatch.fnmatchcase(f["path"], str(src_glob))]
+        if not matched or not sources:
+            continue
+        # `fnmatchcase`, never `fnmatch`: the latter folds case by `os.name`, so the same config
+    # would pair different files on macOS and on Linux. Paths in the index are posix and
+    # case is meaningful in them.
+    # Paired by stem within the declared pair, not crossed with everything: a glob that says
+        # "spec/ covers app/" is not saying every spec covers every file in app/.
+        by_bare = {}
+        for s in sources:
+            by_bare.setdefault(s.rsplit("/", 1)[-1].rsplit(".", 1)[0], []).append(s)
+        for m in matched:
+            for stem in _name_parts(m):
+                hit = [x for x in by_bare.get(stem, []) if x != m and not is_test(x)]
+                if not hit:
+                    continue
+                for target in hit:
+                    tests.setdefault(target, [])
+                    if m not in tests[target]:
+                        tests[target].append(m)
+                break          # the longest matching stem wins; shorter ones are its prefixes
 
     out = {}
     for path in sorted(set(used_by) | set(tests)):

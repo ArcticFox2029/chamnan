@@ -262,6 +262,17 @@ DEFAULT_CONFIG = {
     # replaces. 3,000 tokens is well under 1% of a 1M context window and still holds a few hundred
     # files. chamnan-map reports against it and says what to cut when it is exceeded.
     "index_token_budget": 3000,
+    # 🎯 [owner 2026-09-23, direction H — Tier 3] Which test file covers which source file is
+    # answered two ways already: an import edge, and the naming conventions in `impact.py`. Both
+    # are evidence, neither is a rule, and a project whose tests are named some third way gets
+    # neither. One entry per unusual layout, `"<test glob>": "<source glob>"`, e.g.
+    # `{"spec/**/*_spec.rb": "app/**/*.rb"}`.
+    #
+    # Empty by default and it must stay that way: a default here would be this project's own
+    # conventions imposed on everybody else's repository, which is the opposite of reading what a
+    # repository already does. A key absent from DEFAULT_CONFIG is dropped by `load_config`, so
+    # the entry has to exist even though it holds nothing.
+    "test_patterns": {},
     # A hard ceiling in BYTES on everything the SessionStart hook prints, enforced after the token
     # budgets above have already had their say. The two are not the same measurement and cannot
     # substitute for each other: the host truncates a hook's stdout over 10,000 bytes to its first
