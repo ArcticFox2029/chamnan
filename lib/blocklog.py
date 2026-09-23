@@ -36,7 +36,11 @@ _SECTION = re.compile(r"^### (.+)$", re.M)
 
 def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
           index_behind=None, session=None, short=(), transcript=None, nonce=None, model=None,
-          short_full=None):
+          # 🐛 [2026-09-23] `origins` went in after `dropped` first, and `record` calls this
+          # POSITIONALLY: every argument after that slot shifted by one, silently, and the record
+          # would have carried `index_behind` as its origins map. A new parameter goes at the END
+          # of a signature that has positional callers, or the callers move with it.
+          short_full=None, origins=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-21] (R84 acc4, 2026-09-21) WHAT EACH FIELD MEANS, because a reader of the JSONL had
@@ -62,6 +66,11 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
       resent   present and False only when the block was NOT resent into an existing session
       behind   seconds the architecture index is behind the newest source file
       drop     sections dropped entirely for want of room
+      srcs     {section heading: the store it was built from} — provenance, and the only field
+               that answers "why is this in my context" from a RECORD rather than from a live
+               `--explain`. `section()` has carried a `source` since it was written and nothing
+               ever persisted it, so every past block can say what it cost and none can say where
+               any of it came from. An allocator that decides what to keep needs both.
       sfull    {section: {whole, rank}} for the sections in `short`, one entry each. The
       whole    the bytes that section would have taken if it had not been shortened — knowable
                only inside the fitter, and nowhere after it
@@ -146,6 +155,13 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
             else:
                 _sf[_name] = {"whole": int(_v)}
         rec["sfull"] = _sf
+    if origins:
+        # Only the sections that HAVE an origin, and only the ones the block actually carries: a
+        # heading with an empty source adds a key and answers nothing, and a record of sections
+        # that were never emitted describes a block that did not happen.
+        _sr = {k: str(v)[:80] for k, v in origins.items() if v and k in rec.get("sec", {})}
+        if _sr:
+            rec["srcs"] = _sr
     if model:
         # 🎯 [2026-09-23] The ONLY place the main thread's model is ever offered. The hooks
         # reference: *"Only `SessionStart` hooks can receive a `model` field, and Claude Code
@@ -192,7 +208,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
 
 def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
            index_behind=None, session=None, short=(), transcript=None, nonce=None, model=None,
-           short_full=None):
+           short_full=None, origins=None):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -205,7 +221,7 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     # body in this package written in more than one file, in the package that counts them.
     return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
                                             index_behind, session, short, transcript, nonce,
-                                            model, short_full), KEEP)
+                                            model, short_full, origins=origins), KEEP)
 
 
 

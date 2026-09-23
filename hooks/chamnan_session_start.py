@@ -2922,6 +2922,12 @@ def main():
                         source=(payload.get("source") if isinstance(payload, dict) else None),
                         model=(payload.get("model") if isinstance(payload, dict) else None),
                         short_full=_briefed_cost,
+                        # 🎯 [1.31 provenance, 2026-09-23] `section()` has carried a `source` since
+                        # it was written and nothing ever persisted it: every past block can say
+                        # what it cost and none can say where any of it came from. `--explain`
+                        # answers it live and dies with the session. An allocator deciding what to
+                        # keep needs both halves, and only one of them was ever written down.
+                        origins={e["title"]: e.get("source", "") for e in LEDGER},
                         # 🎯 [R3.3.10] The join key. `pointer.jsonl` records which store a session
                         # opened; this records what that session's block dropped. Neither could
                         # answer "was a dropped section reopened later in the same session" alone.

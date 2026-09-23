@@ -48776,6 +48776,39 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- where each piece of the block came from, written down
+# 🎯 [1.31, a second reader's #4] Provenance: every piece of the block should be able to say where
+# it came from, machine-readably, because that is the raw material an allocator needs to decide
+# what to keep. `section()` has carried a `source` since it was written — and nothing ever
+# persisted it. Every past block can say what it COST and none of them can say where any of it came
+# from; `--explain` answers it live and dies with the session.
+import blocklog as _pv  # noqa: E402
+
+_pv_rec = _pv.shape("### A\nbody\n### B\nmore\n", ceiling=9000,
+                    origins={"A": "memory/rules/", "B": "MAP.md", "C": "a section not emitted"})
+check("EVERY SECTION THE BLOCK CARRIES CAN NAME THE STORE IT CAME FROM",
+      _pv_rec.get("srcs") == {"A": "memory/rules/", "B": "MAP.md"}, saw=_pv_rec.get("srcs"))
+# 🔴 A record of sections that were never emitted describes a block that did not happen, and a
+# heading with an empty source adds a key that answers nothing.
+check("...and one that was NOT emitted is not recorded as though it were",
+      "C" not in (_pv_rec.get("srcs") or {}), saw=_pv_rec.get("srcs"))
+check("...while a block with no origins at all carries no empty field",
+      "srcs" not in _pv.shape("### A\nx\n"), saw=_pv.shape("### A\nx\n").get("srcs"))
+# 🐛 [2026-09-23] `origins` was first inserted after `dropped`, and `record()` calls `shape()`
+# POSITIONALLY: every argument after that slot shifted by one, silently, and the record would have
+# carried `index_behind` as its origins map. A new parameter goes at the END of a signature that
+# has positional callers.
+_pv_withmodel = _pv.shape("### A\nx\n", None, None, None, True, (), 42, "sess-x", (), None, None,
+                          "claude-opus-5")
+check("A NEW PARAMETER DID NOT SHIFT THE POSITIONAL CALLERS",
+      _pv_withmodel.get("model") == "claude-opus-5" and _pv_withmodel.get("behind") == 42,
+      saw={k: _pv_withmodel.get(k) for k in ("model", "behind", "session")})
+# The producer side: the hook must actually pass what it has, or the field is a promise.
+_pv_hook = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("...and the assembler passes the map it already builds, so the field is not a promise",
+      "origins={" in _pv_hook, saw="session_start does not pass origins")
+
 # ---------------------------------- a failure log with no input is not a failure log
 # 🐛 [2026-09-23, found by chamnan-doctor on its FIRST run] `logs/failures.jsonl` had never been
 # written in the repository this package is developed in, on a day full of commands that exited
