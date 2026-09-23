@@ -48761,6 +48761,47 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- nothing machine-specific and nothing borrowed ships
+# ENFORCES: memory/rules/no-exception-for-one-machines-configuration.md
+# ENFORCES: memory/rules/reading-real-work-is-fine-writing-it-down-is-not.md
+#
+# 🎯 Both rules were in the store with no machine behind them. The check derives what it forbids
+# from the machine it is running on, so it is not itself the exception it forbids: it asks whether
+# THIS checkout's own home directory name, hostname or user appears in anything that ships, which
+# is a property any clone can evaluate about itself.
+import getpass as _ms_gp  # noqa: E402
+import socket as _ms_sock  # noqa: E402
+
+_ms_files = [f for d in ("lib", "bin", "hooks", "skills", "commands")
+             for f in (ROOT / d).rglob("*")
+             if f.is_file() and "__pycache__" not in f.parts and f.suffix not in (".pyc",)]
+_ms_identity = {x for x in (Path.home().name, _ms_gp.getuser(),
+                            _ms_sock.gethostname().split(".")[0]) if x and len(x) > 3}
+_ms_hits = sorted({f"{f.relative_to(ROOT)}:{w}" for f in _ms_files for w in _ms_identity
+                   if w in f.read_text(encoding="utf-8", errors="replace")})
+check("THIS MACHINE'S OWN IDENTITY IS IN NOTHING THAT SHIPS "
+      f"({len(_ms_files)} files, {len(_ms_identity)} names)", _ms_hits == [], saw=_ms_hits[:6])
+
+# The other half: reading the owner's work repositories is fine, carrying what is in them out here
+# is not. An internal hostname or a routable address is the shape that leaks, and unlike a repo
+# NAME in a comment it can never be innocent.
+# 🐛 [2026-09-23] The first pattern flagged three benign lines and would have been switched off
+# within a day: `1.8.3.1` is the sudo version RHEL 7 shipped, in a comment in two files, and
+# `db.internal` is redact.py documenting the thing it redacts. A generic TLD and a bare dotted-quad
+# are not evidence of anything. What cannot be innocent is a CORPORATE domain or a private-range
+# address — nobody writes one as an example, and both are exactly what reading a work repository
+# puts in front of you.
+_ms_leak = re.compile(r"\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)"
+                      r"\.\d{1,3}\.\d{1,3}\b"                        # a private-range address
+                      r"|\b[\w-]+\.(?:co\.th|corp|intra|lan)\b")     # a corporate host
+_ms_public = {"192.168.1.1", "192.168.0.1", "10.0.0.1", "192.168.1.100"}
+_ms_found = sorted({f"{f.relative_to(ROOT)}:{m}" for f in _ms_files
+                    for m in _ms_leak.findall(f.read_text(encoding="utf-8", errors="replace"))
+                    if m not in _ms_public})
+check("...and no internal hostname or routable address from work reading either",
+      _ms_found == [], saw=_ms_found[:6])
+
 # ---------------------------------- the one rule where being wrong is not a revert
 # 🔴 [owner 2026-09-10] `defaults write com.apple.Terminal "Window Settings" -dict-add "Clear Dark"
 # ""` replaced a dictionary with an empty string; Terminal aborted before drawing a window and the
