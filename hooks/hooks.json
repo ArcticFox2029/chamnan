@@ -77,6 +77,16 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_bulk_read_notice.py\""
           }
         ]
+      },
+      {
+        "_comment": "chamnan-guard scans a staged diff for anything shaped like a secret. It worked and had never once run: nothing called it, its own --strict mode was documented as being for a hook somebody opted into, and no config key existed to opt in with. This is that hook. It warns and never blocks, which is the command's own default.",
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_commit_guard.py\""
+          }
+        ]
       }
     ],
     "SubagentStart": [
