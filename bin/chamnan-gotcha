@@ -16,6 +16,10 @@ remembers is the one a machine should fill.
 It refuses rather than guesses: an anchor that matches no line, or more than one, is a note that
 would land in the wrong place, and a lesson in the wrong place is worse than none — it reads as a
 warning about code it is not about.
+
+  --date YYYY-MM-DD   backfill an old lesson instead of dating it today
+  -h, --help          this text
+  -v, --version       the version this build is
 """
 import argparse
 import datetime
@@ -25,7 +29,15 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
+import redact  # noqa: E402
 import workspace as ws  # noqa: E402
+
+# 🐛 [2026-09-24] (self-measured) Shadowed, like every other command here, and this one never was:
+# it prints a repository PATH and the first line of the lesson somebody typed, both of which can
+# carry a credential, and neither reached the redactor. Six print sites, found by the sweep that
+# asserts the whole set rather than a list of names — the first gate run able to report since
+# 2026-09-23 named this file at all six.
+print = redact.emit  # noqa: A001
 
 MARK = "\U0001F41B"
 # How a line comment starts, per language. A file whose kind is not here is refused rather than
@@ -51,13 +63,25 @@ def _wrap(text, prefix):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def main(argv=None):
+    # 🐛 [2026-09-24] (self-measured) `argparse` answered `--version` with its own usage and exit
+    # 2, because three positionals are required before it ever looks at a flag. Every sibling
+    # answers version first and help second, from anywhere, writing nothing — and the suite
+    # asserts the whole set, so this command reported a different version string from the other
+    # nineteen and was the reason "they all report the SAME version" failed.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
+    ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("file")
     ap.add_argument("anchor", help="text on the line the lesson is about")
     ap.add_argument("lesson", help="what went wrong, and what is true instead")
     ap.add_argument("--date", help="override today, for backfilling an old lesson")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     path = pathlib.Path(a.file)
     if not path.is_file():
@@ -69,7 +93,7 @@ def main():
               file=sys.stderr)
         return 2
 
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines(keepends=True)
     hits = [i for i, ln in enumerate(lines) if a.anchor in ln]
     if len(hits) != 1:
         where = "no line" if not hits else f"{len(hits)} lines ({', '.join(str(h + 1) for h in hits)})"

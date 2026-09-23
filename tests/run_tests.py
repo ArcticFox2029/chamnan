@@ -23884,7 +23884,20 @@ check("...and chamnan's own redactor finds nothing NEW in the tree chamnan ships
 # Caught by the floor check below on this check's first run, which is what that floor is for.
 _red_base_lines = [ln for ln in _red_base_path.read_text(encoding="utf-8").split("\n")
                    if ln.strip() and not ln.startswith("#")] if _red_base_path.is_file() else []
-RED_BASELINE_MAX = 51
+# 🎯 [2026-09-24] (self-measured) 51 -> 63, a REVIEWED bump and the first this ceiling has had.
+# Twelve lines were accepted, every one in a file that arrived during 1.31 and every one judged on
+# its own: two constants whose names end in `_KEY` (`lib/canonical.py`), two JSON keys ending in
+# `_token` and a comment quoting the `scheme://user:pass@host` shape the rule was written for
+# (`statistic/build_statistic.py`), a `RATE_KEYS` list (`statistic/report/app.js`), and six lines
+# of `tests/corpus/redaction/cases.jsonl`, where every line IS a synthetic secret and a redactor
+# that left them alone would be the defect.
+#
+# None is a leak and none is fixable without making the code worse: renaming a JSON key the pages
+# read, or a constant that holds this package's own command name, to satisfy a name-based rule is
+# the tail wagging the dog. The ceiling exists so that this paragraph has to be written, which is
+# the whole point of the reader's question it was built for — does removing something from the
+# policy file get the same rigor as removing it from the live database.
+RED_BASELINE_MAX = 63
 check("THE ACCEPTED-FINDINGS BASELINE CANNOT GROW WITHOUT SOMEBODY RAISING THE CEILING",
       len(_red_base_lines) <= RED_BASELINE_MAX,
       saw=f"{len(_red_base_lines)} accepted lines against a ceiling of {RED_BASELINE_MAX} — "

@@ -86,12 +86,12 @@ f81a19c2beb19f60  lib/canonical.py  _REQUIRES_KEY = "chamnan-" + "canonical"
 5532620749f5f817  lib/canonical.py  _INSTEAD_KEY = "chamnan-" + "instead"
 #
 # statistic/build_statistic.py: a JSON key ending in `_token`/`_tokens`, holding a count.
-c4c2c347d6d18bac  statistic/build_statistic.py  "block_tokens": block_tok,
-13146006614cbcc5  statistic/build_statistic.py  "chars_per_token": CHARS_PER_TOKEN,
+4706cab772843057  statistic/build_statistic.py  "block_tokens": block_tok,
+af6f2db3a65e40b8  statistic/build_statistic.py  "chars_per_token": CHARS_PER_TOKEN,
 #
 # statistic/build_statistic.py: a comment quoting the `scheme://user:pass@host` shape the credentialed-URL rule was written
 # for — prose ABOUT the rule, matched by it.
-2d6e8af7e61d4794  statistic/build_statistic.py  # `://` was written for the `scheme://user:pass@host` rule and matched both webhook URLs
+e427118b2ea9cca7  statistic/build_statistic.py  # `://` was written for the `scheme://user:pass@host` rule and matched both webhook URLs
 #
 # statistic/report/app.js: a constant named `RATE_KEYS`; the values are four rate names.
 5c7ae7915c11f716  statistic/report/app.js  const RATE_KEYS = ["t_new", "t_read", "t_write", "t_out"];
