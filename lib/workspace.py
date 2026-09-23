@@ -14,6 +14,7 @@ import time
 import contextlib
 import pathlib
 import os
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -1291,8 +1292,48 @@ def _is_inside(inner, outer):
 JSON_READ_CEILING = 4_000_000    # bytes
 
 
-def load_json(path, want=dict):
+QUARANTINE_LOG = "logs/recovered.jsonl"
+
+
+def _quarantine(path, why):
+    """Move a store that cannot be read aside, and say so. Returns where it went, or ""..
+
+    🎯 [1.31, a second reader's #5] Atomic writes and the lock are solid; what was missing is what
+    happens when a store is ALREADY corrupt. The answer everywhere was to return an empty one and
+    carry on — and for `state-ages.json` that means nothing can ever become old enough to age out
+    again, silently, forever. The owner's own retention note names it and `nudge_state.json` as the
+    two files whose deletion costs something a rebuild cannot give back.
+
+    So: verify, quarantine, and leave a record. Never a silent reset, and never a delete — the
+    corrupt file is the only copy of whatever was in it, and a person may be able to read what a
+    parser could not.
+    """
+    try:
+        path = pathlib.Path(path)
+        if not path.is_file():
+            return ""
+        dest = path.with_name(path.name + ".corrupt."
+                              + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"))
+        os.replace(path, dest)
+    except OSError:
+        return ""
+    try:
+        root = find_root(path)
+        if root is not None:
+            append_jsonl(root, QUARANTINE_LOG,
+                         {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                          "file": path.name, "why": str(why)[:120], "kept_as": dest.name}, 500)
+    except Exception:              # noqa: BLE001 — recording a recovery must not break one
+        pass
+    return str(dest)
+
+
+def load_json(path, want=dict, quarantine=False):
     """A JSON store read back, or an empty one of the right type. Never raises, never wrong-typed.
+
+    `quarantine=True` is for a store whose contents cannot be rebuilt: an unreadable file is moved
+    aside and recorded rather than silently replaced with an empty one. It is off by default
+    because most callers read something regenerable, where a quiet empty store IS the right answer.
 
     Every JSON loader in this package guarded `json.JSONDecodeError` and stopped there, which
     catches a file that is not JSON and misses a file that is *valid JSON of the wrong shape*. A
@@ -1310,9 +1351,17 @@ def load_json(path, want=dict):
         # below, which returns the empty store, the same degraded answer as a missing file.
         with pathlib.Path(path).open(encoding="utf-8-sig") as fh:
             data = json.loads(fh.read(JSON_READ_CEILING))
-    except (OSError, json.JSONDecodeError, ValueError, RecursionError, UnicodeDecodeError):
+    except (OSError, json.JSONDecodeError, ValueError, RecursionError, UnicodeDecodeError) as exc:
+        if quarantine and not isinstance(exc, FileNotFoundError):
+            # A MISSING file is not a corrupt one: it is the ordinary first run, and quarantining
+            # nothing would write a recovery record for every empty workspace.
+            _quarantine(path, exc.__class__.__name__)
         return want()
-    return data if isinstance(data, want) else want()
+    if not isinstance(data, want):
+        if quarantine:
+            _quarantine(path, f"valid JSON of the wrong shape: {type(data).__name__}")
+        return want()
+    return data
 
 
 class NotAWorkspace(Exception):

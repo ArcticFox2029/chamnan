@@ -186,6 +186,17 @@ def which_artefacts(root, wsdir, lines):
                            + ". Rebuild with chamnan-map."))
 
 
+def which_quarantine(wsdir, lines):
+    """Anything that was found corrupt and set aside is still sitting there, waiting to be read."""
+    kept = sorted(wsdir.rglob("*.corrupt.*"))
+    if not kept:
+        return
+    lines.append((BAD, f"{len(kept)} store(s) quarantined as unreadable and never looked at: "
+                       + ", ".join(p.name for p in kept[:3])
+                       + (f" …and {len(kept) - 3} more" if len(kept) > 3 else "")
+                       + " — logs/recovered.jsonl says when and why"))
+
+
 def which_stores(wsdir, lines):
     """A store that cannot be read is not a store, whatever it holds."""
     for name, glob in (("rules", "memory/rules/*.md"), ("skills", "skills/*.md")):
@@ -242,6 +253,7 @@ def main(argv):
     which_logs(wsdir, lines)
     which_artefacts(root, wsdir, lines)
     which_stores(wsdir, lines)
+    which_quarantine(wsdir, lines)
     which_loops(root, lines)
     which_silence(root, lines)
 

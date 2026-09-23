@@ -376,11 +376,20 @@ def _key(chunk):
 
 
 def _load_ages(wsdir):
-    try:
-        data = json.loads((wsdir / AGES_PATH).read_text(encoding="utf-8-sig"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    """The ageing record, or an empty one — and a corrupt one is kept, never silently replaced.
+
+    🎯 [1.31, a second reader's #5] This used to return `{}` for anything that went wrong, which
+    for THIS file is not a degraded answer: `state-ages.json` is the entire input to the ageing
+    pass, so an empty one means nothing can ever become old enough to age out again — silently,
+    and for as long as the file stays broken. `load_json(..., quarantine=True)` moves the
+    unreadable file aside and records it instead of overwriting it with nothing.
+    """
+    # 🐛 [2026-09-23] Written as `ws.load_json` when this module does not import workspace: it
+    # compiled, it imported, and it raised NameError only when the function actually ran — which
+    # is the shape `_emit_notice` had earlier the same day, inside a bare except where nothing
+    # would ever have said a word.
+    import workspace as _ws
+    return _ws.load_json(wsdir / AGES_PATH, dict, quarantine=True)
 
 
 def _save_ages(wsdir, ages):
