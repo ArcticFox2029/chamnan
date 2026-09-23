@@ -48984,6 +48984,13 @@ _bd_quoting = [
 _bd_qbad = [n for n, cmd, want in _bd_quoting
             if bool(_bd.advice("Bash", {"command": cmd}, _bd_root)) != want]
 check("QUOTING DECIDES WHAT IS A PATH — all five", _bd_qbad == [], saw=_bd_qbad)
+# 🐛 [2026-09-23] `python3 x --help >/dev/null` drew the 🔴. The discard device and the process's
+# own streams are not machine state, and a guard that fires on `>/dev/null` fires on a large share
+# of every shell command ever typed — which is the definition of a guard nobody reads.
+check("THE DISCARD DEVICES ARE NOT THE OWNER'S MACHINE",
+      not _bd.advice("Bash", {"command": "python3 x --help >/dev/null"}, _bd_root)
+      and not _bd.advice("Bash", {"command": "cmd 2>/dev/null"}, _bd_root),
+      saw=_bd.advice("Bash", {"command": "python3 x --help >/dev/null"}, _bd_root))
 _rmtree(_bd_root.parent, ignore_errors=True)
 
 # ---------------------------------- prose ABOUT work is not work

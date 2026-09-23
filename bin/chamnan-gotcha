@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""chamnan-gotcha — write the lesson where the next session will hit it.
+
+🎯 [owner 2026-09-23] "เจอ ปัญหา ก็ต้องแก้ไข ป้องกันแบบนี้ เพื่อ ลดความผิดพลาดจากการลืม หรือ ทำซ้ำใน
+เรื่องที่ผิด". Recording a lesson was already the convention here — 4,144 of them across 478 files —
+and `lib/bugnotes.py` now surfaces the one attached to whatever is being edited. What was missing
+is the writing end: the note was typed by hand every time, which is why 386 of the plugin's own 972
+carry no date, and an undated note cannot be aged or compared against the code beside it.
+
+  chamnan-gotcha <file> <anchor> "<what went wrong, and what is true instead>"
+
+`<anchor>` is text on the line the lesson is about; the note goes directly above it, indented to
+match, in that file's comment syntax. The date is today's, always, because the one field nobody
+remembers is the one a machine should fill.
+
+It refuses rather than guesses: an anchor that matches no line, or more than one, is a note that
+would land in the wrong place, and a lesson in the wrong place is worse than none — it reads as a
+warning about code it is not about.
+"""
+import argparse
+import datetime
+import pathlib
+import sys
+
+MARK = "\U0001F41B"
+# How a line comment starts, per language. A file whose kind is not here is refused rather than
+# commented wrongly: a note that does not parse is a syntax error somebody else has to find.
+COMMENT = {".py": "#", ".sh": "#", ".rb": "#", ".pl": "#", ".yml": "#", ".yaml": "#", ".toml": "#",
+           ".js": "//", ".ts": "//", ".jsx": "//", ".tsx": "//", ".go": "//", ".rs": "//",
+           ".c": "//", ".h": "//", ".cpp": "//", ".java": "//", ".swift": "//", ".kt": "//",
+           ".md": None}
+WRAP = 96
+
+
+def _wrap(text, prefix):
+    """`text` as comment lines, none wider than WRAP."""
+    out, line = [], prefix
+    for word in text.split():
+        candidate = (line + " " + word) if line != prefix else line + word
+        if len(candidate) > WRAP and line != prefix:
+            out.append(line)
+            line = prefix + word
+        else:
+            line = candidate
+    out.append(line)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("file")
+    ap.add_argument("anchor", help="text on the line the lesson is about")
+    ap.add_argument("lesson", help="what went wrong, and what is true instead")
+    ap.add_argument("--date", help="override today, for backfilling an old lesson")
+    a = ap.parse_args()
+
+    path = pathlib.Path(a.file)
+    if not path.is_file():
+        print(f"chamnan-gotcha: no file at {path}", file=sys.stderr)
+        return 2
+    marker = COMMENT.get(path.suffix, "#")
+    if path.suffix in COMMENT and COMMENT[path.suffix] is None:
+        print(f"chamnan-gotcha: {path.suffix} has no line comment — write the note in prose there",
+              file=sys.stderr)
+        return 2
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    hits = [i for i, ln in enumerate(lines) if a.anchor in ln]
+    if len(hits) != 1:
+        where = "no line" if not hits else f"{len(hits)} lines ({', '.join(str(h + 1) for h in hits)})"
+        print(f"chamnan-gotcha: the anchor matches {where}. A lesson in the wrong place reads as a "
+              f"warning about code it is not about, so this refuses rather than guesses.",
+              file=sys.stderr)
+        return 3
+    at = hits[0]
+    indent = lines[at][:len(lines[at]) - len(lines[at].lstrip())]
+    when = a.date or datetime.date.today().isoformat()
+    body = _wrap(f"{MARK} [{when}] {a.lesson}", f"{indent}{marker} ")
+    lines[at:at] = [b + "\n" for b in body]
+    path.write_text("".join(lines), encoding="utf-8")
+    print(f"chamnan-gotcha: recorded at {path}:{at + 1}")
+    print(f"  {body[0].strip()[:100]}")
+    print("  bugnotes.py will surface it the next time anything edits that line.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

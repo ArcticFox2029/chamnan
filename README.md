@@ -1013,6 +1013,7 @@ From a shell, in the repository:
 | `chamnan-map --preview` | print **exactly** what a session in this repo receives at start-up, followed by its token count. Nothing is written |
 | `chamnan-map --explain` | what this session's context is made of: every section, what it cost in tokens, and the file or store it came from. Answers "why is this in my context?" with a number instead of an argument |
 | `chamnan-map --install-git-hook` | opt-in: refresh the index on commit. Appends to an existing `pre-commit` hook rather than replacing it |
+| `chamnan-gotcha <file> <anchor> "<lesson>"` | write the lesson above the line it is about, dated, in that file's comment syntax. The hook surfaces it the next time anything edits that line — so a mistake paid for once is not paid for again. Refuses an anchor that matches no line or more than one |
 | `chamnan-peek <file>` | the shape of one file instead of the whole thing — columns, sheets, members, schema, pages |
 | `chamnan-peek <file> --find PATTERN` | only the parts that match, with their line numbers |
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |

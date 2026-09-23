@@ -78,8 +78,16 @@ def _inside(path, root):
         return False
 
 
+# 🐛 [2026-09-23] `python3 x --help >/dev/null` raised the 🔴 notice. `/dev/null` is the universal
+# discard and the other two are the process's own streams — none of them is machine state, and a
+# guard that fires on `>/dev/null` fires on a large share of all shell commands ever typed.
+_DISCARD = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/")
+
+
 def ours(path, root):
-    """True when writing `path` is ordinary work: inside the checkout, or scratch."""
+    """True when writing `path` is ordinary work: inside the checkout, scratch, or discarded."""
+    if str(path).startswith(_DISCARD):
+        return True
     if root and _inside(path, root):
         return True
     return any(_inside(path, s) for s in _scratch_roots())
