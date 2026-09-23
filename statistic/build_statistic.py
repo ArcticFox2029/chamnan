@@ -215,6 +215,32 @@ KEEP_MONTHS = 12
 KEEP_DAYS = 370
 
 
+def hero():
+    """The one number the page opens with, and the comparison beside it.
+
+    🎯 [owner, 2026-09-23] The first thing on the page has to be the DIFFERENCE in tokens between
+    having this and not having it. The per-day series carries both halves over the same window, so
+    the page computes it for whatever period the picker has chosen rather than for all time.
+
+    🔴 Neither half is a price and neither names a model. `handled` is what a local model read, so
+    those characters were never in anybody's context window; `carried` is what the session carried
+    anyway. Two measured counts, which is the only comparison this data supports.
+    """
+    return {
+        "chars_per_token": CHARS_PER_TOKEN,
+        "en": "tokens a local model read, so this session never carried them",
+        "th": "โทเค็นที่โมเดลในเครื่องอ่านแทน จึงไม่เคยเข้า context ของ session",
+        "note": "two measured counts over the same window — not a price, not a saving, "
+                "and no model named",
+        "note_th": "สองตัวเลขที่วัดจริงในช่วงเวลาเดียวกัน ไม่ใช่ราคา ไม่ใช่ยอดประหยัด และไม่มีชื่อโมเดล",
+    }
+
+
+# Characters to tokens. Kept here rather than imported so this file can draw a page without the
+# plugin's lib, and named so the page can say what it divided by instead of hiding the constant.
+CHARS_PER_TOKEN = 3.8
+
+
 def series():
     """One row per day and per month: the counts every page's chart is drawn from."""
     day = collections.defaultdict(lambda: collections.Counter())
@@ -244,8 +270,34 @@ def series():
         except OSError:
             continue
 
+    # 🐛 [2026-09-23] The hero compared a lifetime total against a figure that only starts when
+    # the local recorder did — 24,671x, which is not a ratio of anything. Both sides are counted
+    # PER DAY now, so the picker drives a comparison over one window instead of two.
+    for path in transcripts():
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if '"usage"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    u = (rec.get("message") or {}).get("usage")
+                    if not isinstance(u, dict):
+                        continue
+                    d = str(rec.get("timestamp") or "")[:10]
+                    if not d:
+                        continue
+                    day[d]["carried"] += (int(u.get("cache_read_input_tokens") or 0)
+                                          + int(u.get("cache_creation_input_tokens") or 0)
+                                          + int(u.get("input_tokens") or 0))
+                    day[d]["requests"] += 1
+        except OSError:
+            continue
+
     fields = ("commands", "opens", "edits", "named", "long_reads", "scratch", "agents",
-              "failures", "local_calls", "local_chars")
+              "failures", "local_calls", "local_chars", "carried", "requests")
     days = [{"day": d, **{f: day[d].get(f, 0) for f in fields}}
             for d in sorted(day)][-KEEP_DAYS:]
     month = collections.defaultdict(lambda: collections.Counter())
@@ -256,8 +308,17 @@ def series():
         month[m]["days"] += 1
     months = [{"month": m, **{f: month[m].get(f, 0) for f in fields},
                "days": month[m]["days"]} for m in sorted(month)][-KEEP_MONTHS:]
+    # 🎯 One row per day, one cell per hour — the calendar the owner asked for, which reads at a
+    # glance in a way twenty-four bars never do.
+    grid = collections.defaultdict(lambda: [0] * 24)
+    for r in rows("commands.jsonl"):
+        d, w = day_of(r), when_of(r)
+        if d and w:
+            grid[d][time.localtime(w).tm_hour] += 1
+    recent = [d["day"] for d in days][-21:]
     return {"fields": list(fields), "days": days, "months": months,
-            "keep_months": KEEP_MONTHS}
+            "keep_months": KEEP_MONTHS,
+            "hours": [{"day": d, "cells": grid.get(d, [0] * 24)} for d in recent]}
 
 
 def context_parts():
@@ -471,6 +532,7 @@ def build():
     return {
         "built": time.strftime("%Y-%m-%d %H:%M"),
         "repo": ROOT.name,
+        "hero": hero(),
         "impact": impact(),
         "series": series(),
         "token_kinds": token_kinds(),

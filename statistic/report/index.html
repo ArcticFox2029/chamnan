@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head>
+<html lang="en" data-theme="dark"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>statistics · impact</title>
@@ -13,62 +13,82 @@
 const P = readPeriod();
 head(1, P);
 const M = document.getElementById("main");
-const row = currentRow(P) || {};
 const rows = periodRows(P);
-const grain = P.grain === "day" ? "day" : "month";
-const grainTh = P.grain === "day" ? "วัน" : "เดือน";
+const row = currentRow(P) || {};
+const key = P.grain === "day" ? "day" : "month";
 
-/* ---- the question this page exists to answer: what is different with the plugin, and without it.
-   🔴 Counted as EVENTS, never as a saving. Nothing here knows what a session without the plugin
-   would have cost, and a page that guesses it cannot be trusted about anything else either. */
+/* ---- the opening number: the token difference with this and without it, over ONE window.
+   🔴 `handled` is what a local model read, so those characters were never in anybody's context.
+   `carried` is what the session carried anyway. Two measured counts — not a price, not a saving,
+   and no model named, because this plugin does not know which one anybody runs. */
+const H = S.hero || { chars_per_token: 3.8 };
+const handled = Math.round((row.local_chars || 0) / (H.chars_per_token || 3.8));
+const carried = row.carried || 0;
+const share = pct(handled, handled + carried);
+M.append(hero(
+  { value: short(handled), label: T(H.en, H.th) },
+  T(`over ${row[key] || "—"} a local model read ${n(row.local_chars || 0)} characters — about `
+    + `${n(handled)} tokens that never entered this session's context, beside the `
+    + `${short(carried)} it carried anyway (${share.toFixed(2)}%).`,
+    `ในช่วง ${row[key] || "—"} โมเดลในเครื่องอ่านไป ${n(row.local_chars || 0)} ตัวอักษร ≈ `
+    + `${n(handled)} โทเค็นที่ไม่เคยเข้า context เทียบกับ ${short(carried)} ที่ session แบกไปเอง `
+    + `(${share.toFixed(2)}%)`),
+  [
+    { label: T("handled by a local model", "โมเดลในเครื่องอ่านแทน"), value: handled,
+      colour: PAL[2] },
+    { label: T("carried by the session", "session แบกเอง"), value: carried, colour: PAL[0] },
+  ]));
+
+/* ---- and the rest of the difference, counted as events rather than claimed as a saving */
 const im = S.impact || { rows: [] };
-M.append(panel("with it, and without it",
-  "ความต่างระหว่างมีปลั๊กอินกับไม่มี",
+M.append(panel("with it, and without it", "ความต่างระหว่างมีปลั๊กอินกับไม่มี",
   [...new Set((im.rows || []).map((r) => r.source))].join(" · "),
   [
     hbars((im.rows || []).map((r, i) => ({
       label: r.what, th: r.th, value: r.with, text: short(r.with),
       colour: PAL[i % PAL.length], dim: !r.with,
     }))),
-    el("p", { class: "note" }, im.note),
-    el("p", { class: "th" }, im.note_th),
+    el("p", { class: "note" }, T(im.note, im.note_th)),
   ], { wide: true }));
 
-M.append(panel("what would have happened instead",
-  "ถ้าไม่มีปลั๊กอิน สิ่งที่จะเกิดขึ้นแทน",
-  "the same rows, read the other way round",
-  table([{ t: "instead of that" }, { t: "count", n: 1 }],
-    (im.rows || []).map((r) => [r.without, { t: short(r.with), n: 1 }])), { wide: true }));
+/* ---- the period, as a chart you can click into */
+M.append(panel(`commands per ${P.grain}`, `คำสั่งราย${P.grain === "day" ? "วัน" : "เดือน"}`,
+  "logs/commands.jsonl",
+  [
+    bars(rows.slice(-28).map((r) => ({
+      label: r[key], tick: r[key].slice(P.grain === "day" ? 8 : 5), value: r.commands || 0, row: r,
+    })), { onPick: (b) => P.grain === "month" ? go("day", null) : go("day", b.row.day) }),
+    el("p", { class: "src" },
+      T(`click a bar to open that ${P.grain === "month" ? "period by day" : "day"}`,
+        `คลิกแท่งเพื่อเจาะดู${P.grain === "month" ? "รายวัน" : "วันนั้น"}`)),
+  ], { wide: true }));
 
-/* ---- the period's own shape, so the picker has something to change */
-const f = (k) => rows.map((r) => r[k] || 0);
-M.append(panel(`activity over ${rows.length} ${grain}(s)`,
-  `กิจกรรมย้อนหลัง ${rows.length} ${grainTh}`,
+/* ---- the three headline counts for the chosen period */
+M.append(panel(`activity in ${row[key] || "—"}`, `กิจกรรมใน ${row[key] || "—"}`,
   "logs/commands.jsonl · logs/pointer.jsonl · logs/edits.jsonl",
   [
     el("div", { class: "grid2" },
       stat(short(row.commands || 0), "commands", "คำสั่ง"),
       stat(short(row.opens || 0), "files opened", "ไฟล์ที่เปิด"),
-      stat(short(row.edits || 0), "files changed", "ไฟล์ที่แก้")),
-    spark(f("commands")),
-    el("p", { class: "src" }, `kept for ${(S.series || {}).keep_months || 12} months`),
-  ]));
+      stat(short(row.edits || 0), "files changed", "ไฟล์ที่แก้"),
+      stat(short(row.requests || 0), "requests", "รีเควสต์")),
+    spark(rows.map((r) => r.commands || 0)),
+  ], { wide: true }));
 
 /* ---- what kind of tokens. No vendor, no price: the SPLIT is what is true on every host. */
 const tk = S.token_kinds || { kinds: [] };
-M.append(panel("what kind of tokens",
-  "โทเค็นแต่ละชนิด",
+M.append(panel("what kind of tokens", "โทเค็นแต่ละชนิด",
   `transcripts on this machine · ${n(tk.requests)} request(s)`,
   [
     donut((tk.kinds || []).map((k) => ({ label: k.kind.replace(/_/g, " "), value: k.tokens })),
       { centre: short((tk.kinds || []).reduce((a, k) => a + k.tokens, 0)), sub: "tokens" }),
     el("p", { class: "note" },
-      "a cached read is the cheapest kind of token wherever caching exists — no rate and no price "
-      + "is shown, because this plugin does not know which model you run or whether it is local"),
-    el("p", { class: "th" }, "ไม่แสดงราคาหรือชื่อโมเดล เพราะปลั๊กอินไม่รู้ว่าคุณใช้ค่ายไหน หรือรันในเครื่อง"),
+      T("a cached read is the cheapest kind of token wherever caching exists — no rate and no "
+        + "price is shown, because this plugin does not know which model you run",
+        "cached read คือโทเค็นที่ถูกที่สุดบนโฮสต์ที่มี cache · ไม่แสดงราคาหรือชื่อโมเดล เพราะปลั๊กอินไม่รู้ว่าคุณใช้ค่ายไหน")),
   ]));
 
-/* ---- what the repository itself puts in front of a session */
+/* ---- what the repository itself puts in front of every session */
 const cp = (S.context_parts || []).filter((c) => c.tokens !== null);
 const unknown = (S.context_parts || []).filter((c) => c.tokens === null);
 M.append(panel("what this repository puts in front of a session",
@@ -78,14 +98,13 @@ M.append(panel("what this repository puts in front of a session",
     donut(cp.map((c) => ({ label: c.part, value: c.tokens })),
       { centre: short(cp.reduce((a, c) => a + c.tokens, 0)), sub: "tokens" }),
     unknown.length ? el("p", { class: "note" },
-      unknown.map((c) => c.part).join(", ") + " — not on disk, so not counted here") : null,
-    unknown.length ? el("p", { class: "th" }, "ส่วนของโฮสต์ไม่ได้อยู่บนดิสก์ จึงไม่ถูกนับ") : null,
+      T(unknown.map((c) => c.part).join(", ") + " — not on disk, so not counted here",
+        "ส่วนของโฮสต์ไม่ได้อยู่บนดิสก์ จึงไม่ถูกนับ")) : null,
   ]));
 
 /* ---- the block itself */
 const bl = S.block || { sections: [] };
-M.append(panel("the block this plugin injects",
-  "บล็อกที่ปลั๊กอินฉีดเข้าไปตอนเปิด session",
+M.append(panel("the block this plugin injects", "บล็อกที่ปลั๊กอินฉีดเข้าไปตอนเปิด session",
   "logs/block_shape.jsonl — `sec` and `srcs`",
   [
     el("div", { class: "grid2" },

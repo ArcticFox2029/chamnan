@@ -14,6 +14,48 @@ const short = (v) => v >= 1e9 ? (v / 1e9).toFixed(1) + "B"
   : v >= 1e6 ? (v / 1e6).toFixed(1) + "M"
     : v >= 1e3 ? (v / 1e3).toFixed(1) + "k" : String(Math.round(v || 0));
 
+/* ---------------------------------------------------------------- language and theme
+
+   🎯 [owner, 2026-09-23] Two toggles in the top right, the way Sum-Usage-Claude has them.
+   English is the default; Thai replaces it rather than sitting under it, because a page that
+   prints every line twice is the "too much text" the first build was told off for.
+
+   Both are remembered in localStorage and applied before the first paint, so the page does not
+   flash the other theme on every load. A read that throws — a private window, blocked storage —
+   falls back to the default rather than taking the page down with it. */
+function pref(key, fallback) {
+  try { return localStorage.getItem("stat." + key) || fallback; } catch (e) { return fallback; }
+}
+function setPref(key, value) {
+  try { localStorage.setItem("stat." + key, value); } catch (e) { /* not worth a failure */ }
+}
+const LANG = pref("lang", "en") === "th" ? "th" : "en";
+/* `T(en, th)` is every string on these pages. A missing Thai falls back to the English rather
+   than to an empty panel. */
+const T = (en, th) => (LANG === "th" && th) ? th : en;
+
+/* 🎯 [owner, 2026-09-23] Dark is the default, and English is the default. Not "follow the system"
+   — a page whose look depends on a setting the reader did not make here is a page that looks
+   different every time somebody opens it on a different machine. */
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", pref("theme", "dark"));
+}
+applyTheme();
+
+function toggles() {
+  const lang = el("button", { class: "tog", type: "button" }, "ไทย / EN");
+  lang.addEventListener("click", () => { setPref("lang", LANG === "th" ? "en" : "th"); location.reload(); });
+  const theme = el("button", { class: "tog", type: "button" }, "Light / dark");
+  theme.addEventListener("click", () => {
+    const now = document.documentElement.getAttribute("data-theme");
+    const next = now === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    setPref("theme", next);
+  });
+  return el("div", { class: "togs" }, lang, theme);
+}
+
+
 function el(tag, attrs, ...kids) {
   const ns = ["svg", "g", "path", "circle", "rect", "text", "line", "polyline", "title"];
   const e = ns.includes(tag)
@@ -37,7 +79,7 @@ function el(tag, attrs, ...kids) {
 function panel(en, th, source, body, opts) {
   const o = opts || {};
   const s = el("section", { class: (o.wide ? "wide " : "") + (o.off ? "off" : "") },
-    el("h2", {}, en), th ? el("p", { class: "th" }, th) : null);
+    el("h2", {}, T(en, th)));
   for (const part of [].concat(body)) if (part) s.append(part);
   if (source) s.append(el("p", { class: "src" }, source));
   return s;
@@ -111,7 +153,7 @@ function hbars(rows, opts) {
   const o = opts || {}, max = Math.max(1, ...rows.map((r) => r.value));
   return el("ul", { class: "hbars" }, rows.map((r) =>
     el("li", { class: r.dim ? "dim" : "" },
-      el("span", { class: "hlab" }, r.label, r.th ? el("em", {}, r.th) : null),
+      el("span", { class: "hlab" }, T(r.label, r.th)),
       el("span", { class: "htrack" },
         el("span", { class: "hfill", style: `width:${Math.max(pct(r.value, max), 1.5)}%;`
           + `background:${r.colour || (r.dim ? "var(--grey)" : PAL[0])}` })),
@@ -138,11 +180,88 @@ function stackbar(parts) {
       title: `${p.label} · ${n(p.value)}` })));
 }
 
+/* A real bar chart: gridlines, a value axis, the tallest bar lifted, and a label over it — the
+   shape a reader can scan without a tooltip. Clicking a bar drills into that day. */
+function bars(rows, opts) {
+  const o = opts || {}, W = 760, H = 210, L = 44, B = 26, T0 = 20;
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  const step = (W - L) / Math.max(rows.length, 1);
+  const bw = Math.max(4, Math.min(38, step * 0.62));
+  const y = (v) => T0 + (H - T0 - B) * (1 - v / max);
+  const ticks = [0, 0.5, 1].map((f) => f * max);
+  const kids = [];
+  for (const t of ticks) {
+    kids.push(el("line", { x1: L, x2: W, y1: y(t), y2: y(t), class: "grid" }));
+    kids.push(el("text", { x: L - 8, y: y(t) + 4, "text-anchor": "end", class: "axis" }, short(t)));
+  }
+  rows.forEach((r, i) => {
+    const cx = L + step * i + (step - bw) / 2, top = y(r.value);
+    const g = el("g", { class: "barg" + (r.value === max ? " peak" : "") },
+      el("rect", { x: cx, y: top, width: bw, height: Math.max(H - B - top, 1), rx: 3 },
+        el("title", {}, `${r.label} · ${n(r.value)}`)));
+    if (r.value === max) {
+      g.append(el("text", { x: cx + bw / 2, y: top - 6, "text-anchor": "middle", class: "peaklab" },
+        short(r.value)));
+    }
+    if (o.onPick) {
+      g.setAttribute("class", g.getAttribute("class") + " pick");
+      g.addEventListener("click", () => o.onPick(r));
+    }
+    kids.push(g);
+    if (rows.length <= 14 || i % Math.ceil(rows.length / 10) === 0) {
+      kids.push(el("text", { x: cx + bw / 2, y: H - 8, "text-anchor": "middle", class: "axis" },
+        r.tick ?? r.label));
+    }
+  });
+  return el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart bars" }, kids);
+}
+
+/* One row per day, one cell per hour — the calendar that reads at a glance. Colour is the part of
+   the day, opacity is the weight, so a quiet hour is visibly quiet instead of being given a stub. */
+function calendar(rowsIn) {
+  const max = Math.max(1, ...rowsIn.flatMap((r) => r.cells));
+  const band = (h) => h < 8 ? PAL[3] : h < 17 ? PAL[2] : PAL[1];
+  const grid = el("div", { class: "cal" }, rowsIn.slice().reverse().map((r) =>
+    el("div", { class: "calrow" },
+      el("span", { class: "calday" }, r.day.slice(5)),
+      el("div", { class: "calcells" }, r.cells.map((v, h) =>
+        el("span", {
+          style: `background:${band(h)};opacity:${(0.07 + 0.93 * (v / max)).toFixed(3)}`,
+          title: `${r.day} ${String(h).padStart(2, "0")}:00 · ${n(v)}`,
+        }))))));
+  const key = el("div", { class: "calkey" },
+    [[PAL[3], T("night 00–08", "กลางคืน 00–08")],
+     [PAL[2], T("work hours 08–17", "เวลางาน 08–17")],
+     [PAL[1], T("evening 17–24", "เย็น 17–24")]].map(([c, lab]) =>
+      el("span", {}, el("i", { style: `background:${c}` }), lab)),
+    el("span", { class: "calnote" },
+      T("darker is heavier · left to right 00:00 → 23:00",
+        "เข้มกว่าคือหนักกว่า · ซ้ายไปขวา 00:00 → 23:00")));
+  return el("div", {}, grid, key);
+}
+
+/* The opening panel: one number, the sentence that explains it, and two bars to the same scale. */
+function hero(big, sentence, bars2) {
+  const total = Math.max(...bars2.map((b) => b.value), 1);
+  return el("section", { class: "wide heroP" },
+    el("div", { class: "heroL" },
+      el("p", { class: "herobig" }, big.value),
+      el("p", { class: "herolab" }, big.label)),
+    el("div", { class: "heroR" },
+      el("p", { class: "herosent" }, sentence),
+      ...bars2.map((b) => el("div", { class: "herobar" },
+        el("div", { class: "herobarhead" },
+          el("span", {}, b.label), el("b", {}, b.text ?? short(b.value))),
+        el("div", { class: "herotrack" },
+          el("div", { class: "herofill", style: `width:${Math.max(pct(b.value, total), 0.6)}%;`
+            + `background:${b.colour}` }))))));
+}
+
+
 function stat(big, en, th) {
   return el("div", { class: "stat" },
     el("p", { class: "big" }, big),
-    el("p", { class: "statlab" }, en),
-    th ? el("p", { class: "th" }, th) : null);
+    el("p", { class: "statlab" }, T(en, th)));
 }
 
 /* ---------------------------------------------------------------- period, and the picker */
@@ -174,13 +293,13 @@ function picker(p) {
   const row = currentRow(p);
   const btn = el("button", { class: "period", type: "button" },
     el("span", {}, row ? row[key] : "—"),
-    el("em", {}, p.grain === "day" ? "day · รายวัน" : "month · รายเดือน"));
+    el("em", {}, p.grain === "day" ? T("day", "รายวัน") : T("month", "รายเดือน")));
   const pop = el("div", { class: "pop", hidden: "hidden" });
 
   const tabs = el("div", { class: "poptabs" },
     ["month", "day"].map((g) => {
       const b = el("button", { type: "button", class: g === p.grain ? "on" : "" },
-        g === "month" ? "month · เดือน" : "day · วัน");
+        g === "month" ? T("month", "เดือน") : T("day", "วัน"));
       b.addEventListener("click", () => go(g, null));
       return b;
     }));
@@ -193,7 +312,8 @@ function picker(p) {
       return b;
     }));
   pop.append(tabs, list,
-    el("p", { class: "popfoot" }, `kept for ${SERIES.keep_months || 12} months · เก็บ 12 เดือน`));
+    el("p", { class: "popfoot" },
+      T(`kept for ${SERIES.keep_months || 12} months`, `เก็บย้อนหลัง ${SERIES.keep_months || 12} เดือน`)));
 
   btn.addEventListener("click", (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; });
   document.addEventListener("click", () => { pop.hidden = true; });
@@ -219,11 +339,11 @@ function head(page, p) {
   h.append(
     el("div", { class: "topline" },
       el("div", {},
-        el("h1", {}, `${S.repo || "repository"} · statistics`),
-        el("p", { class: "sub" }, `built ${S.built || "—"} · every number names the file it came from`),
-        el("p", { class: "th" }, "ทุกตัวเลขบอกว่ามาจากไฟล์ไหน")),
-      p ? picker(p) : null),
+        el("h1", {}, `${S.repo || "repository"} · ${T("statistics", "สถิติ")}`),
+        el("p", { class: "sub" }, `${T("built", "สร้างเมื่อ")} ${S.built || "—"} · `
+          + T("every number names the file it came from", "ทุกตัวเลขบอกว่ามาจากไฟล์ไหน"))),
+      el("div", { class: "topright" }, p ? picker(p) : null, toggles())),
     el("nav", {}, PAGES.map((x, i) =>
       el("a", { href: x.file + location.search, class: i + 1 === page ? "on" : "" },
-        `${i + 1} · ${x.en}`, el("em", {}, x.th)))));
+        `${i + 1} · ${T(x.en, x.th)}`))));
 }
