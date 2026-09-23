@@ -491,9 +491,6 @@ def build(files, test_patterns=None):
         tests.setdefault(target, [])
         if path_ not in tests[target]:
             tests[target].append(path_)
-        tests.setdefault(target, [])
-        if path_ not in tests[target]:
-            tests[target].append(path_)
 
     # Tier 3: the layout a repository declares for itself, when neither an import nor a convention
     # can see it. `{"<test glob>": "<source glob>"}` from `.chamnan/config.json`. Empty for almost
@@ -504,9 +501,10 @@ def build(files, test_patterns=None):
         if not matched or not sources:
             continue
         # `fnmatchcase`, never `fnmatch`: the latter folds case by `os.name`, so the same config
-    # would pair different files on macOS and on Linux. Paths in the index are posix and
-    # case is meaningful in them.
-    # Paired by stem within the declared pair, not crossed with everything: a glob that says
+        # would pair different files on macOS and on Linux. Paths in the index are posix and
+        # case is meaningful in them.
+        #
+        # Paired by stem WITHIN the declared pair, not crossed with everything: a glob saying
         # "spec/ covers app/" is not saying every spec covers every file in app/.
         by_bare = {}
         for s in sources:
