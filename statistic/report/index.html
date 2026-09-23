@@ -2,7 +2,7 @@
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>statistics · overview</title>
+<title>statistics · impact</title>
 <link rel="stylesheet" href="app.css">
 </head><body>
 <header></header>
@@ -10,104 +10,91 @@
 <script src="data.js"></script>
 <script src="app.js"></script>
 <script>
-head(1);
+const P = readPeriod();
+head(1, P);
 const M = document.getElementById("main");
+const row = currentRow(P) || {};
+const rows = periodRows(P);
+const grain = P.grain === "day" ? "day" : "month";
+const grainTh = P.grain === "day" ? "วัน" : "เดือน";
 
-/* ---- what kind of tokens. Volume is not cost: a cache read bills at a tenth of ordinary input,
-   which is why a bar that is 99% blue is not a bill that is 99% anything. The RATE column is the
-   multiplier, never money — the owner asked for no money and no model names on this page. */
-const tk = S.token_kinds || {};
-const kinds = tk.kinds || [];
-const colour = { cache_read: "var(--accent)", cache_write: "var(--warm)",
-                 output: "var(--good)", new_input: "var(--grey)" };
-M.append(panel("what kind of tokens",
-  "a cache read bills at a fraction of ordinary input — cheaper than the volume looks",
-  `~/.claude/projects/** · ${n(tk.requests)} request(s)`,
+/* ---- the question this page exists to answer: what is different with the plugin, and without it.
+   🔴 Counted as EVENTS, never as a saving. Nothing here knows what a session without the plugin
+   would have cost, and a page that guesses it cannot be trusted about anything else either. */
+const im = S.impact || { rows: [] };
+M.append(panel("with it, and without it",
+  "ความต่างระหว่างมีปลั๊กอินกับไม่มี",
+  [...new Set((im.rows || []).map((r) => r.source))].join(" · "),
   [
-    el("div", { class: "stack" }, kinds.map((k) =>
-      el("span", { style: `width:${Math.max(k.share, 0.4)}%;background:${colour[k.kind] || "var(--grey)"}` }))),
-    el("div", { class: "key" }, kinds.map((k) =>
-      el("span", {}, el("i", { style: `background:${colour[k.kind] || "var(--grey)"}` }),
-        k.kind.replace("_", " ")))),
-    table(["kind", { t: "tokens", n: 1 }, { t: "share", n: 1 }, { t: "rate", n: 1 }],
-      kinds.map((k) => [k.kind.replace("_", " "), { t: n(k.tokens), n: 1 },
-                        { t: k.share.toFixed(1) + "%", n: 1 }, { t: k.rate, n: 1 }])),
+    hbars((im.rows || []).map((r, i) => ({
+      label: r.what, th: r.th, value: r.with, text: short(r.with),
+      colour: PAL[i % PAL.length], dim: !r.with,
+    }))),
+    el("p", { class: "note" }, im.note),
+    el("p", { class: "th" }, im.note_th),
   ], { wide: true }));
 
-/* ---- what the context is made of. The host's own share (system prompt, tools, the conversation)
-   is NOT on disk and is not guessable, so it is a row that says so rather than a number. */
-M.append(panel("what the context is made of",
-  "what this repository puts in front of a session, per part",
-  "CLAUDE.md · .claude/agents · .chamnan/skills · logs/block_shape.jsonl",
-  table(["part", { t: "files", n: 1 }, { t: "tokens", n: 1 }, "who it belongs to"],
-    (S.context_parts || []).map((c) => [c.part, { t: c.files || "—", n: 1 },
-      { t: c.tokens === null ? "not on disk" : n(c.tokens), n: 1 }, c.owner]))));
+M.append(panel("what would have happened instead",
+  "ถ้าไม่มีปลั๊กอิน สิ่งที่จะเกิดขึ้นแทน",
+  "the same rows, read the other way round",
+  table([{ t: "instead of that" }, { t: "count", n: 1 }],
+    (im.rows || []).map((r) => [r.without, { t: short(r.with), n: 1 }])), { wide: true }));
 
-/* ---- when the work happens */
-const bh = S.by_hour || {};
-const cmds = bh.commands || [];
-const peak = Math.max(1, ...cmds);
-M.append(panel("when the work happens",
-  "shell commands by hour of day, over the recorded window",
-  "logs/commands.jsonl",
+/* ---- the period's own shape, so the picker has something to change */
+const f = (k) => rows.map((r) => r[k] || 0);
+M.append(panel(`activity over ${rows.length} ${grain}(s)`,
+  `กิจกรรมย้อนหลัง ${rows.length} ${grainTh}`,
+  "logs/commands.jsonl · logs/pointer.jsonl · logs/edits.jsonl",
   [
-    el("div", { class: "hours" }, cmds.map((v) =>
-      el("div", { style: `height:${Math.round(100 * v / peak)}%`, title: `${v}` }))),
-    el("div", { class: "hlabel" }, el("span", {}, "00"), el("span", {}, "06"),
-      el("span", {}, "12"), el("span", {}, "18"), el("span", {}, "23")),
+    el("div", { class: "grid2" },
+      stat(short(row.commands || 0), "commands", "คำสั่ง"),
+      stat(short(row.opens || 0), "files opened", "ไฟล์ที่เปิด"),
+      stat(short(row.edits || 0), "files changed", "ไฟล์ที่แก้")),
+    spark(f("commands")),
+    el("p", { class: "src" }, `kept for ${(S.series || {}).keep_months || 12} months`),
   ]));
 
-/* ---- what is being opened, and where */
-const pl = S.places || {};
-const byExt = pl.by_extension || [];
-const extTop = Math.max(1, ...byExt.map((r) => r[1]));
-M.append(panel("what kind of file is opened",
-  "by extension, from the files a session actually reached for",
-  "logs/pointer.jsonl · logs/edits.jsonl",
-  table(["kind", { t: "opens", n: 1 }, ""],
-    byExt.slice(0, 8).map((r) => [r[0], { t: n(r[1]), n: 1 }, bar(pct(r[1], extTop))]))));
-
-const byDir = pl.by_directory || [];
-const dirTop = Math.max(1, ...byDir.map((r) => r[1]));
-M.append(panel("which part of the repository",
-  "top-level directory, from the same paths",
-  "logs/pointer.jsonl · logs/edits.jsonl",
-  table(["directory", { t: "touches", n: 1 }, ""],
-    byDir.slice(0, 8).map((r) => [r[0], { t: n(r[1]), n: 1 }, bar(pct(r[1], dirTop))]))));
-
-/* ---- reading against writing */
-const rw = S.read_vs_write || {};
-/* 🐛 [2026-09-23] This read `rw.note`, which the builder has never emitted — so the caption
-   silently fell back to its default and the one thing a reader needed to know went unsaid. The
-   note is BUILT here from the two numbers that carry it: `op` (Write versus Edit) landed on
-   edits.jsonl only today, so most rows cannot be split and the panel says which share can. */
-const known = rw.op_known || 0, total = rw.op_total || 0;
-const rwNote = total && known < total
-  ? `${n(known)} of ${n(total)} changes record whether they were a write or an edit — the rest `
-    + `predate that field, so "changed" is not split here`
-  : null;
-M.append(panel("reading against writing",
-  rwNote || "files opened versus files changed, newest day first",
-  "logs/pointer.jsonl · logs/long_reads.jsonl · logs/edits.jsonl",
+/* ---- what kind of tokens. No vendor, no price: the SPLIT is what is true on every host. */
+const tk = S.token_kinds || { kinds: [] };
+M.append(panel("what kind of tokens",
+  "โทเค็นแต่ละชนิด",
+  `transcripts on this machine · ${n(tk.requests)} request(s)`,
   [
-    table(["day", { t: "opened", n: 1 }, { t: "changed", n: 1 }, ""],
-      (rw.days || []).slice(0, 10).map((d, i) => {
-        const o = (rw.opens || [])[i] || 0, w = (rw.edits || [])[i] || 0;
-        return [d, { t: n(o), n: 1 }, { t: n(w), n: 1 },
-          el("div", { class: "stack", style: "margin:0" },
-            el("span", { style: `width:${pct(o, Math.max(o + w, 1))}%;background:var(--accent)` }),
-            el("span", { style: `width:${pct(w, Math.max(o + w, 1))}%;background:var(--warm)` }))];
-      })),
-    rwNote ? el("p", { class: "note" }, rwNote) : null,
-  ], { wide: true }));
+    donut((tk.kinds || []).map((k) => ({ label: k.kind.replace(/_/g, " "), value: k.tokens })),
+      { centre: short((tk.kinds || []).reduce((a, k) => a + k.tokens, 0)), sub: "tokens" }),
+    el("p", { class: "note" },
+      "a cached read is the cheapest kind of token wherever caching exists — no rate and no price "
+      + "is shown, because this plugin does not know which model you run or whether it is local"),
+    el("p", { class: "th" }, "ไม่แสดงราคาหรือชื่อโมเดล เพราะปลั๊กอินไม่รู้ว่าคุณใช้ค่ายไหน หรือรันในเครื่อง"),
+  ]));
 
-/* ---- the session block */
-const bl = S.block || {};
-M.append(panel("the session block, by where it came from",
-  `${n(bl.bytes)} bytes · ~${n(bl.tok)} tokens, most recent assembly`,
+/* ---- what the repository itself puts in front of a session */
+const cp = (S.context_parts || []).filter((c) => c.tokens !== null);
+const unknown = (S.context_parts || []).filter((c) => c.tokens === null);
+M.append(panel("what this repository puts in front of a session",
+  "สิ่งที่ repo นี้ใส่เข้า context ทุกครั้งที่เปิด session",
+  "CLAUDE.md · .claude/agents · .chamnan/skills · logs/block_shape.jsonl",
+  [
+    donut(cp.map((c) => ({ label: c.part, value: c.tokens })),
+      { centre: short(cp.reduce((a, c) => a + c.tokens, 0)), sub: "tokens" }),
+    unknown.length ? el("p", { class: "note" },
+      unknown.map((c) => c.part).join(", ") + " — not on disk, so not counted here") : null,
+    unknown.length ? el("p", { class: "th" }, "ส่วนของโฮสต์ไม่ได้อยู่บนดิสก์ จึงไม่ถูกนับ") : null,
+  ]));
+
+/* ---- the block itself */
+const bl = S.block || { sections: [] };
+M.append(panel("the block this plugin injects",
+  "บล็อกที่ปลั๊กอินฉีดเข้าไปตอนเปิด session",
   "logs/block_shape.jsonl — `sec` and `srcs`",
-  table(["section", { t: "bytes", n: 1 }, "built from"],
-    (bl.sections || []).map((s) => [s.title, { t: n(s.bytes), n: 1 },
-      el("code", {}, s.from || "—")])), { wide: true }));
+  [
+    el("div", { class: "grid2" },
+      stat(short(bl.bytes || 0), "bytes, last assembly", "ไบต์ ครั้งล่าสุด"),
+      stat(short(bl.tok || 0), "tokens", "โทเค็น"),
+      stat(String((bl.sections || []).length), "sections", "หัวข้อ")),
+    stackbar((bl.sections || []).map((s) => ({ label: s.title, value: s.bytes }))),
+    hbars((bl.sections || []).slice(0, 6).map((s, i) => ({
+      label: s.title, value: s.bytes, text: short(s.bytes), colour: PAL[i % PAL.length] }))),
+  ], { wide: true }));
 </script>
 </body></html>

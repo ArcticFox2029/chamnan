@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>statistics · usage</title>
+<link rel="stylesheet" href="app.css">
+</head><body>
+<header></header>
+<main id="main"></main>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+const P = readPeriod();
+head(3, P);
+const M = document.getElementById("main");
+const rows = periodRows(P);
+const row = currentRow(P) || {};
+const grainTh = P.grain === "day" ? "วัน" : "เดือน";
+
+/* ---- when the work happens */
+M.append(panel("when the work happens",
+  "ทำงานช่วงไหนของวัน",
+  "logs/commands.jsonl",
+  heat((S.by_hour || {}).commands || [])));
+
+/* ---- reading against writing.
+   🐛 [2026-09-23] The caption used to read a `note` the builder has never emitted, so it silently
+   fell back to a default and the one thing a reader needed to know went unsaid. It is built here
+   from the two numbers that carry it. */
+const rw = S.read_vs_write || {};
+const known = rw.op_known || 0, total = rw.op_total || 0;
+const rwNote = total && known < total
+  ? `${n(known)} of ${n(total)} changes record whether they were a write or an edit — the rest `
+    + `predate that field, so "changed" is not split here`
+  : null;
+M.append(panel("reading against writing",
+  "อ่านเทียบกับเขียน",
+  "logs/pointer.jsonl · logs/long_reads.jsonl · logs/edits.jsonl",
+  [
+    el("div", { class: "grid2" },
+      stat(short(row.opens || 0), "opened", "เปิด"),
+      stat(short(row.edits || 0), "changed", "แก้")),
+    stackbar([
+      { label: "opened", value: row.opens || 0, colour: PAL[0] },
+      { label: "changed", value: row.edits || 0, colour: PAL[1] },
+    ]),
+    spark(rows.map((r) => r.opens || 0)),
+    rwNote ? el("p", { class: "note" }, rwNote) : null,
+  ]));
+
+/* ---- what kind of file, and where */
+const pl = S.places || {};
+M.append(panel("what kind of file is opened",
+  "เปิดไฟล์ชนิดไหนบ่อย",
+  "logs/pointer.jsonl · logs/edits.jsonl",
+  donut((pl.by_extension || []).slice(0, 6).map((r) => ({ label: r[0], value: r[1] })),
+    { centre: short((pl.by_extension || []).reduce((a, r) => a + r[1], 0)), sub: "opens" })));
+
+M.append(panel("which part of the repository",
+  "โฟลเดอร์ไหนถูกแตะบ่อย",
+  "logs/pointer.jsonl · logs/edits.jsonl",
+  hbars((pl.by_directory || []).slice(0, 7).map((r, i) => ({
+    label: r[0], value: r[1], text: short(r[1]), colour: PAL[i % PAL.length] })))));
+
+/* ---- which files keep being edited. Edited often is NOT fragile: a file under active
+   development is edited often and is fine. The lessons column beside it is what separates them. */
+M.append(panel("which files keep being edited",
+  "ไฟล์ไหนโดนแก้บ่อย — แก้บ่อยไม่เท่ากับเปราะ ดูคอลัมน์บทเรียนประกอบ",
+  "logs/edits.jsonl · logs/pointer.jsonl · recorded lessons in the file itself",
+  table([{ t: "file" }, { t: "edits", n: 1 }, { t: "opens", n: 1 }, { t: "lessons", n: 1 }],
+    (S.files || []).slice(0, 15).map((x) =>
+      [el("code", {}, x.path), { t: n(x.edits), n: 1 }, { t: n(x.opens), n: 1 },
+       { t: n(x.lessons), n: 1 }])), { wide: true }));
+
+/* ---- the local model */
+M.append(panel("the local model",
+  "โมเดลในเครื่อง — อ่านแทน session ไปเท่าไร",
+  "state/local_assist/daily/*.jsonl",
+  [
+    el("div", { class: "grid2" },
+      stat(short(row.local_calls || 0), "calls answered", "ครั้งที่ตอบ"),
+      stat(short(row.local_chars || 0), "characters read for the session", "ตัวอักษรที่อ่านแทน")),
+    spark(rows.map((r) => r.local_chars || 0), { colour: PAL[4] }),
+    el("p", { class: "src" }, "report minus extract, counted once — the corrected figure"),
+  ], { wide: true }));
+</script>
+</body></html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>statistics · features</title>
+<link rel="stylesheet" href="app.css">
+</head><body>
+<header></header>
+<main id="main"></main>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+const P = readPeriod();
+head(2, P);
+const M = document.getElementById("main");
+
+/* ---- which features actually fire. A feature with no recorder is drawn GREY with the reason,
+   never omitted: an empty row that explains itself is how the missing recorder gets built, and
+   leaving it out would make the page claim a coverage it does not have. */
+const feats = S.features || [];
+const live = feats.filter((x) => x.source);
+const dark = feats.filter((x) => !x.source);
+M.append(panel("which features actually fire",
+  "ฟีเจอร์ไหนทำงานจริง และมีโอกาสกี่ครั้ง",
+  "logs/*.jsonl, one per feature",
+  [
+    hbars(live.map((x, i) => ({
+      label: x.feature, value: pct(x.fired, x.chances),
+      text: `${short(x.fired)} / ${short(x.chances)}`,
+      colour: PAL[i % PAL.length], dim: !x.fired,
+    }))),
+    dark.length ? el("p", { class: "note" },
+      `${dark.length} guard(s) have no recorder at all — they print and forget: `
+      + dark.map((x) => x.feature).join(", ")
+      + ". Nothing can say whether they have ever fired.") : null,
+    dark.length ? el("p", { class: "th" },
+      "มีการ์ดที่ยังไม่มีตัวบันทึก — ทำงานแล้วลืม จึงบอกไม่ได้ว่าเคยยิงไหม") : null,
+  ], { wide: true }));
+
+/* ---- guards that have proved they can fail */
+const fd = S.found || {};
+M.append(panel("guards that have proved they can fail",
+  "การ์ดที่พิสูจน์แล้วว่าทำให้ FAIL ได้จริง",
+  "state/mutation_proofs.json · tools/checks/",
+  [
+    donut([
+      { label: "proved", value: fd.mutation_proved || 0, colour: PAL[2] },
+      { label: "never mutated", value: Math.max((fd.guard_pool || 0) - (fd.mutation_proved || 0), 0),
+        colour: "var(--grey)" },
+    ], { centre: `${n(fd.mutation_proved)}/${n(fd.guard_pool)}`, sub: "guards" }),
+    el("p", { class: "note" },
+      "a test existing is not an invariant being proved — this is the share that has been broken "
+      + "on purpose and watched to go red"),
+    el("p", { class: "th" }, "มีเทสต์ ≠ invariant ถูกพิสูจน์ · นี่คือสัดส่วนที่เคยถูกทำให้พังแล้วดูว่ามันแดงจริง"),
+  ]));
+
+/* ---- the gate */
+M.append(panel("what the gate finds",
+  "ด่านตรวจเจออะไรบ้าง",
+  "logs/gate_runs.jsonl",
+  [
+    spark((fd.gate_runs || []).map((g) => g.checks || 0), { colour: PAL[2] }),
+    table(["run", { t: "checks", n: 1 }, { t: "failing", n: 1 }, { t: "sec", n: 1 }],
+      (fd.gate_runs || []).slice().reverse().slice(0, 6).map((g) =>
+        [g.day, { t: n(g.checks), n: 1 }, { t: n(g.failing), n: 1 }, { t: n(g.seconds), n: 1 }])),
+  ]));
+
+/* ---- the model's own mistakes */
+const ms = S.mistakes || {};
+M.append(panel("the model's own mistakes",
+  "ความผิดพลาดของโมเดลเอง และที่ทำซ้ำ",
+  "logs/failures.jsonl via lib/gotcha.py · state/gotcha_marks.json",
+  [
+    el("div", { class: "grid2" },
+      stat(short(ms.failures || 0), "failures recorded", "ความล้มเหลวที่บันทึก"),
+      stat(short(ms.repeats || 0), "of them a repeat", "ที่เป็นการทำซ้ำ"),
+      stat(short(fd.recorded_lessons || 0), "lessons written into the code",
+        "บทเรียนที่เขียนลงโค้ด")),
+    (ms.per_day || []).length
+      ? spark((ms.per_day || []).map((d) => d.failures || 0), { colour: PAL[5] })
+      : null,
+    ms.note ? el("p", { class: "note" }, ms.note) : null,
+  ], { wide: true, off: !ms.failures }));
+</script>
+</body></html>

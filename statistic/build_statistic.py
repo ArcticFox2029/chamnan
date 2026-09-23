@@ -108,8 +108,12 @@ def transcripts():
 def token_kinds():
     """What KIND the tokens were, across every session this repository has had.
 
-    🔴 `rate` is a MULTIPLIER and never a price. It is what stops 98.7% of the volume being read as
-    98.7% of the cost, and it is the only reason the bar is legible at all. No currency here.
+    🔴 No price and no multiplier. The first version carried a `rate` column — 0.1x, 5x — and
+    those are ANTHROPIC's ratios. This plugin does not know which model anybody runs, whether it
+    is local, or what any of it is charged at, and a page that implies one vendor's economics is
+    wrong for every reader who uses another. What is true everywhere is the SPLIT: a cached read
+    is the cheapest kind of token on every host that has caching at all, and the share is the
+    number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
     """
     tot = collections.Counter()
     n = 0
@@ -133,11 +137,127 @@ def token_kinds():
                     tot["new_input"] += int(u.get("input_tokens") or 0)
         except OSError:
             continue
-    rate = {"cache_read": "0.1x", "cache_write": "1.25-2x", "output": "5x", "new_input": "1x"}
     total = sum(tot.values()) or 1
     return {"requests": n,
-            "kinds": [{"kind": k, "tokens": v, "share": round(100.0 * v / total, 2),
-                       "rate": rate[k]} for k, v in tot.most_common()]}
+            "kinds": [{"kind": k, "tokens": v, "share": round(100.0 * v / total, 2)}
+                      for k, v in tot.most_common()]}
+
+
+# ---------------------------------------------------------------- with it, and without it
+
+def impact():
+    """The difference the plugin makes, counted as EVENTS rather than claimed as a saving.
+
+    🎯 [owner, 2026-09-23] The page's first question is *what is different with this and without
+    it*. The tempting answer — "it saved X tokens" — cannot be had: nothing here knows what a
+    session without the plugin would have cost, and the 2026-09-22 comparison recorded that there
+    is no way to measure it on one machine with one person's work.
+
+    🔴 What CAN be counted is every moment the plugin changed the course of a session, from the
+    logs that already exist. Each row is a thing that happened, and beside it the thing that would
+    have happened instead. No vendor, no model, no currency — this is true on any host.
+    """
+    ptr = rows("pointer.jsonl")
+    named = sum(1 for r in ptr if r.get("named"))
+    longs = len(rows("long_reads.jsonl"))
+    # 🐛 [2026-09-23] This read a `seen` field that scratch.jsonl has never carried, so the count
+    # was silently zero. A repeat is a FINGERPRINT that appears more than once — which is what the
+    # watcher itself keys on, and the only definition the rows support.
+    seen = collections.Counter(tuple(r.get("fp") or ()) for r in rows("scratch.jsonl") if r.get("fp"))
+    repeats = sum(v - 1 for v in seen.values() if v > 1)
+    fails = rows("failures.jsonl")
+    try:
+        sys.path.insert(0, str(PLUGIN / "lib"))
+        import gotcha as _g
+        caught = sum(1 for _k, v in _g.repeats(WS).items() if v[0] >= _g.REPEATS)
+    except Exception:                    # noqa: BLE001 — a count is never worth a failed build
+        caught = 0
+    local = local_model()
+    chars = sum(d["chars"] for d in local)
+    blocks = rows("block_shape.jsonl")
+    block_tok = median([int(b.get("tok") or 0) for b in blocks if b.get("tok")])
+    return {
+        "rows": [
+            {"with": named, "what": "knowledge named before a file was opened",
+             "without": "the session opens the file and finds out for itself, or does not",
+             "th": "ความรู้ถูกชี้ก่อนเปิดไฟล์", "source": "logs/pointer.jsonl"},
+            {"with": longs, "what": "long documents flagged before they were read whole",
+             "without": "the whole document enters the context",
+             "th": "เอกสารยาวถูกเตือนก่อนอ่านทั้งไฟล์", "source": "logs/long_reads.jsonl"},
+            {"with": repeats, "what": "throwaway scripts recognised as written before",
+             "without": "the same script is thought up again from scratch",
+             "th": "สคริปต์ใช้แล้วทิ้งที่เคยเขียนมาแล้ว", "source": "logs/scratch.jsonl"},
+            {"with": caught, "what": "failures about to be repeated, named before the command ran",
+             "without": "the same command fails the same way again",
+             "th": "ความล้มเหลวที่กำลังจะซ้ำ ถูกทักก่อนรัน", "source": "logs/failures.jsonl"},
+            {"with": chars, "what": "characters a local model read so the session did not have to",
+             "without": "every one of them enters the context",
+             "th": "ตัวอักษรที่โมเดลในเครื่องอ่านแทน", "source": "state/local_assist/"},
+        ],
+        "block_tokens": block_tok,
+        "note": "counted as events, never as a saving — nothing here knows what a session without "
+                "this would have cost",
+        "note_th": "นับเป็นเหตุการณ์ ไม่ใช่ยอดประหยัด — ไม่มีใครรู้ว่าถ้าไม่มีมันจะกินเท่าไร",
+    }
+
+
+def median(xs):
+    xs = sorted(x for x in xs if x)
+    return xs[len(xs) // 2] if xs else 0
+
+
+# ---------------------------------------------------------------- the period series
+
+# 🎯 [owner, 2026-09-23] Daily and monthly, and **twelve months is the ceiling** — a dashboard that
+# grows without bound becomes the thing it was measuring. The day rows are what a reader drills
+# into; the month rows are what they scan.
+KEEP_MONTHS = 12
+KEEP_DAYS = 370
+
+
+def series():
+    """One row per day and per month: the counts every page's chart is drawn from."""
+    day = collections.defaultdict(lambda: collections.Counter())
+    for name, field in (("commands.jsonl", "commands"), ("pointer.jsonl", "opens"),
+                        ("edits.jsonl", "edits"), ("long_reads.jsonl", "long_reads"),
+                        ("scratch.jsonl", "scratch"), ("subagent_start.jsonl", "agents"),
+                        ("failures.jsonl", "failures")):
+        for r in rows(name):
+            d = day_of(r)
+            if d:
+                day[d][field] += 1
+    for r in rows("pointer.jsonl"):
+        d = day_of(r)
+        if d and r.get("named"):
+            day[d]["named"] += 1
+    for p in sorted((WS / "state" / "local_assist" / "daily").glob("*.jsonl")):
+        try:
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                day[p.stem]["local_calls"] += 1
+                day[p.stem]["local_chars"] += int(r.get("saved_chars") or 0)
+        except OSError:
+            continue
+
+    fields = ("commands", "opens", "edits", "named", "long_reads", "scratch", "agents",
+              "failures", "local_calls", "local_chars")
+    days = [{"day": d, **{f: day[d].get(f, 0) for f in fields}}
+            for d in sorted(day)][-KEEP_DAYS:]
+    month = collections.defaultdict(lambda: collections.Counter())
+    for row in days:
+        m = row["day"][:7]
+        for f in fields:
+            month[m][f] += row[f]
+        month[m]["days"] += 1
+    months = [{"month": m, **{f: month[m].get(f, 0) for f in fields},
+               "days": month[m]["days"]} for m in sorted(month)][-KEEP_MONTHS:]
+    return {"fields": list(fields), "days": days, "months": months,
+            "keep_months": KEEP_MONTHS}
 
 
 def context_parts():
@@ -351,6 +471,8 @@ def build():
     return {
         "built": time.strftime("%Y-%m-%d %H:%M"),
         "repo": ROOT.name,
+        "impact": impact(),
+        "series": series(),
         "token_kinds": token_kinds(),
         "context_parts": context_parts(),
         "by_hour": by_hour(),
@@ -382,7 +504,7 @@ def main():
     REPORT.mkdir(parents=True, exist_ok=True)
     (REPORT / "data.js").write_text(blob, encoding="utf-8")
     print(f"  report/data.js       {len(blob):,} bytes")
-    for page in ("index.html", "detail.html"):
+    for page in ("index.html", "features.html", "usage.html"):
         if not (REPORT / page).is_file():
             print(f"  {page} is missing — the page is not generated, only its data")
     return 0
