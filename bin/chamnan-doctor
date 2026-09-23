@@ -17,6 +17,7 @@ anywhere — it reads files that already exist and says what they say.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -133,23 +134,35 @@ def which_artefacts(root, wsdir, lines):
         lines.append((BAD, "MAP.md is missing — the session block has nothing to point at"))
         return
     head = _git(root, "rev-parse", "HEAD")
-    behind = _git(root, "rev-list", "--count", "HEAD") if head else ""
+    age = _age_days(amap)
+    # 🐛 [2026-09-23] The first version only asked whether the CURRENT sha appeared in the file, so
+    # a map built forty commits ago and one built ten minutes ago both read "no current stamp" —
+    # true, and useless. The stamp is read and the distance counted, because "31 commits behind" is
+    # a thing somebody acts on and "not current" is a thing somebody scrolls past.
     stamped = ""
     try:
-        for line in amap.read_text(encoding="utf-8", errors="replace")[:4000].splitlines():
-            if head and head[:8] in line:
-                stamped = head[:8]
-                break
+        # 🐛 [2026-09-23, minutes later] `commit <sha>` matched a sha quoted inside a FILE
+        # DESCRIPTION — a test's blurb naming the commit it was written for — and the doctor
+        # compared the repository's HEAD against a commit from a different repository entirely.
+        # The map's own stamp is the literal `Built from <sha>` in its header. Mention is not use,
+        # for the fifth time in one day.
+        m = re.search(r"Built from ([0-9a-f]{7,40})", amap.read_text(encoding="utf-8",
+                                                                     errors="replace")[:4000])
+        stamped = m.group(1) if m else ""
     except OSError:
         pass
-    age = _age_days(amap)
-    if stamped:
-        lines.append((OK, f"MAP.md is stamped with the current commit ({stamped})"))
-    elif not head:
+    if not head:
         lines.append((UNKNOWN, f"MAP.md is {age:.0f}d old and git cannot say what has moved since"))
+    elif not stamped:
+        lines.append((UNKNOWN, "MAP.md carries no commit stamp at all — its age is the only "
+                               "evidence, and a branch switch changes that without changing it"))
+    elif head.startswith(stamped):
+        lines.append((OK, f"MAP.md is stamped with the current commit ({stamped})"))
     else:
-        lines.append((UNKNOWN, f"MAP.md is {age:.0f}d old and carries no current commit stamp — "
-                               f"rebuild with chamnan-map if the tree has moved"))
+        behind = _git(root, "rev-list", "--count", f"{stamped}..HEAD")
+        lines.append((BAD, f"MAP.md was built at {stamped} and HEAD is {head[:7]}"
+                           + (f" — {behind} commit(s) since" if behind else "")
+                           + ". Rebuild with chamnan-map."))
 
 
 def which_stores(wsdir, lines):
