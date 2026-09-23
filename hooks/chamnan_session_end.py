@@ -11,6 +11,8 @@ shows them exactly once and deletes the file, and nothing is written at all when
 to say.
 """
 import json
+import pathlib
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -110,6 +112,23 @@ def main():
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
         return 0
+    # 🎯 [owner, 2026-09-23] "dashboard ต้องอัปเดตด้วย … มันไม่ควรมีการรัน py script อะไรเพื่อ gen report".
+    # Session end is where the day's numbers are final, and the rebuild reads only the bytes
+    # written since the last one: 35s when that was a full scan of 1 GB of transcripts, 1.6s now.
+    #
+    # 🔴 Backgrounded and never waited on. A dashboard is worth a second of a session's exit and
+    # nothing at all of its correctness — if the build is slow, broken, or absent, the session
+    # ends exactly as it did before and the page simply shows the figures from last time.
+    _stat = ROOT_DIR / "statistic" / "build_statistic.py" if "ROOT_DIR" in dir() else (
+        pathlib.Path(__file__).resolve().parent.parent / "statistic" / "build_statistic.py")
+    if _stat.is_file() and ws.load_config(root).get("dashboard", True):
+        try:
+            subprocess.Popen([sys.executable, str(_stat)], cwd=str(root),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except Exception:                    # noqa: BLE001
+            pass
+
     _owed = _a_gotcha_is_owed(root, wsdir)
     if _owed:
         print(_owed)

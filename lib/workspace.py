@@ -280,6 +280,10 @@ DEFAULT_CONFIG = {
     # because it only ever WARNS; the strict version is still opt-in by being a separate
     # invocation somebody puts in their own pre-commit hook.
     "commit_guard": True,
+    # The statistic pages rebuild at session end, in the background, reading only
+    # what was written since the last build. Off means the pages keep whatever
+    # figures they last had rather than going stale silently.
+    "dashboard": True,
     # A hard ceiling in BYTES on everything the SessionStart hook prints, enforced after the token
     # budgets above have already had their say. The two are not the same measurement and cannot
     # substitute for each other: the host truncates a hook's stdout over 10,000 bytes to its first

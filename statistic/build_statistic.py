@@ -103,7 +103,122 @@ def transcripts():
     return sorted(base.glob("*.jsonl")) if base.is_dir() else []
 
 
+# 🎯 [owner, 2026-09-23] "dashboard ต้องอัปเดตด้วยนะ … มันไม่ควรมีการรัน py script อะไรเพื่อ gen
+# report" — and the thing standing in the way was 35 seconds, 31.6 of them spent re-reading every
+# transcript on the machine on every build. A page that costs half a minute to refresh is a page
+# somebody refreshes by hand, which is what it was.
+#
+# 🔴 A finished transcript never changes. The scan is cached per FILE, keyed on its size and
+# mtime, so a rebuild reads only what was written since the last one. Nothing is inferred from the
+# cache: a file whose size or mtime moved is re-read in full, and a cache that cannot be read is
+# simply absent rather than trusted — the one thing worse than a slow figure is a stale one that
+# looks fresh.
+SCAN_CACHE = WS / "state" / "statistic_scan_cache.json"
+
+
+def _cached_scan(paths, reader, tag):
+    """{path: summary} for every path, reading only what is new since the last build.
+
+    \U0001F41B [2026-09-23] Keying on (size, mtime) alone made this session's OWN transcript miss the
+    cache on every build — it grows with every turn, and at 821 MB of the 1,094 MB on disk it was
+    the whole remaining cost. A transcript is append-only, so the fix is to remember where the
+    last read stopped and start there: `reader` is handed an offset and returns a summary plus
+    the offset it reached, and two summaries of one file are added together.
+
+    \U0001F534 A file that SHRANK, or whose earlier bytes changed, is re-read from zero. Trusting an
+    offset into a file that was rewritten would produce a total assembled from two different
+    versions of the same transcript, which is worse than being slow.
+    """
+    try:
+        cache = json.loads(SCAN_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    if not isinstance(cache, dict):
+        cache = {}
+    out, fresh = {}, {}
+    for p in paths:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        key = f"{tag}:{p}"
+        hit = cache.get(key)
+        start, base = 0, None
+        if isinstance(hit, dict) and isinstance(hit.get("value"), dict):
+            at = int(hit.get("at") or 0)
+            if at == st.st_size:
+                out[str(p)] = hit["value"]
+                fresh[key] = hit
+                continue
+            if at and at < st.st_size:          # grew: read the tail only
+                start, base = at, hit["value"]
+        got, at = reader(p, start)
+        if base is not None:
+            got = _merge_usage(base, got)
+        out[str(p)] = got
+        fresh[key] = {"at": at, "value": got}
+    try:
+        SCAN_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        SCAN_CACHE.write_text(json.dumps(fresh), encoding="utf-8")
+    except OSError:
+        pass
+    return out, 0
+
+
+def _merge_usage(a, b):
+    """Two summaries of the same file, in order, added together."""
+    tot = collections.Counter(a.get("tot") or {})
+    tot.update(b.get("tot") or {})
+    days = {d: collections.Counter(c) for d, c in (a.get("days") or {}).items()}
+    for d, c in (b.get("days") or {}).items():
+        days.setdefault(d, collections.Counter()).update(c)
+    return {"n": int(a.get("n") or 0) + int(b.get("n") or 0),
+            "tot": dict(tot), "days": {d: dict(c) for d, c in days.items()}}
+
+
 # ---------------------------------------------------------------- the panels
+
+def _usage_of(path, start=0):
+    """One transcript, summarised: totals by kind, and the same totals per calendar day.
+
+    🔴 Both scans that used to walk every transcript now share this one reader, so a file is
+    parsed once per build instead of twice — which is half the saving before the cache is even
+    consulted.
+    """
+    tot = collections.Counter()
+    per_day = collections.defaultdict(collections.Counter)
+    n, at = 0, start
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            if start:
+                fh.seek(start)
+            for line in fh:
+                if '"usage"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                u = (rec.get("message") or {}).get("usage")
+                if not isinstance(u, dict):
+                    continue
+                n += 1
+                day = str(rec.get("timestamp") or "")[:10]
+                for key, field in (("cache_read", "cache_read_input_tokens"),
+                                   ("cache_write", "cache_creation_input_tokens"),
+                                   ("output", "output_tokens"),
+                                   ("new_input", "input_tokens")):
+                    v = int(u.get(field) or 0)
+                    tot[key] += v
+                    if day:
+                        per_day[day][key] += v
+                if day:
+                    per_day[day]["requests"] += 1
+            at = fh.tell()
+    except OSError:
+        return {"n": 0, "tot": {}, "days": {}}, start
+    return ({"n": n, "tot": dict(tot), "days": {d: dict(c) for d, c in per_day.items()}}, at)
+
 
 def token_kinds():
     """What KIND the tokens were, across every session this repository has had.
@@ -115,28 +230,15 @@ def token_kinds():
     is the cheapest kind of token on every host that has caching at all, and the share is the
     number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
     """
+    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage")
     tot = collections.Counter()
     n = 0
-    for path in transcripts():
-        try:
-            with path.open(encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    if '"usage"' not in line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        continue
-                    u = (rec.get("message") or {}).get("usage")
-                    if not isinstance(u, dict):
-                        continue
-                    n += 1
-                    tot["cache_read"] += int(u.get("cache_read_input_tokens") or 0)
-                    tot["cache_write"] += int(u.get("cache_creation_input_tokens") or 0)
-                    tot["output"] += int(u.get("output_tokens") or 0)
-                    tot["new_input"] += int(u.get("input_tokens") or 0)
-        except OSError:
+    for row in scanned.values():
+        if not isinstance(row, dict):
             continue
+        n += int(row.get("n") or 0)
+        for k, v in (row.get("tot") or {}).items():
+            tot[k] += int(v or 0)
     total = sum(tot.values()) or 1
     return {"requests": n,
             "kinds": [{"kind": k, "tokens": v, "share": round(100.0 * v / total, 2)}
@@ -329,31 +431,19 @@ def series():
     # 🐛 [2026-09-23] The hero compared a lifetime total against a figure that only starts when
     # the local recorder did — 24,671x, which is not a ratio of anything. Both sides are counted
     # PER DAY now, so the picker drives a comparison over one window instead of two.
-    for path in transcripts():
-        try:
-            with path.open(encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    if '"usage"' not in line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        continue
-                    u = (rec.get("message") or {}).get("usage")
-                    if not isinstance(u, dict):
-                        continue
-                    d = str(rec.get("timestamp") or "")[:10]
-                    if not d:
-                        continue
-                    day[d]["t_read"] += int(u.get("cache_read_input_tokens") or 0)
-                    day[d]["t_write"] += int(u.get("cache_creation_input_tokens") or 0)
-                    day[d]["t_new"] += int(u.get("input_tokens") or 0)
-                    day[d]["t_out"] += int(u.get("output_tokens") or 0)
-                    day[d]["carried"] = (day[d]["t_read"] + day[d]["t_write"]
-                                         + day[d]["t_new"])
-                    day[d]["requests"] += 1
-        except OSError:
+    # \U0001F534 The same cached scan `token_kinds` uses, so the two panels cannot disagree about a
+    # transcript: one reader, one cache, two views of the result.
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage")
+    for row in scanned.values():
+        if not isinstance(row, dict):
             continue
+        for d, c in (row.get("days") or {}).items():
+            day[d]["t_read"] += int(c.get("cache_read") or 0)
+            day[d]["t_write"] += int(c.get("cache_write") or 0)
+            day[d]["t_new"] += int(c.get("new_input") or 0)
+            day[d]["t_out"] += int(c.get("output") or 0)
+            day[d]["requests"] += int(c.get("requests") or 0)
+            day[d]["carried"] = (day[d]["t_read"] + day[d]["t_write"] + day[d]["t_new"])
 
     fields = ("commands", "opens", "edits", "named", "long_reads", "scratch", "agents",
               "failures", "local_calls", "local_chars", "carried", "requests",
@@ -447,7 +537,16 @@ def by_kind_and_place():
                 rel = str(pathlib.PurePath(p).relative_to(ROOT)) if p.startswith("/") else p
             except ValueError:
                 rel = pathlib.PurePath(p).name          # outside the repo: keep the leaf, not ""
-            ext[pathlib.PurePath(rel).suffix or "(none)"] += 1
+            # \U0001F41B [2026-09-23, owner: "none คืออะไร"] A file with no extension was labelled
+            # "(none)", which is accurate and says nothing. Measured: 55 such opens, and the
+            # commonest by far are this plugin's OWN commands — `chamnan-report` 24 times,
+            # `chamnan-map` 10 — because a command in `bin/` carries no suffix. A chart that
+            # cannot name its third-largest slice is not answering the question it was drawn for.
+            _suffix = pathlib.PurePath(rel).suffix
+            if not _suffix:
+                _name = rel.rsplit("/", 1)[-1]
+                _suffix = "a command" if _name.startswith("chamnan-") else "no extension"
+            ext[_suffix] += 1
             head = rel.split("/", 1)[0]
             top[head or "(repository root)"] += 1
     return {"by_extension": ext.most_common(10), "by_directory": top.most_common(10)}
