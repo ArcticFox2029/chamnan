@@ -1,0 +1,248 @@
+[
+ {
+  "id": "t01-divide-by-zero",
+  "prompt": "report.percent raises ZeroDivisionError when whole is 0. Make it return \"0.0%\" instead. Do not change any other behaviour.",
+  "must_change": [
+   "shop/report.py"
+  ],
+  "must_not_change": [
+   "shop/pricing.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "expr": "report.percent(0, 0) == '0.0%'"
+  },
+  "rejected": [
+   "except Exception",
+   "bare except"
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t02-missing-promo-code",
+  "prompt": "pricing.apply_promo raises KeyError for a code that is not in the table. An unknown code must leave the total unchanged.",
+  "must_change": [
+   "shop/pricing.py"
+  ],
+  "must_not_change": [
+   "shop/report.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "expr": "pricing.apply_promo(100.0, 'NOPE', {}) == 100.0"
+  },
+  "rejected": [
+   "table.setdefault"
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t03-reserve-unknown-sku",
+  "prompt": "inventory.reserve raises KeyError for a SKU that has never been stocked. Treat an unknown SKU as zero stock, like release already does.",
+  "must_change": [
+   "shop/inventory.py"
+  ],
+  "must_not_change": [
+   "shop/pricing.py",
+   "shop/report.py"
+  ],
+  "behaviour": {
+   "expr": "inventory.reserve({}, 'x', 1) == -1"
+  },
+  "rejected": [
+   "global "
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t04-reserve-below-zero",
+  "prompt": "inventory.reserve lets stock go negative. It must refuse instead: raise ValueError when the quantity exceeds what is in stock, and leave the stock untouched.",
+  "must_change": [
+   "shop/inventory.py"
+  ],
+  "must_not_change": [
+   "shop/pricing.py",
+   "shop/report.py"
+  ],
+  "behaviour": {
+   "raises": "inventory.reserve({'a': 1}, 'a', 5)",
+   "exc": "ValueError"
+  },
+  "rejected": [
+   "assert "
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t05-discount-bounds",
+  "prompt": "pricing.order_total accepts a discount above 1.0, which makes an order cost a negative amount. Refuse a discount outside 0..1 with ValueError.",
+  "must_change": [
+   "shop/pricing.py"
+  ],
+  "must_not_change": [
+   "shop/report.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "raises": "pricing.order_total([(10.0, 1)], discount=1.5)",
+   "exc": "ValueError"
+  },
+  "rejected": [
+   "min(",
+   "max("
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t06-negative-quantity",
+  "prompt": "pricing.line_total accepts a negative quantity and returns a negative total. Refuse a negative quantity with ValueError.",
+  "must_change": [
+   "shop/pricing.py"
+  ],
+  "must_not_change": [
+   "shop/report.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "raises": "pricing.line_total(3.0, -1)",
+   "exc": "ValueError"
+  },
+  "rejected": [
+   "abs("
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t07-money-negative-zero",
+  "prompt": "report.money(-0.001) prints \"$-0.00\". A value that rounds to zero must print \"$0.00\".",
+  "must_change": [
+   "shop/report.py"
+  ],
+  "must_not_change": [
+   "shop/pricing.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "expr": "report.money(-0.001) == '$0.00'"
+  },
+  "rejected": [
+   "replace('-0.00'"
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t08-tax-is-a-constant",
+  "prompt": "The tax rate must be settable per call. Add an optional tax argument to order_total that defaults to the current TAX, without changing what existing callers get.",
+  "must_change": [
+   "shop/pricing.py"
+  ],
+  "must_not_change": [
+   "shop/report.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "expr": "abs(pricing.order_total([(10.0, 1)], tax=0.0) - 10.0) < 1e-9 and abs(pricing.order_total([(10.0, 1)]) - 10.7) < 1e-9"
+  },
+  "rejected": [
+   "global TAX"
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t09-release-unknown-sku",
+  "prompt": "inventory.release must refuse a negative quantity with ValueError, because releasing a negative amount silently reserves stock.",
+  "must_change": [
+   "shop/inventory.py"
+  ],
+  "must_not_change": [
+   "shop/pricing.py",
+   "shop/report.py"
+  ],
+  "behaviour": {
+   "raises": "inventory.release({'a': 1}, 'a', -5)",
+   "exc": "ValueError"
+  },
+  "rejected": [
+   "abs("
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ },
+ {
+  "id": "t10-percent-over-one",
+  "prompt": "report.percent(5, 4) prints \"125.0%\", which the report has no room for. Clamp the printed value at 100.0%, leaving smaller values exactly as they are.",
+  "must_change": [
+   "shop/report.py"
+  ],
+  "must_not_change": [
+   "shop/pricing.py",
+   "shop/inventory.py"
+  ],
+  "behaviour": {
+   "expr": "report.percent(5, 4) == '100.0%' and report.percent(1, 4) == '25.0%'"
+  },
+  "rejected": [
+   "round("
+  ],
+  "regression": {
+   "cmd": [
+    "python3",
+    "tests/test_shop.py"
+   ],
+   "expect_exit": 0
+  }
+ }
+]
