@@ -13276,7 +13276,14 @@ ws.ensure(_tid)
 for _n in ("a.sh", "b.sh", "c.sh"):
     tools_index.register(_tid, {"name": _n, "desc": "x"})
 _tilock = Path(str(tools_index.path(_tid)) + ".lock")
-_tilock.write_text("", encoding="utf-8")
+# 🐛 [2026-09-23] (self-measured) This lock was planted EMPTY, which `_lock_holder_state` reads as
+# UNKNOWN — the one state `exclusive` leaves to the age rule. So whether the fixture survived to
+# the checks below depended on how long the two calls took, and that is a clock dependency in a
+# test whose whole subject is what a caller does when it CANNOT take the lock. Measured: one
+# clean-checkout run in ten failed all three of these while the full gate and five CI jobs passed
+# on the same commit. A lock naming a LIVE process can be reclaimed by neither branch that unlinks
+# one — not the DEAD branch, not the age rule — so the fixture no longer has a timing window at all.
+_tilock.write_text(f"{os.getpid()}\n{ws._own_process_started()}\n", encoding="utf-8")
 check("a background counter DROPS its increment rather than write an unserialised snapshot",
       tools_index.record_call(_tid, "a.sh") == (None, False))
 _raised = False
@@ -13288,9 +13295,9 @@ check("...while a destructive remove REFUSES, because losing that race resurrect
       _raised)
 check("...and neither of them damaged the registry",
       [e["name"] for e in tools_index.load(_tid)] == ["a.sh", "b.sh", "c.sh"])
-# missing_ok: `exclusive` removes a lock it judges stale, so a slow suite can clear this one
-# before the test does. The behaviour under test is what the three callers do when they cannot
-# take the lock, not who tidies it up afterwards.
+# missing_ok is kept: the lock naming this live process cannot be reclaimed any more, but the
+# behaviour under test is what the three callers do when they cannot take the lock, not who
+# tidies it up afterwards, and this line should not be the thing that fails.
 _tilock.unlink(missing_ok=True)
 check("...and with the lock free, remove works normally",
       tools_index.remove(_tid, "a.sh") is not None)
@@ -20472,6 +20479,10 @@ else:
 # "acquired" and made the guard decorative.
 _dp_held_lock = Path(str(_dp_target) + ".lock")
 _dp_fd = os.open(str(_dp_held_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+# The same clock dependency as the tools-registry lock above, and it is here for the same
+# reason: an fd held open still leaves the lock FILE empty, so `_lock_holder_state` reads
+# UNKNOWN and the age rule is all that is left holding this fixture up.
+os.write(_dp_fd, f"{os.getpid()}\n{ws._own_process_started()}\n".encode())
 try:
     _dp_t0 = time.time()
     with ws.exclusive(_dp_target) as _dp_busy:
