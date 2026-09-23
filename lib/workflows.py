@@ -57,6 +57,22 @@ KEYWORDS = {
 }
 
 MIN_LENGTH = 3        # distinct signatures before a run counts as a workflow
+# 🐛 [2026-09-23] `len(set(s)) >= MIN_LENGTH` is an ABSOLUTE floor, so an eight-step sequence
+# holding `python3` five times passed on the same evidence as three genuinely different steps. Nine
+# candidates were queued in this repository and seven of them were that shape —
+# `python3 → python3 → python3 → python3 → python3 → git add → git commit`, seen on three days.
+# That is not a procedure. It is the background rate of the commonest command in the tree:
+# `python3` is 1,847 of 6,398 recorded commands here, 29%, so a run of it recurring says nothing
+# a reader could act on.
+#
+# 🔴 The rule is about INFORMATION rather than length. A procedure may legitimately invoke the
+# same tool twice — build then test, add then commit — but a step appearing three or more times in
+# one sequence is repetition, not structure. Measured against the nine real candidates: this keeps
+# the two that read as procedures (`python3 track_traffic.py → gh pr → gh issue → gh api` and
+# `xargs → git add → git commit → git log`) and drops all seven made of a repeated command.
+# A share threshold was tried first and kept two of the seven at exactly 50%, which is how a
+# number chosen for looking reasonable differs from one chosen by testing it.
+MAX_REPEATS = 2       # a step occurring more often than this is repetition, not a step
 REPEAT_AT = 3         # say something on the third occurrence
 SIMILAR = 0.55        # Jaccard at or above this counts as "the same script again"
 
@@ -546,6 +562,12 @@ def _runs(history):
     return runs
 
 
+def _informative(sequence):
+    """False when one step dominates the sequence — see MAX_REPEATS for why that is not a workflow."""
+    import collections as _c
+    return max(_c.Counter(sequence).values(), default=0) <= MAX_REPEATS
+
+
 def repeated(history):
     """The longest sequence that has occurred REPEAT_AT times on distinct days, or None.
 
@@ -587,7 +609,7 @@ def repeated(history):
         if not surviving:
             break
         qualifying = [(s, days) for s, days in surviving.items()
-                      if len(set(s)) >= MIN_LENGTH]
+                      if len(set(s)) >= MIN_LENGTH and _informative(s)]
         if qualifying:
             # Longest wins: the fuller sequence is the more useful thing to write down, and a
             # shorter one contained inside it says less. Levels ascend, so a later one replaces.
