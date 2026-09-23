@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse hook — when a command starts a kind of work, name the procedure that covers it.
 
-ENFORCES: memory/rules/check-for-a-skill-first-and-extend-it-not-fork-it.md, and the session-start
+ENFORCES: memory/rules/check-for-a-skill-first-and-extend-it-not-fork-it.md
+ENFORCES: memory/rules/how-a-blocked-decision-gets-made.md
+# That rule's own text says its content lives in `working_a_research_round.md` and that the
+# copy actually read was always the skill's — so routing to the skill IS the machine for it., and the session-start
 block's own instruction to read the matching procedure before starting that kind of task.
 
 🐛 [2026-09-18] (R26.5) The instruction has been in the block every session since the workspace existed, and

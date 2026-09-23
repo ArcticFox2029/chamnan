@@ -1,6 +1,9 @@
 """This edit's text also lives in N other files — said before the cut, not after the bug.
 
 ENFORCES: memory/rules/the-set-not-the-member.md
+ENFORCES: memory/rules/pause-and-zoom-out-at-milestones.md
+# The pause's first question is "what else is shaped like the thing I just changed?" —
+# which is this search, asked at the moment of the change instead of at the milestone.
 
 🎯 [owner] The most-recorded failure in this workspace: a fix lands on one member of a set and is
 forgotten in the identical ones beside it. Eighteen instances were counted before this was written,
