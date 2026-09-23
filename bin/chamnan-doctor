@@ -156,13 +156,13 @@ def which_artefacts(root, wsdir, lines):
         return
     head = _git(root, "rev-parse", "HEAD")
     age = _age_days(amap)
-    # 🐛 [2026-09-23] The first version only asked whether the CURRENT sha appeared in the file, so
+    # 🐛 [2026-09-23] (self-measured) The first version only asked whether the CURRENT sha appeared in the file, so
     # a map built forty commits ago and one built ten minutes ago both read "no current stamp" —
     # true, and useless. The stamp is read and the distance counted, because "31 commits behind" is
     # a thing somebody acts on and "not current" is a thing somebody scrolls past.
     stamped = ""
     try:
-        # 🐛 [2026-09-23, minutes later] `commit <sha>` matched a sha quoted inside a FILE
+        # 🐛 [2026-09-23, minutes later] (self-measured) `commit <sha>` matched a sha quoted inside a FILE
         # DESCRIPTION — a test's blurb naming the commit it was written for — and the doctor
         # compared the repository's HEAD against a commit from a different repository entirely.
         # The map's own stamp is the literal `Built from <sha>` in its header. Mention is not use,

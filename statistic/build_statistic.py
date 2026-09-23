@@ -262,7 +262,7 @@ def impact():
     ptr = rows("pointer.jsonl")
     named = sum(1 for r in ptr if r.get("named"))
     longs = len(rows("long_reads.jsonl"))
-    # 🐛 [2026-09-23] This read a `seen` field that scratch.jsonl has never carried, so the count
+    # 🐛 [2026-09-23] (self-measured) This read a `seen` field that scratch.jsonl has never carried, so the count
     # was silently zero. A repeat is a FINGERPRINT that appears more than once — which is what the
     # watcher itself keys on, and the only definition the rows support.
     seen = collections.Counter(tuple(r.get("fp") or ()) for r in rows("scratch.jsonl") if r.get("fp"))
@@ -428,7 +428,7 @@ def series():
         except OSError:
             continue
 
-    # 🐛 [2026-09-23] The hero compared a lifetime total against a figure that only starts when
+    # 🐛 [2026-09-23] (self-measured) The hero compared a lifetime total against a figure that only starts when
     # the local recorder did — 24,671x, which is not a ratio of anything. Both sides are counted
     # PER DAY now, so the picker drives a comparison over one window instead of two.
     # \U0001F534 The same cached scan `token_kinds` uses, so the two panels cannot disagree about a
@@ -604,7 +604,7 @@ def features():
     # so `silence.py` cannot see them either — a feature with no recorder is invisible to the tool
     # built to find invisible features, which is exactly why the page has to say the name out loud.
     for name in ("boundary guard", "canonical invocation", "sibling sweep", "recorded lesson"):
-        # 🐛 [2026-09-23] These carried `source: "no recorder yet"`, and the page split the
+        # 🐛 [2026-09-23] (self-measured) These carried `source: "no recorder yet"`, and the page split the
         # two groups on `x.source` being truthy — a non-empty string is truthy, so every guard
         # landed in the MEASURED group, four of them drew a meaningless 0/0 bar, and the sentence
         # naming the ones nothing records never rendered at all. The absent half is `fired`, so
@@ -662,7 +662,7 @@ def mistakes():
     return {"failures": len(fails),
             "repeats": sum(v - 1 for v in keyed.values() if v > 1),
             "per_day": sorted(per_day.items(), reverse=True)[:DAYS],
-            # 🐛 [2026-09-23] "the recorder was starved" was the symptom, and the cause is worth
+            # 🐛 [2026-09-23] (self-measured) "the recorder was starved" was the symptom, and the cause is worth
             # saying because it is the shape that hides every other empty panel: the hook was
             # registered on PostToolUseFailure alone, which fires when a TOOL CALL fails. A shell
             # command that exits non-zero is a tool call that SUCCEEDED and reported a failure, so
@@ -757,7 +757,7 @@ def local_model():
 # claims a coverage nothing has. `other` is the deliberate catch-all: a pattern this table does
 # not recognise still lands somewhere and is still counted, so the total can never quietly shrink.
 SECURITY_FAMILIES = [
-    # 🐛 [2026-09-23] Three patterns landed in the wrong family on the first run, all from one
+    # 🐛 [2026-09-23] (self-measured) Three patterns landed in the wrong family on the first run, all from one
     # cause: a marker that matched a regex's PUNCTUATION rather than the literal it was aimed at.
     # `://` was written for the `scheme://user:pass@host` rule and matched both webhook URLs
     # instead; `sk-` missed `sk_live_`, which is an underscore; and the Authorization rule is

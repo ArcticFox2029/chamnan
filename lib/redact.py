@@ -1078,7 +1078,7 @@ BLOCKED_SUFFIXES = (
 # `.pgpass` and `pgpass.conf` are libpq's password file in its two spellings, and every line in one
 # ends with the password in clear. All four are credential stores whose whole content is the secret,
 # which is the property this list is for — not "a file that might contain one".
-# 🐛 [2026-09-23] `secrets.yml` and `secrets.yaml` were named one by one, so `secrets.toml` —
+# 🐛 [2026-09-23] (self-measured) `secrets.yml` and `secrets.yaml` were named one by one, so `secrets.toml` —
 # the file Streamlit puts live API keys in, and the one this very repository keeps them in — was
 # not refused. Two members of a set were fixed and the identical ones beside them were not, which
 # is this project's most repeated defect and the reason the entry is now the STEM.
@@ -2913,7 +2913,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     # (38 secrets, 30 decoys) before and after — identical results, not merely a similar score.
     if "=>" in text:
         text = ROCKET_SECRET.sub(
-            # 🐛 [2026-09-23] This passed group(2) — the QUOTE CHARACTER — as the value, so every
+            # 🐛 [2026-09-23] (self-measured) This passed group(2) — the QUOTE CHARACTER — as the value, so every
             # value-side question `_names_a_mechanism` asks was being asked about `'`. The value is
             # group 3. Found by the placeholder exemption failing in exactly two of the seven
             # carriers, which is how a value-blind guard shows itself at all.

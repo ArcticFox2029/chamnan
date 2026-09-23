@@ -2610,6 +2610,35 @@ def _is_planted_invisible(ch):
     return unicodedata.category(ch) == "Cf" or ch in _INVISIBLE_VARIATION_SELECTORS
 
 
+# A credential broken in half by a source formatter and rejoined by the language, not by us.
+# `("ghp_" "EXAMPLEEXAMPLE…")` is ONE value to Python, C, and every reader; to a pattern list it is
+# a four-character prefix and a harmless word. Both halves are quoted separately, so nothing here
+# anchors on either.
+_SPLIT_JOIN = _lazy(lambda: re.compile(
+    r"""(?<=[A-Za-z0-9_\-])            # the end of the first half
+        (["'])\s*(?:\+\s*)?\1          # "…" "…"  or  "…" + "…", across a newline too
+        (?=[A-Za-z0-9_\-])              # the start of the second""", re.VERBOSE))
+
+
+def _unmask_split_credentials(text):
+    """`text` with adjacent string literals joined, so a value the source splits is seen whole.
+
+    🐛 [2026-09-24] (self-measured) Found by running chamnan over chamnan-corpus, case A9. A deploy key written the
+    way a formatter leaves it -- `("ghp_"\n "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234")` -- reached
+    `MAP.md` complete, because every prefix rule in this module requires the prefix and the body to
+    be CONTIGUOUS and here they are two quoted strings. The file the plugin encourages committing
+    published a GitHub token with a quote-space-quote in the middle of it, which anybody reading it
+    reassembles without noticing they did.
+
+    The same contract as the two disguises above, and for the same reason: joining is a change to
+    the reader's text, so `scrub` keeps the result only when it actually redacts MORE. That is what
+    lets this rule be shaped broadly -- it undoes an ordinary, extremely common source construct --
+    without the false positives a broad rule would otherwise cost. A line of prose containing
+    `"a" "b"` is rewritten and then thrown away, because nothing in it matched.
+    """
+    return _SPLIT_JOIN.sub("", text) if ('"' in text or "'" in text) else text
+
+
 def _unmask_invisible_secret_words(text):
     """`text` with ONLY the credential words an invisible codepoint is splitting rewritten whole.
 
@@ -2793,6 +2822,15 @@ def scrub(text, windowed=True, *, _unmask=True):
         _destripped = _unmask_invisible_secret_words(text)
         if _destripped is not text:
             _with = scrub(_destripped, windowed, _unmask=False)
+            _without = scrub(text, windowed, _unmask=False)
+            return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
+        # A third disguise, same contract again: the value is not spelled oddly and nothing is
+        # hidden inside it -- the SOURCE simply wrote it as two adjacent string literals. Checked
+        # last because it is the only one of the three that rewrites text outside a credential
+        # name, so it gets to run only when neither of the others found anything to undo.
+        _joined = _unmask_split_credentials(text)
+        if _joined is not text and _joined != text:
+            _with = scrub(_joined, windowed, _unmask=False)
             _without = scrub(text, windowed, _unmask=False)
             return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
     text = _redact_kubernetes_secret_data(text)

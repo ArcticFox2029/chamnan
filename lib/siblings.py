@@ -36,7 +36,7 @@ _SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"
 def _candidates(target, root):
     """Files that could plausibly be the same KIND of thing as `target`.
 
-    🐛 [2026-09-23] The first version walked the whole repository and took 2.7 seconds on a real
+    🐛 [2026-09-23] (self-measured) The first version walked the whole repository and took 2.7 seconds on a real
     edit — for a notice, on every edit, which is a guard somebody switches off by lunchtime. It
     starts at the target's own directory and widens only while it has found too few to compare
     against, because the rule's own words are "the identical ones BESIDE it": a sibling three
@@ -89,7 +89,7 @@ def advice(tool, tool_input, root):
     target = tool_input.get("file_path") or ""
     if not target:
         return ""
-    # 🐛 [2026-09-23] A replace_all edit is already the whole-set answer for THIS file, but says nothing about
+    # 🐛 [2026-09-23] (self-measured) A replace_all edit is already the whole-set answer for THIS file, but says nothing about
     # the files beside it — so it is checked exactly like any other.
     hits = also_in(needle, target, root)
     if not hits:

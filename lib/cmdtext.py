@@ -8,7 +8,7 @@ Two guards ask this and want DIFFERENT answers, which is why it is a parameter a
   dropping it there would hide the exact thing that rule exists to catch. It keeps heredocs and
   drops only what is unambiguously commentary.
 
-🐛 [2026-09-23] Both lessons were live incidents an hour apart: the pointer fired on a commit
+🐛 [2026-09-23] (self-measured) Both lessons were live incidents an hour apart: the pointer fired on a commit
 message, and the boundary guard fired on a heredoc that was WRITING A TEST about `defaults write`.
 The first is noise to remove; the second is the guard working, and was left alone.
 """
@@ -17,7 +17,7 @@ import re
 # Everything after a heredoc marker is body — greedy and un-anchored on purpose. A non-greedy
 # `[\s\S]*?$` under re.MULTILINE stops at the first newline and leaves the body matching.
 _HEREDOC = re.compile(r"<<-?'?\w+'?[\s\S]*")
-# 🐛 [2026-09-23] `drop_heredoc=False` made the boundary guard fire on its OWN commit message,
+# 🐛 [2026-09-23] (self-measured) `drop_heredoc=False` made the boundary guard fire on its OWN commit message,
 # which named the rule's command list inside `git commit -F - <<EOF`. A heredoc is only executable
 # when an interpreter is reading it; one going to `git commit -F -`, `cat > file` or `tee` is data.
 # So the question is not "is there a heredoc" but "is something about to RUN it".

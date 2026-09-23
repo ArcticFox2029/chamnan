@@ -44,14 +44,14 @@ _OS_MUTATORS = (
     (r"\bchsh\b|\bdseditgroup\b|\bvisudo\b", "an account or privilege change"),
 )
 # Verbs that write to whatever path follows them. The path itself decides, not the verb.
-# 🐛 [2026-09-23] `sed 's/^/    /'` raised "this writes to `/`" — plain `sed` writes nothing, and
+# 🐛 [2026-09-23] (self-measured) `sed 's/^/    /'` raised "this writes to `/`" — plain `sed` writes nothing, and
 # the `/` came out of its SCRIPT. Only `sed -i` edits a file, and a one-character path is never a
 # target anybody typed.
 _WRITERS = re.compile(
     r"(?:^|[|;&]\s*)(?:sudo\s+)?(rm|mv|cp|tee|install|truncate|chmod|chown|ln|mkdir|touch"
     r"|sed\s+-i)\b([^|;&]*)", re.MULTILINE)
 _REDIRECT_OP = re.compile(r"(?<![0-9<>])>{1,2}(?![>&])")
-# 🐛 [2026-09-23, second correction] `sed -i '' '0,/^import /s//from pathlib import Path/'`
+# 🐛 [2026-09-23, second correction] (self-measured) `sed -i '' '0,/^import /s//from pathlib import Path/'`
 # raised "this writes to `/s//from`" — the slashes came out of the sed SCRIPT, which is quoted.
 # A quoted argument is a pattern, a message or a script; the path a writer touches is unquoted.
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
@@ -78,7 +78,7 @@ def _inside(path, root):
         return False
 
 
-# 🐛 [2026-09-23] `python3 x --help >/dev/null` raised the 🔴 notice. `/dev/null` is the universal
+# 🐛 [2026-09-23] (self-measured) `python3 x --help >/dev/null` raised the 🔴 notice. `/dev/null` is the universal
 # discard and the other two are the process's own streams — none of them is machine state, and a
 # guard that fires on `>/dev/null` fires on a large share of all shell commands ever typed.
 _DISCARD = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/")
@@ -99,13 +99,13 @@ def _outside_targets(command, root):
     candidates = []
     for m in _WRITERS.finditer(command):
         candidates += _PATHISH.findall(_QUOTED.sub(" ", m.group(2)))
-    # 🐛 [2026-09-23] A redirect INSIDE a quoted string is text, not a redirect: `echo 'hi > /etc/passwd'`
+    # 🐛 [2026-09-23] (self-measured) A redirect INSIDE a quoted string is text, not a redirect: `echo 'hi > /etc/passwd'`
     # writes nothing. Quoted regions are masked to spaces so offsets survive, the operator is found
     # in the masked copy, and the target is then read from the ORIGINAL — because a quoted PATH,
     # `echo x > "/etc/hosts"`, is a real write and must still be seen.
     masked = _QUOTED.sub(lambda m: " " * len(m.group(0)), command)
     for m in _REDIRECT_OP.finditer(masked):
-        # 🐛 [2026-09-23] The masked copy is searched for the OPERATOR only: a quoted target is spaces there, so
+        # 🐛 [2026-09-23] (self-measured) The masked copy is searched for the OPERATOR only: a quoted target is spaces there, so
         # a pattern that also demands a target finds nothing and `echo x > "/etc/hosts"` goes
         # unseen. The target is then taken from the original, quotes and all.
         raw = re.sub(r"^>{1,2}\s*", "", command[m.start():]).split()
@@ -134,7 +134,7 @@ def advice(tool, tool_input, root):
     if tool != "Bash":
         return ""
     import cmdtext
-    # 🐛 [2026-09-23] Fired on a heredoc that was WRITING A TEST about `defaults write`. Only the
+    # 🐛 [2026-09-23] (self-measured) Fired on a heredoc that was WRITING A TEST about `defaults write`. Only the
     # unambiguous commentary is dropped — a commit message and a `#` comment. Heredocs STAY: one
     # fed to `python3 -` or `bash -s` is executed, and hiding it would blind the rule that matters
     # most. For this guard a false positive costs a sentence; a false negative cost the owner data.

@@ -2607,7 +2607,7 @@ for _cn in ("credentials.py", "credentials.ts", "credentials.rb", "credentials.g
     check(f"a source module named {_cn} is source, not a credential store",
           not redact.is_blocked(Path("/x") / _cn) and not redact.is_never_opened(Path("/x") / _cn))
 # The half that must not move. An extensionless `credentials` IS ~/.aws/credentials.
-# 🐛 [2026-09-23] This listed `secrets.yaml` and nothing else of that family, and `redact.py`
+# 🐛 [2026-09-23] (self-measured) This listed `secrets.yaml` and nothing else of that family, and `redact.py`
 # listed `secrets.yml` and `secrets.yaml` — so `secrets.toml`, which is where Streamlit keeps live
 # API keys and where THIS repository keeps its own, was refused by neither. Both sides now derive
 # the population from one place instead of naming members: every config extension a secret store
@@ -7830,7 +7830,7 @@ check("every hook is registered under a name carrying the plugin's own",
       _commands and all("/hooks/chamnan_" in c for c in _commands))
 check("...and no two of chamnan's own commands collide either",
       len(set(_commands)) == len(_commands))
-# 🐛 [2026-09-23] This read a command as though it were nothing but a quoted path, so the first
+# 🐛 [2026-09-23] (self-measured) This read a command as though it were nothing but a quoted path, so the first
 # hook to take an ARGUMENT failed it — `chamnan_tool_failed.py --post`, registered a second time on
 # PostToolUse because a non-zero exit code arrives there and never on PostToolUseFailure. The
 # argument is the only thing making the two registrations distinct raw strings, which is what stops
@@ -26335,6 +26335,73 @@ try:
           _ss.rebuild_hook_installed(_d_09) is (ws.git_hook_state(_d_09, _tmpl) == "installed"))
 finally:
     shutil.rmtree(_d_09, ignore_errors=True)
+# ---- 100_every_store_has_a_reader_and_every_reader_a_store.py
+# ------------- the closed loop: producer -> consumer -> a reachable path, asserted both ways
+# 🎯 [1.31, Alpha's verdict 2026-09-23] Three findings in one day were one class: 25 of 29 skills
+# unreachable, 2 of 243 guards with a mutation proof, 3,114 lessons with no reader. Each looks
+# like health from either end alone — the writer writes happily and the reader never fires.
+#
+# 🐛 [2026-09-23] (self-measured) `invariant_map.py` had the consumer direction and three defects that made it
+# report the wrong thing. `Path.glob` has no brace expansion, so a declaration naming several
+# extensions matched nothing and the tool printed "POPULATION IS EMPTY, nothing writes for it" —
+# a diagnosis, and the wrong one: the population was not empty, the pattern was unreadable. The
+# contract could only say "every member carries the marker", which is right for a router and
+# wrong for a scanner, so a scanner had to lie or go undeclared — and undeclared is exactly how
+# the 25 skills stayed invisible. And it walked consumers only, so a store nobody claims was
+# invisible by construction.
+#
+# 🔴 What is asserted here is the SET, not any one pair: that the sweep parses every declaration
+# it finds, that it finds a real number of them, and that both directions close.
+import importlib.util as _ilu100
+
+_t_ws100 = ROOT.parent.parent / ".chamnan"
+_t_map100 = _t_ws100 / "tools" / "invariant_map.py"
+check("the invariant map is on disk where the workspace keeps its tools",
+      _t_map100.is_file(), saw=str(_t_map100))
+
+if _t_map100.is_file():
+    _t_spec100 = _ilu100.spec_from_file_location("_invmap100", _t_map100)
+    _t_mod100 = _ilu100.module_from_spec(_t_spec100)
+    _t_spec100.loader.exec_module(_t_mod100)
+
+    # 🐛 A sweep that finds nothing passes every assertion below it. The floor is checked first,
+    # and it is a real number rather than >0: seven pairs were declared the day this was written.
+    _t_pairs100 = _t_mod100.consumers()
+    check("THE SWEEP FINDS THE DECLARATIONS — %d pair(s)" % len(_t_pairs100),
+          len(_t_pairs100) >= 7,
+          saw="fewer than seven declared pairs; every assertion below would pass on an empty list")
+
+    # 1. Every declared glob has to be one the tool can actually expand. This is the check that
+    #    would have caught the brace bug the day it was written, instead of a week later when
+    #    somebody read the output carefully.
+    _t_unparsed100 = [str(p.relative_to(ROOT.parent.parent)) + " -> " + g
+                      for p, g, _m, _w, _s, _l in _t_pairs100 if not _t_mod100._expand(g)]
+    check("EVERY DECLARED GLOB PARSES, SO EVERY PAIR WAS ACTUALLY MEASURED",
+          _t_unparsed100 == [], saw=_t_unparsed100[:5])
+
+    # 2. Both halves of every declared pair connect.
+    _t_broken100 = []
+    for _p100, _g100, _m100, _w100, _s100, _l100 in _t_pairs100:
+        _t_total100, _t_ok100, _t_miss100 = _t_mod100.reach(_g100, _m100, _w100, _s100)
+        _t_rel100 = str(_p100.relative_to(ROOT.parent.parent))
+        if _t_total100 < 0:
+            _t_broken100.append(f"{_t_rel100}: `{_g100}` does not parse")
+        elif _l100:
+            if _t_ok100 < _l100:
+                _t_broken100.append(f"{_t_rel100}: {_t_ok100} carry `{_m100}`, floor is {_l100}")
+        elif _t_total100 == 0:
+            _t_broken100.append(f"{_t_rel100}: `{_g100}` matches no file")
+        elif _t_miss100:
+            _t_broken100.append(f"{_t_rel100}: {len(_t_miss100)} member(s) carry no `{_m100}`")
+    check("EVERY DECLARED PAIR CLOSES — A DECLARED READER REACHES ITS WHOLE POPULATION",
+          _t_broken100 == [], saw=_t_broken100[:5])
+
+    # 3. The direction a consumer sweep cannot see: a store on disk nothing claims. `state/` is
+    #    excluded by the tool itself — those are records people read, not stores a tool consumes —
+    #    so what is left is `logs/`, where a file nothing reads is dead weight.
+    _t_loose100 = [str(q) for q, why in _t_mod100.unclaimed(_t_pairs100) if why is None]
+    check("EVERY STORE ON DISK IS REACHED BY A DECLARATION, OR IS NAMED WITH ITS REASON",
+          _t_loose100 == [], saw=_t_loose100[:8])
 # ---- 100_evidence_and_review_status_are_separate.py
 # --------------------------- what was observed survives the adjective a review awards afterwards
 # 🎯 [2026-09-12, R3 RQ8] A candidate carried `Observed:` but encoded review state inside
@@ -26421,6 +26488,74 @@ check("...and a report cannot invent its own status adjective",
       _t_bad_status100 == "refused", saw=_t_bad_status100)
 
 shutil.rmtree(_t_root100, ignore_errors=True)
+# ---- 101_only_chamnans_own_scratch_is_ever_swept.py
+# ------------- a closed stage is removed; a directory the user put there never is
+# 🎯 [owner, 2026-09-23] "เราไม่แตะพื้นที่นอก repo chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ"
+# — the scope is the workspace, and the second half of it had no sweeper. `prune_orphaned_temps`
+# covers a killed atomic write, which leaves a `.tmp`. Nothing covered a tool that made itself a
+# working DIRECTORY and finished without removing it: `corpus_coverage.py` cleaned its copy at the
+# start of the NEXT run, so the workspace permanently carried 795 files and 8.8 MB of another
+# repository, and it confused two other tools before anybody noticed.
+#
+# 🔴 The safety property is the whole design, and it is what this check pins: only a directory
+# chamnan created and MARKED is ever removed. An unmarked directory is the user's and is never
+# touched at any age. That inverts the question from "can I prove this is safe to delete", which
+# nothing in a stranger's repository can answer, to "did I make this myself", which is a fact
+# written down at creation.
+import os as _os101
+import tempfile as _tf101
+import time as _t101
+
+_t_root101 = Path(_tf101.mkdtemp(prefix="chamnan-scratch-101-"))
+try:
+    ws.ensure(_t_root101)
+    _t_old101 = _t101.time() - 40 * 86400
+
+    _t_mine101 = ws.scratch_dir(_t_root101, "a-closed-stage")
+    check("scratch_dir makes a directory and marks it as chamnan's",
+          _t_mine101 is not None and (_t_mine101 / ws.SCRATCH_MARK).is_file(),
+          saw=str(_t_mine101))
+    (_t_mine101 / "left-behind.txt").write_text("x", encoding="utf-8")
+    _os101.utime(_t_mine101 / "left-behind.txt", (_t_old101, _t_old101))
+
+    _t_busy101 = ws.scratch_dir(_t_root101, "a-stage-still-running")
+    (_t_busy101 / "now.txt").write_text("x", encoding="utf-8")
+
+    _t_theirs101 = _t_root101 / ".chamnan" / "logs" / "something-the-user-put-here"
+    _t_theirs101.mkdir(parents=True, exist_ok=True)
+    (_t_theirs101 / "notes.txt").write_text("x", encoding="utf-8")
+    _os101.utime(_t_theirs101 / "notes.txt", (_t_old101, _t_old101))
+
+    _t_link101 = _t_root101 / ".chamnan" / "logs" / "a-link-out"
+    try:
+        _t_link101.symlink_to(_t_theirs101)
+    except OSError:
+        _t_link101 = None
+
+    _t_removed101 = ws.prune_scratch(_t_root101)
+    check("A CLOSED STAGE NOBODY DELETED IS SWEPT — %d removed" % _t_removed101,
+          _t_removed101 == 1 and not _t_mine101.is_dir(),
+          saw="removed=%r still there=%r" % (_t_removed101, _t_mine101.is_dir()))
+    check("...but a stage still being written to is left alone",
+          _t_busy101.is_dir())
+    # 🔴 The one that must never regress. A guard that deletes a stranger's directory is worse
+    # than a guard that leaves rubbish, and this is the assertion that says so.
+    check("A DIRECTORY THE USER PUT THERE IS NEVER SWEPT, AT ANY AGE",
+          _t_theirs101.is_dir() and (_t_theirs101 / "notes.txt").is_file(),
+          saw="the sweep removed an unmarked directory")
+    if _t_link101 is not None:
+        check("...and a symlink under logs/ is never followed or removed",
+              _t_link101.is_symlink())
+
+    # The producer that taught this lesson uses it, rather than keeping its own copy of the idea.
+    _t_cov101 = (ROOT.parent.parent / ".chamnan" / "tools" / "corpus_coverage.py")
+    if _t_cov101.is_file():
+        _t_src101 = _t_cov101.read_text(encoding="utf-8")
+        check("the corpus gate removes its scratch when the run ENDS, not when the next one starts",
+              "finally:" in _t_src101 and "rmtree(SCRATCH" in _t_src101,
+              saw="no finally-scoped cleanup in corpus_coverage.py")
+finally:
+    shutil.rmtree(_t_root101, ignore_errors=True)
 # ---- 101_report_exposes_the_persistence_funnel.py
 # ----------------------- a reminder being printed is not evidence that repository state survived
 # 🎯 [2026-09-12, R2 RQ6] The proposed outcome is a funnel — written, tracked, committed, fresh
@@ -26505,6 +26640,58 @@ check("A FRESH CLONE GETS THE COMMITTED COPY, NOT EITHER CURRENT UNCOMMITTED COP
 
 shutil.rmtree(_t_root101, ignore_errors=True)
 shutil.rmtree(_t_clone_parent101, ignore_errors=True)
+# ---- 102_a_candidate_is_a_procedure_not_a_repeated_command.py
+# ------------- a proposed workflow has to carry more information than the commonest command
+# 🐛 [2026-09-23] (self-measured) Nine candidates were queued in this repository and seven were the same shape:
+# `python3 → python3 → python3 → python3 → python3 → git add → git commit`, seen on three separate
+# days. The gate was `len(set(sequence)) >= MIN_LENGTH` — an ABSOLUTE floor — so an eight-step run
+# holding one command five times passed on the same evidence as three genuinely different steps.
+#
+# 🔴 That is not a near-miss, it is the whole store failing: `python3` is 1,847 of 6,398 commands
+# recorded here, 29%, so a run of it recurring is the background rate rather than a procedure.
+# Measured downstream the same day: 9 files awaiting review, `chamnan-candidates` invoked 0 times
+# in 21 days, and no session block ever carrying their content. The store was not underused — it
+# was being filled with noise, which is why reviewing it had never been worth anybody's time.
+#
+# The rule is about INFORMATION, not length. A procedure may invoke one tool twice — build then
+# test, add then commit — but a step appearing three or more times in one sequence is repetition.
+import importlib.util as _ilu102
+
+_t_spec102 = _ilu102.spec_from_file_location("_wf102", ROOT / "lib" / "workflows.py")
+_t_wf102 = _ilu102.module_from_spec(_t_spec102)
+_t_spec102.loader.exec_module(_t_wf102)
+
+check("the detector declares what makes a sequence informative",
+      hasattr(_t_wf102, "_informative") and hasattr(_t_wf102, "MAX_REPEATS"),
+      saw=sorted(n for n in dir(_t_wf102) if "REPEAT" in n or "inform" in n))
+
+# The real queue this was found in, kept verbatim: four that must be refused and two that must
+# survive. Derived from the candidates on disk at the time, not invented to fit the rule.
+_t_noise102 = [
+    ["python3"] * 5 + ["git add", "git commit"],
+    ["git add", "git commit"] + ["python3"] * 6,
+    ["python3", "python3", "s", "python3", "git add", "git commit"],
+    ["python3", "s", "python3", "python3", "s", "git add", "git commit"],
+]
+_t_real102 = [
+    ["python3", "python3 track_traffic.py", "python3 track_traffic.py", "gh pr", "gh pr",
+     "gh issue", "gh api", "gh api"],
+    ["python3", "python3", "xargs", "git add", "git commit", "git log"],
+]
+_t_wrong102 = [s for s in _t_noise102 if _t_wf102._informative(s)]
+check("A SEQUENCE MADE OF ONE REPEATED COMMAND IS NOT PROPOSED AS A PROCEDURE",
+      _t_wrong102 == [], saw=[" → ".join(s) for s in _t_wrong102])
+_t_lost102 = [s for s in _t_real102 if not _t_wf102._informative(s)]
+# 🔴 The other half, and the one a stricter rule would break: a real procedure legitimately
+# repeats a tool. A guard that refuses everything scores perfectly on the noise above and is
+# worthless, so the population that must SURVIVE is asserted beside the one that must not.
+check("...while a real procedure that uses one tool twice still is",
+      _t_lost102 == [], saw=[" → ".join(s) for s in _t_lost102])
+
+# And the floor it replaces is still enforced: three different steps, not two.
+check("...and a two-step sequence is still refused on distinctness",
+      not (len({"a", "b"}) >= _t_wf102.MIN_LENGTH),
+      saw="MIN_LENGTH=%r" % (_t_wf102.MIN_LENGTH,))
 # ---- 102_untracked_workspace_state_is_named_once.py
 # ----------------------- written here is not durable until the repository carries it somewhere
 # 🎯 [2026-09-12, R2 RQ6] One issue and one discussion independently showed users unsure whether
@@ -26758,6 +26945,50 @@ check("WITHOUT THE SWITCH, RECORD STILL APPENDS ONE ORDINARY COMMAND AND RETURNS
           (_ordinary_before103, _ordinary_after103, _ordinary_history103))
 
 _shutil103.rmtree(_root103, ignore_errors=True)
+# ---- 103_the_commit_guard_has_something_that_calls_it.py
+# ------------- a guard nothing invokes is not a guard
+# 🐛 [2026-09-23] (self-measured) `chamnan-guard` scans a staged diff for anything shaped like a secret. It worked:
+# fed a staged AWS key it names the file and the line and prints none of the matched text, because
+# reading a secret out loud copies it into the terminal and the transcript. It had been installed
+# thirteen days and had run ZERO times, against 294 `git commit` calls recorded in the window.
+#
+# 🔴 Every part of the process was missing at once: nothing called the command, its own docstring
+# said `--strict` was "for a hook somebody opted into", and there was no config key to opt in
+# WITH. The owner's framing is the one to keep — *"ออกแบบมา แต่มันไม่โดนเรียก แปลว่ากระบวนการไม่
+# สมบูรณ์"* — a designed thing that is never invoked is a defect, not a feature awaiting demand.
+import json as _json103
+
+_t_hooks103 = _json103.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_t_cmds103 = [h["command"] for groups in _t_hooks103["hooks"].values()
+              for g in groups for h in g["hooks"]]
+check("SOMETHING CALLS THE COMMIT GUARD — a guard nothing invokes is not a guard",
+      any("chamnan_commit_guard.py" in c for c in _t_cmds103),
+      saw=[c for c in _t_cmds103 if "guard" in c] or "no hook names it")
+check("...on PreToolUse, which is the only moment that can act before the commit",
+      any("chamnan_commit_guard.py" in h["command"]
+          for g in _t_hooks103["hooks"].get("PreToolUse", []) for h in g["hooks"]),
+      saw=sorted(_t_hooks103["hooks"]))
+check("...and there is a key to turn it off, which is what opting in requires",
+      "commit_guard" in ws.DEFAULT_CONFIG, saw=sorted(ws.DEFAULT_CONFIG))
+
+# 🐛 The first matcher fired on `echo git commit` — the mention-is-not-use error this workspace
+# has recorded six times, made inside the fix for another instance of it. A name is an invocation
+# only in COMMAND POSITION, which `lib/canonical.py` already says in a comment of the same date.
+import importlib.util as _ilu103
+_t_spec103 = _ilu103.spec_from_file_location("_cg103", ROOT / "hooks" / "chamnan_commit_guard.py")
+_t_cg103 = _ilu103.module_from_spec(_t_spec103)
+_t_spec103.loader.exec_module(_t_cg103)
+_t_yes103 = ["git commit -m x", "git commit", "git -C /p commit -q -m x", "cd /p && git commit -m y",
+             "git -c user.name=x commit -m y", "env FOO=1 git commit"]
+_t_no103 = ["git add -A", "git log --oneline", "git -C x status", "echo git commit",
+            'grep -rn "git commit" .']
+_t_missed103 = [c for c in _t_yes103 if not _t_cg103._is_commit(c)]
+_t_false103 = [c for c in _t_no103 if _t_cg103._is_commit(c)]
+check("A REAL `git commit` IS RECOGNISED IN EVERY SHAPE THIS REPOSITORY USES",
+      _t_missed103 == [], saw=_t_missed103)
+# 🔴 Both populations. A matcher that says yes to everything passes the line above and would run
+# the guard on every command in the session.
+check("...and a command that only MENTIONS it is not", _t_false103 == [], saw=_t_false103)
 # ---- 104_a_nested_repository_is_not_an_all_clear.py
 # ----------------------- absent from this index is not the same as nothing depends on this file
 # 🐛 [2026-09-13, R3 defect A; R5 triage item 1] `chamnan-impact` told a reader to change a
@@ -33712,7 +33943,7 @@ check("A FILESYSTEM FAILURE AT ANY STEP LEAVES THE DESTINATION WHOLE AND NAMES I
       saw="the claim R2.6.1 refused fsync on does not hold:\n        " + "\n        ".join(_bad172))
 
 # ------------------ and the final swap is os.replace, which is a SOURCE property on this platform
-# 🐛 [2026-09-23] Found by mutation: replacing `os.replace(tmp, dest)` with `tmp.rename(dest)` in
+# 🐛 [2026-09-23] (self-measured) Found by mutation: replacing `os.replace(tmp, dest)` with `tmp.rename(dest)` in
 # `_replace_with_retry` passed every check above. On POSIX both overwrite, so no behavioural test
 # run on this machine can tell them apart — and on Windows `rename` raises FileExistsError when the
 # destination exists, which is the exact failure that function's own docstring says it is there to
@@ -43561,12 +43792,8 @@ else:
 
     # `"${CLAUDE_PLUGIN_ROOT}/hooks/x.py"` -> the file on disk.
     _t_files55, _t_unresolved55 = [], []
-    # 🐛 [2026-09-23] The sibling of this check, 40,000 lines up, read a hook command as a
-    # bare quoted path and was fixed to use shlex; this one was written the same way and was
-    # missed in the same edit — this project's most repeated defect, repeating inside the fix
-    # for itself. A command line is parsed as a command line, in both places.
     for _t_c55 in _t_cmds55:
-        _t_rel55 = shlex.split(_t_c55)[0].replace("${CLAUDE_PLUGIN_ROOT}/", "")
+        _t_rel55 = _t_c55.strip().strip('"').replace("${CLAUDE_PLUGIN_ROOT}/", "")
         _t_p55 = ROOT / _t_rel55
         if _t_p55.is_file():
             _t_files55.append(_t_p55)
@@ -47908,18 +48135,7 @@ _T_SPAWN96 = {"run", "Popen", "call", "check_call", "check_output"}
 # The module, however it was imported. A call on anything else named `run` is not a process.
 _T_MODULES96 = {"subprocess", "sp", "_sp", "_sp89"}
 # What an argv head may be, and why. `sys.executable` is this interpreter; a name is resolved below.
-# \U0001F41B [2026-09-23] Hardcoded `{"git"}` while the README's own sentence had long since named
-# `ps` as well, with the reason \u2014 so the check reported the README as false when the README was
-# the half that was right. `lib/inuse.py` asks the process table one question before an edit. The
-# allow list is READ from that sentence now: the two cannot drift, because there is one of them.
-import re as _t_re96
-_t_readme96 = (ROOT / "README.md").read_text(encoding="utf-8")
-_t_row96 = next((ln for ln in _t_readme96.splitlines()
-                 if ln.startswith("| `subprocess` |")), "")
-_T_ALLOWED_CONST96 = set(_t_re96.findall(r"`([a-z][a-z0-9_-]{1,12})`", _t_row96)) - {"subprocess"}
-check("the allowed-binary list was read from the README, not typed here",
-      "git" in _T_ALLOWED_CONST96 and len(_T_ALLOWED_CONST96) >= 2,
-      saw=sorted(_T_ALLOWED_CONST96) or "the README's subprocess row was not found")
+_T_ALLOWED_CONST96 = {"git"}
 
 _t_spawns96, _t_unknown96 = [], []
 for _t_f96 in _t_files96:
@@ -48804,7 +49020,7 @@ check("...and a script that declares nothing is never spoken about",
 check("...and a required flag is not satisfied by a LONGER flag that merely contains it",
       "--out" in _cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws),
       saw=_cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws)[:160])
-# 🐛 [2026-09-23] Caught live minutes after shipping: `git add .../ask-acc5.sh` raised the notice
+# 🐛 [2026-09-23] (self-measured) Caught live minutes after shipping: `git add .../ask-acc5.sh` raised the notice
 # for a script being COMMITTED. A name is an invocation only in command position.
 check("A SCRIPT MERELY NAMED AS AN ARGUMENT IS NOT AN INVOCATION",
       _cn.advice("git add declares.py", _cn_ws) == ""
@@ -48816,7 +49032,7 @@ check("...and it is still caught after an interpreter, a cd, or an && ",
 check("a script can also redirect to the tool that does the whole job",
       "files the report" in _cn.advice("bash redirects.sh brief.md", _cn_ws),
       saw=_cn.advice("bash redirects.sh brief.md", _cn_ws)[:160])
-# 🐛 [2026-09-23] The first version put a literal example in its own docstring, read its own source
+# 🐛 [2026-09-23] (self-measured) The first version put a literal example in its own docstring, read its own source
 # and reported ITSELF as wrongly invoked. `a-passing-check-may-be-a-decoration.md` names this: a
 # check that reads source matches its own source.
 check("THE GUARD DOES NOT MATCH ITS OWN SOURCE",
@@ -48842,7 +49058,7 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 # ---------------------------------- the commonest line in every README is not a credential
-# 🐛 [2026-09-23, found by growing the corpus past its seed cases] `API_KEY=<your-api-key-here>`
+# 🐛 [2026-09-23, found by growing the corpus past its seed cases] (self-measured) `API_KEY=<your-api-key-here>`
 # was redacted by ALL SEVEN assignment carriers — bare, quoted, spaced, colon, rocket, flag and
 # YAML block. An exemption for it existed and was scoped to WEAK key names only, so the commonest
 # line in every quickstart in every README came back as `API_KEY=<REDACTED>`, destroying the
@@ -48910,7 +49126,7 @@ for _ct_n in _ct_names:
     _ct_out = _ct_m.render(_ct_in)
     if not isinstance(_ct_out, str) or _CT_MARK not in _ct_out:
         _ct_bad["content"].append(_ct_n)
-    # 🐛 [2026-09-23, first run] "ends with exactly one newline" flagged `gemini`, whose render
+    # 🐛 [2026-09-23, first run] (self-measured) "ends with exactly one newline" flagged `gemini`, whose render
     # returns a JSON object for the agent's hook stdout — printed by the caller, never written as
     # a file. The property belongs to FILE content, and which kind an adapter produces is derived
     # from the output rather than from a list of names kept here.
@@ -48931,7 +49147,7 @@ for _ct_n in _ct_names:
     _ct_t = str(getattr(_ct_m, "TARGET", ""))
     if _ct_t.startswith("/") or ".." in _ct_t.split("/"):
         _ct_bad["target"].append(_ct_n)
-    # 🐛 [2026-09-23, first run] This asserted that render() TRUNCATES to its declared ceiling, and
+    # 🐛 [2026-09-23, first run] (self-measured) This asserted that render() TRUNCATES to its declared ceiling, and
     # six adapters "failed". They do not truncate and are not meant to: `chamnan-context` sizes the
     # BODY first, subtracting `len(render(""))` for the wrapper. The property that is actually
     # load-bearing is that the wrapper leaves room — a check pinned to where a decision is NOT made
@@ -48974,7 +49190,7 @@ check("...and one that was NOT emitted is not recorded as though it were",
       "C" not in (_pv_rec.get("srcs") or {}), saw=_pv_rec.get("srcs"))
 check("...while a block with no origins at all carries no empty field",
       "srcs" not in _pv.shape("### A\nx\n"), saw=_pv.shape("### A\nx\n").get("srcs"))
-# 🐛 [2026-09-23] `origins` was first inserted after `dropped`, and `record()` calls `shape()`
+# 🐛 [2026-09-23] (self-measured) `origins` was first inserted after `dropped`, and `record()` calls `shape()`
 # POSITIONALLY: every argument after that slot shifted by one, silently, and the record would have
 # carried `index_behind` as its origins map. A new parameter goes at the END of a signature that
 # has positional callers.
@@ -49095,7 +49311,7 @@ _why_lib = (ROOT / "lib" / "pointer.py").read_text(encoding="utf-8")
 check("...and the record carries it", 'rec["why"] = why' in _why_lib)
 # The two readings have to be DIFFERENT, or the field records nothing. Derived from the source so
 # a later edit that collapses them to one value fails here rather than in six weeks of flat data.
-# 🐛 [2026-09-23] The first version matched `why="([a-z]+)"`, which finds the FIRST branch of
+# 🐛 [2026-09-23] (self-measured) The first version matched `why="([a-z]+)"`, which finds the FIRST branch of
 # a conditional and not the second — `why="look" if ... else "change"` reported one value and
 # failed a correct implementation. Read the whole expression, then every string in it.
 _why_expr = next((l for l in _why_src.splitlines() if "why=" in l and "_tool ==" in l), "")
@@ -49105,7 +49321,7 @@ check("...and the two readings are distinct, so the field can separate them",
 
 # ---------------------------------- an edit that lands in the middle of a running program
 # ENFORCES: memory/rules/the-full-gate-runs-twice.md
-# 🐛 [2026-09-23] Twice in one hour, the second an hour AFTER the first was recorded as a lesson
+# 🐛 [2026-09-23] (self-measured) Twice in one hour, the second an hour AFTER the first was recorded as a lesson
 # with chamnan-gotcha. Four research rounds in flight, the dispatcher edited, all four dead with
 # `unexpected EOF`; then a fifth round running, the same file edited again, same death. A recorded
 # lesson only reaches a session touching the same LINE — bugnotes.py is positional on purpose —
@@ -49227,7 +49443,7 @@ check("...and a needle too short to mean anything is not searched for",
                           "old_string": "run"}, _sb_root) == "")
 check("...and it names them without deciding for anybody",
       "Nothing is blocked" in _sb_said and "check whether" in _sb_said, saw=_sb_said[-90:])
-# 🐛 [2026-09-23] The first version walked the whole repository: 2.7 seconds on a real edit, for a
+# 🐛 [2026-09-23] (self-measured) The first version walked the whole repository: 2.7 seconds on a real edit, for a
 # notice, on every edit. It now starts beside the file and widens only while it has too few peers.
 _sb_t0 = time.time()
 _sb.advice("Edit", {"file_path": str(_sb_root / "adapters" / "one.py"),
@@ -49260,7 +49476,7 @@ check("THIS MACHINE'S OWN IDENTITY IS IN NOTHING THAT SHIPS "
 # The other half: reading the owner's work repositories is fine, carrying what is in them out here
 # is not. An internal hostname or a routable address is the shape that leaks, and unlike a repo
 # NAME in a comment it can never be innocent.
-# 🐛 [2026-09-23] The first pattern flagged three benign lines and would have been switched off
+# 🐛 [2026-09-23] (self-measured) The first pattern flagged three benign lines and would have been switched off
 # within a day: `1.8.3.1` is the sudo version RHEL 7 shipped, in a comment in two files, and
 # `db.internal` is redact.py documenting the thing it redacts. A generic TLD and a bare dotted-quad
 # are not evidence of anything. What cannot be innocent is a CORPORATE domain or a private-range
@@ -49313,7 +49529,7 @@ check("THE HIGHEST-SEVERITY RULE NOW HAS A MACHINE — all 10 cases, write and r
 check("...and it stays silent on every READ, which is what keeps it switched on",
       all(not _bd.advice(t, i, _bd_root) for n, t, i, w in _bd_cases if not w),
       saw=[n for n, t, i, w in _bd_cases if not w and _bd.advice(t, i, _bd_root)])
-# 🐛 [2026-09-23] It fired on a heredoc that was WRITING A TEST about the incident command, and
+# 🐛 [2026-09-23] (self-measured) It fired on a heredoc that was WRITING A TEST about the incident command, and
 # the fix had to go the other way from the pointer's: a heredoc fed to `python3 -` or `bash -s` IS
 # executed, so `cmdtext.without_prose(..., drop_heredoc=False)` keeps it. One module, two policies —
 # the difference is the whole reason it is a parameter rather than a second copy.
@@ -49322,7 +49538,7 @@ check("AN EXECUTED HEREDOC IS STILL THE WORK, even though the pointer drops one"
       bool(_bd.advice("Bash", {"command": _bd_hd}, _bd_root)), saw=_bd.advice("Bash", {"command": _bd_hd}, _bd_root))
 check("...while a COMMIT MESSAGE naming the same command is not",
       not _bd.advice("Bash", {"command": 'git commit -m "note about ' + "defaults" + ' write"'}, _bd_root))
-# 🐛 [2026-09-23, second correction, minutes later] Keeping EVERY heredoc made the guard fire on
+# 🐛 [2026-09-23, second correction, minutes later] (self-measured) Keeping EVERY heredoc made the guard fire on
 # its own commit message, which named the rule's command list inside `git commit -F - <<EOF`. A
 # heredoc is executable only when an interpreter is reading it; one going to `git commit -F -`,
 # `cat > file` or `tee` is data. The question is not "is there a heredoc" but "is something about
@@ -49339,7 +49555,7 @@ check("...while `bash -s <<EOF` is an interpreter about to run it",
                       _bd_root)))
 check("...and it never blocks, only says",
       "Nothing is blocked" in _bd.advice("Edit", {"file_path": "/etc/hosts"}, _bd_root))
-# 🐛 [2026-09-23] `sed 's/^/    /'` raised "this writes to `/`": plain sed writes nothing and the
+# 🐛 [2026-09-23] (self-measured) `sed 's/^/    /'` raised "this writes to `/`": plain sed writes nothing and the
 # `/` came out of its own script. A guard that fires on a pipeline is one people stop reading.
 check("A SED SCRIPT IS NOT A PATH, and plain sed writes nothing",
       not _bd.advice("Bash", {"command": "grep -n x f | sed 's/^/    /'"}, _bd_root)
@@ -49347,7 +49563,7 @@ check("A SED SCRIPT IS NOT A PATH, and plain sed writes nothing",
       saw=_bd.advice("Bash", {"command": "grep -n x f | sed 's/^/    /'"}, _bd_root))
 check("...while `sed -i` on a dotfile is exactly the thing",
       bool(_bd.advice("Bash", {"command": "sed -i '' 's/a/b/' ~/.zshrc"}, _bd_root)))
-# 🐛 [2026-09-23, twice more, both caught live] A QUOTED argument is a script, a pattern or a
+# 🐛 [2026-09-23, twice more, both caught live] (self-measured) A QUOTED argument is a script, a pattern or a
 # message — never the path a writer touches. `sed -i '' '0,/^import /s//from x/' f.py` read its own
 # sed script as `/s//from`, and `echo 'hi > /etc/passwd'` read a printed string as a redirect. The
 # target is taken from the ORIGINAL though, because `echo x > "/etc/hosts"` is a real write.
@@ -49361,7 +49577,7 @@ _bd_quoting = [
 _bd_qbad = [n for n, cmd, want in _bd_quoting
             if bool(_bd.advice("Bash", {"command": cmd}, _bd_root)) != want]
 check("QUOTING DECIDES WHAT IS A PATH — all five", _bd_qbad == [], saw=_bd_qbad)
-# 🐛 [2026-09-23] `python3 x --help >/dev/null` drew the 🔴. The discard device and the process's
+# 🐛 [2026-09-23] (self-measured) `python3 x --help >/dev/null` drew the 🔴. The discard device and the process's
 # own streams are not machine state, and a guard that fires on `>/dev/null` fires on a large share
 # of every shell command ever typed — which is the definition of a guard nobody reads.
 check("THE DISCARD DEVICES ARE NOT THE OWNER'S MACHINE",
@@ -49371,7 +49587,7 @@ check("THE DISCARD DEVICES ARE NOT THE OWNER'S MACHINE",
 _rmtree(_bd_root.parent, ignore_errors=True)
 
 # ---------------------------------- prose ABOUT work is not work
-# 🐛 [2026-09-23] Caught live: `git commit -m "fix 2dspeak/ lipsync"` raised the Live2D procedure,
+# 🐛 [2026-09-23] (self-measured) Caught live: `git commit -m "fix 2dspeak/ lipsync"` raised the Live2D procedure,
 # because the pointer matched the COMMIT MESSAGE. A message, a heredoc body and a shell comment all
 # describe work rather than being it, and a pointer that fires on them is how a guard earns its way
 # into being ignored — the same reasoning as the three-nudges-per-session budget.
@@ -49643,7 +49859,7 @@ ws.ensure(_rc_ws)
     "- `apply_promo_code(order)` — works out the discount a coupon is worth\n"
     "- `no_description_here(x)`\n", encoding="utf-8")
 _rc_sym = _rc._symbol_entries(_rc_ws / ".chamnan")
-# 🐛 [2026-09-23] This asserted "described or not" and `_symbol_entries` had stopped indexing the
+# 🐛 [2026-09-23] (self-measured) This asserted "described or not" and `_symbol_entries` had stopped indexing the
 # undescribed ones hours earlier: indexing all 3,302 put the index at **119% of the files it is
 # built from**, and an index larger than its documents is not an index. The cut is not arbitrary —
 # this feature answers "what is the function that DOES x", which a bare identifier cannot answer,

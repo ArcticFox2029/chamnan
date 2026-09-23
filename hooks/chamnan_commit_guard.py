@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import workspace as ws                                            # noqa: E402
 
-# 🐛 [2026-09-23] The first version matched `git` anywhere in the command, so `echo git commit`
+# 🐛 [2026-09-23] (self-measured) The first version matched `git` anywhere in the command, so `echo git commit`
 # fired it. That is the mention-is-not-use error this workspace has recorded six times, made here
 # in a function written to close another instance of it — and `lib/canonical.py` already carries
 # the fix, in a comment dated the same day: a name is an invocation only in COMMAND POSITION, the

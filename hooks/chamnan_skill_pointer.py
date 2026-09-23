@@ -104,7 +104,7 @@ def _first_steps(path):
     return []
 
 
-# 🐛 [2026-09-23] Caught live: `git commit` whose MESSAGE mentioned `2dspeak/` raised the Live2D
+# 🐛 [2026-09-23] (self-measured) Caught live: `git commit` whose MESSAGE mentioned `2dspeak/` raised the Live2D
 # procedure. A commit message, a heredoc body and a `-m` string are prose ABOUT work, not the work,
 # and matching them is how a pointer earns its way into being ignored — the same "noise gets a
 # guard switched off" reasoning the nudge budget below is built on.

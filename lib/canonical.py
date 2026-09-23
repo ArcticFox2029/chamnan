@@ -21,7 +21,7 @@ two directive words built in `_REQUIRES_KEY` / `_INSTEAD_KEY` below, followed by
 the tokens that must be present or the thing to run instead. `read_agent_report.py` and
 `ask-acc5.sh` both carry a real one; copy from either.
 
-🐛 [2026-09-23] The first version of this file put a literal example HERE, and the module then read
+🐛 [2026-09-23] (self-measured) The first version of this file put a literal example HERE, and the module then read
 its own docstring and reported itself as an incorrectly-invoked script. A check that reads source
 matches its own source — the directive names are assembled at runtime for exactly that reason, and
 the same trap is recorded in `memory/rules/a-passing-check-may-be-a-decoration.md`.
@@ -63,7 +63,7 @@ def declarations(path):
     return out
 
 
-# 🐛 [2026-09-23] Caught live, minutes after this shipped: `git add .chamnan/tools/ask-acc5.sh`
+# 🐛 [2026-09-23] (self-measured) Caught live, minutes after this shipped: `git add .chamnan/tools/ask-acc5.sh`
 # raised the notice for a script that was being COMMITTED, not run. A script name is an invocation
 # only in command position — first word of a segment, or straight after an interpreter.
 _INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "dash", "ksh", "perl", "ruby",
@@ -125,7 +125,7 @@ def advice(command, root=None):
         instead = decl.get("instead")
         if instead:
             lines.append(f"`{name}`: {instead}")
-    # 🐛 [2026-09-23] One command naming the same script three times said the same sentence three
+    # 🐛 [2026-09-23] (self-measured) One command naming the same script three times said the same sentence three
     # times — seen live in the session that wrote this file.
     lines = list(dict.fromkeys(lines))
     if not lines:

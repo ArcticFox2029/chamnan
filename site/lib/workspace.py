@@ -274,6 +274,16 @@ DEFAULT_CONFIG = {
     # repository already does. A key absent from DEFAULT_CONFIG is dropped by `load_config`, so
     # the entry has to exist even though it holds nothing.
     "test_patterns": {},
+    # 🐛 [2026-09-23] `chamnan-guard` shipped with a `--strict` mode documented as "for a
+    # hook somebody opted into", and there was no hook and no key to opt in WITH. It had run
+    # zero times in thirteen days against 294 recorded `git commit` calls. On by default
+    # because it only ever WARNS; the strict version is still opt-in by being a separate
+    # invocation somebody puts in their own pre-commit hook.
+    "commit_guard": True,
+    # The statistic pages rebuild at session end, in the background, reading only
+    # what was written since the last build. Off means the pages keep whatever
+    # figures they last had rather than going stale silently.
+    "dashboard": True,
     # A hard ceiling in BYTES on everything the SessionStart hook prints, enforced after the token
     # budgets above have already had their say. The two are not the same measurement and cannot
     # substitute for each other: the host truncates a hook's stdout over 10,000 bytes to its first
@@ -749,6 +759,15 @@ SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.
                     # having only if it is long enough to compare against, which an age sweep would
                     # make it not.
                     "agent_results.jsonl",
+                    # 🐛 [2026-09-23] `recovered.jsonl` was already bounded by record at its one
+                    # call site — `append_jsonl(root, QUARANTINE_LOG, …, 500)` — and was simply never
+                    # declared here, so the check that every jsonl is self-pruning or disposable
+                    # counted it as neither. It belongs on this side rather than among the
+                    # disposable ones: each row records a store that could not be read and was
+                    # moved aside, which is a note about the reader's own data going wrong. Five
+                    # hundred of those is a small file and an age sweep deleting it would answer
+                    # "that never happened" to the one question it exists to answer.
+                    "recovered.jsonl",
                     # 🐛 [2026-09-10] `state-ages.json` records WHEN each STATE.md section last
                     # changed, which is the whole input to `state.age_out`. It lived in `logs/`
                     # and was not exempt, so the 7-day file sweep deleted it — while
@@ -1005,6 +1024,87 @@ def _own_process_started():
     return _OWN_PROCESS_STARTED[0]
 
 
+# 🎯 [owner, 2026-09-23] "chamnan ก็ควรมีระบบเคลียร์ได้เองนะ เพราะ repo คนใช้งานคนอื่น มันก็ควรมี
+# ระบบเคลียร์ให้ แต่จะวางระบบยังไงให้ปลอดภัยกับคนใช้ทั่วไป" — and the scope they set: "เราไม่แตะพื้นที่นอก repo
+# chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ".
+#
+# `prune_orphaned_temps` covers a killed atomic WRITE, which leaves a `.tmp` file. It does not
+# cover the other half: a tool that made itself a working DIRECTORY inside the workspace and
+# finished without removing it. That is not hypothetical — `corpus_coverage.py` cleaned its copy
+# at the start of the NEXT run rather than the end of this one, so the workspace permanently
+# carried 795 files and 8.8 MB of somebody else's repository, and it confused two other tools
+# before anybody noticed it was there.
+#
+# 🔴 The safety property, which is the whole design: **only a directory chamnan created and
+# MARKED is ever removed.** An unmarked directory under `logs/` is something the user put there
+# and is never touched, at any age. That inverts the usual retention question from "can I prove
+# this is safe to delete" — which nothing in a stranger's repository can answer — to "did I make
+# this myself", which is a fact written down at creation time.
+SCRATCH_MARK = ".chamnan-scratch"
+
+
+def scratch_dir(root, name):
+    """A working directory under `logs/`, marked as ours so the sweep may remove it later.
+
+    The marker is written FIRST. A run killed between mkdir and mark leaves an unmarked directory,
+    which this sweep will then refuse to touch for ever — the safe direction, and the reason the
+    order is not the other way round.
+    """
+    base = workspace(root)
+    if base is None:
+        return None
+    d = base / "logs" / name
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        (d / SCRATCH_MARK).write_text("chamnan scratch; safe to delete when quiet\n",
+                                      encoding="utf-8")
+    except OSError:
+        return None
+    return d
+
+
+def prune_scratch(root=None, max_age=None):
+    """Remove MARKED scratch directories whose every file has gone quiet. Silent, best effort."""
+    import time
+    ws_dir = workspace(root)
+    if ws_dir is None or not ws_dir.is_dir():
+        return 0
+    logs = ws_dir / "logs"
+    if not logs.is_dir():
+        return 0
+    # The same window `prune_logs` uses, read from the same place, so a reader who changes
+    # `log_retention_days` does not find one of the two sweeps still on an old number.
+    days = load_config(root).get("log_retention_days", 7)
+    cutoff = time.time() - (max_age if max_age is not None else days * 86400)
+    removed = 0
+    try:
+        entries = list(logs.iterdir())
+    except OSError:
+        return 0
+    for path in entries:
+        try:
+            # A symlink is never followed and never removed as a tree: the one incident that
+            # taught this module anything was a link to `/` under logs/.
+            if not path.is_dir() or path.is_symlink():
+                continue
+            if not (path / SCRATCH_MARK).is_file():
+                continue                      # not ours — not our business, at any age
+            fresh = False
+            for f in path.rglob("*"):
+                if not f.is_file() or f.name == SCRATCH_MARK:
+                    continue
+                mt = _mtime_or_none(f)
+                if mt is not None and mt >= cutoff:
+                    fresh = True
+                    break
+            if not fresh:
+                _rmtree_quietly(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def prune_orphaned_temps(root=None):
     """Remove staging files a killed write left behind. Best effort and silent, like every prune.
 
@@ -1193,6 +1293,21 @@ def _rmtree_quietly(path):
         path.rmdir()
     except OSError:
         pass
+
+
+def expiring_sessions(root=None, within_days=1.0):
+    """Session records `prune_sessions` will delete within a day, newest first.
+
+    The sibling of `expiring_logs`, and added because it was missing. That one exists because a
+    dated `.md` note somebody typed was being deleted in silence; a session record is the same
+    kind of file with a stronger claim -- `sessions.prune` calls it "committed work rather than
+    cache" in its own comment -- and had no warning at all. One number, one window, one place the
+    rule lives: `sessions.expiring` asks what the delete will actually do rather than re-deriving
+    it beside it.
+    """
+    import sessions
+    return sessions.expiring(root, load_config(root).get("session_retention_days", 30),
+                             within_days)
 
 
 def prune_sessions(root=None):
@@ -2190,7 +2305,46 @@ IGNORE_LINES = [
     "# before the two research stores were split into per-section entries) and changes every time",
     "# any of them does, so committing it would put the whole corpus in the diff twice.",
     "state/store_index.json",
+    "",
+    # 🐛 [2026-09-24] (self-measured) Found by running chamnan against chamnan-corpus as an
+    # ordinary user would.
+    # The two rules above reason correctly -- a file that is a FUNCTION of the commit does not
+    # belong in the diff -- and then stop, one file short of the identical cases beside them. This
+    # package encourages committing the workspace, so every session start in a shared repository
+    # was producing a diff in files nobody edits by hand, and `notices.json` was worse than noise:
+    # it counts how many times a one-off piece of advice has been shown to THIS person, so sharing
+    # it means the first teammate to see a notice silences it for everybody.
+    #
+    # `drift.json` is `{\"head\": \"<sha>\", \"notice\": \"\"}` -- literally a function of HEAD, the
+    # same argument as churn-*.json one paragraph up. `.temps-swept` is a housekeeping timestamp
+    # for THIS machine's last sweep.
+    #
+    # Enumerating was the bug, so the set is declared below and a check derives the population from
+    # the source: a new `state/` writer that is in neither list fails it.
+    "state/drift.json",
+    "state/.temps-swept",
+    "state/notices.json",
 ]
+
+# Every path chamnan itself writes under `state/`, classified, because the list above was built by
+# enumeration three times and missed a sibling each time. DERIVED is a function of something else
+# and is rebuilt on demand; RECORDED is memory a team is meant to share, and committing it is the
+# entire reason the workspace lives beside the code. A `state/` write in the source that appears in
+# neither is a file nobody has decided about, which is how the three above were missed.
+DERIVED_STATE = (
+    "state/churn-*.json",           # a function of the commit
+    "state/store_index.json",       # rebuilt from the stores in ~30 ms
+    "state/drift.json",             # a function of HEAD
+    "state/.temps-swept",           # this machine's last sweep
+    "state/notices.json",           # how often THIS person has been shown a one-off notice
+)
+RECORDED_STATE = (
+    "state/written_artefacts.json", # what was written, and by which run
+    "state/scheduled.json",         # the schedule the team agreed
+    "state/gotcha_marks.json",      # lessons marked against a path
+    "state/tool_usage.json",        # which stores this workspace actually opens; fit.shrink ranks on it
+    "state/agent_model_mismatches.jsonl",
+)
 
 
 # Rules appended to .chamnan/.gitignore by the last `_mark_ignored` that changed it, so a caller can

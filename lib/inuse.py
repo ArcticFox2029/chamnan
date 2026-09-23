@@ -2,7 +2,7 @@
 
 ENFORCES: memory/rules/the-full-gate-runs-twice.md
 
-🐛 [2026-09-23] Twice in one hour, and the second time was an hour after recording the first as a
+🐛 [2026-09-23] (self-measured) Twice in one hour, and the second time was an hour after recording the first as a
 lesson. Four research rounds were dispatched, then `ask-codex-account.sh` was edited while they
 were in flight; every round died with `unexpected EOF`. The lesson was written into the file with
 `chamnan-gotcha`. An hour later the same file was edited again, with a fifth round running, and
@@ -20,7 +20,7 @@ import os
 import pathlib
 import subprocess
 
-# 🐛 [2026-09-23] This was `("inuse", "grep", "ps ")` — a substring test against the whole command
+# 🐛 [2026-09-23] (self-measured) This was `("inuse", "grep", "ps ")` — a substring test against the whole command
 # line — and the check written for it created its fixture in a temp directory called
 # `chamnan-inuse-XXXX`. The running script's own path therefore contained "inuse" and every real
 # hit was filtered out; the standalone probe passed only because ITS temp directory did not. A

@@ -476,52 +476,117 @@ def prune(root, days):
     stale file left behind is invisible, and a whole retention store wiped by a clock glitch is not.
     Reproduced 2026-09-08 (R7 agent 3); the claim above used to be stated without this paragraph.
     """
+def _candidates(d):
+    """Every file `prune` is allowed to consider. One definition, because two would drift."""
+    return [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)]
+
+
+def _age(path):
+    """Seconds since this record was filed, by its own name where it has one.
+
+    Extracted 2026-09-24 so that `prune` and `expiring` cannot disagree about what "old" means.
+    The comment this function carries records the third copy of the same date parser and the third
+    time the same pair of fixes had been half-applied to it; a fourth copy, written so a WARNING
+    could describe a DELETION, would have been the worst possible place for the two to drift.
+
+    The filename's own date first; mtime only when there isn't one. ledger.py documents this exact
+    trap -- "mtime resets to checkout time on a fresh clone or machine move" -- and avoids it for
+    its own feature, but the fix was never ported to the function that actually deletes files.
+    Measured: a record filed 2020-01-01, 2,435 days old by its own name, with mtime reset by a
+    clone, survived prune(days=30) untouched.
+    """
+    stamp = _DATE.match(path.name)
+    if stamp:
+        try:
+            y, m, dd = (int(x) for x in stamp.group(1).split("-"))
+            # date() first, because calendar.timegm does NOT validate the day: it takes
+            # (2026, 2, 30) and silently returns March 2nd. An impossible date is a typo, and a
+            # typo must not become a deletion decision that looks correct.
+            datetime.date(y, m, dd)
+            _ts = calendar.timegm((y, m, dd, 12, 0, 0))
+            # 🐛 [2026-09-10] `ledger._ymd_to_ts` refuses a date in the FUTURE and this copy --
+            # the one that DELETES -- never got that half. A record named `2099-01-01` gets a
+            # negative age, is never doomed, and is therefore always the file `keep_the_newest`
+            # spares when the pass would take every one: a single typo'd filename makes the
+            # "always spare one" promise protect the wrong file and delete the genuinely newest.
+            # A day of slack, so a record written in a timezone ahead of this one is not refused
+            # for being an hour early (R4 agent 3, 2026-09-10, finding 5).
+            if _ts > time.time() + 86400:
+                raise ValueError("a date in the future is not an age")
+            return time.time() - _ts
+        except (ValueError, OverflowError):
+            pass            # an impossible date is not a date; fall back to mtime
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def expiring(root, days, within_days=1.0):
+    """Records that `prune` will delete within `within_days`, newest first. Names, never paths.
+
+    🐛 [2026-09-24] (self-measured) `expiring_logs` exists because `prune_logs` was silently deleting a dated `.md`
+    note somebody had typed, and its fix was to NAME the file once before it goes. `prune_sessions`
+    deletes `sessions/*.md` -- every one of which is a handoff a person wrote, in a directory this
+    plugin encourages committing -- and never got the same treatment. `prune`'s own comment already
+    says a session record "is committed work rather than cache" and uses that reasoning only to
+    spare the newest.
+
+    Reproduced on the corpus: opening one session deleted a tracked, committed record, and the only
+    trace was a `D` in `git status` that nobody had asked for. A CI step running
+    `git diff --exit-code` fails on it, and `git add -A` commits somebody's record away.
+
+    It asks what prune WILL do rather than re-deriving it: the same candidates, the same `_age`,
+    and the same `keep_the_newest` sparing, evaluated `within_days` into the future and with
+    anything already doomed removed. A warning that names a file the sparing rule will in fact keep
+    is a false alarm, and this block has one rule about those -- do not print one.
+    """
+    d = directory(root)
+    if not d.is_dir() or not days:
+        return []
+    candidates = _candidates(d)
+    ages = {}
+    for path in candidates:
+        try:
+            a = _age(path)
+        except OSError:
+            continue
+        if a is not None:
+            ages[path] = a
+    window = days * 86400
+    now_doomed = [p for p, a in ages.items() if a > window]
+    soon_doomed = [p for p, a in ages.items() if a + within_days * 86400 > window]
+    going = set(ws.keep_the_newest(candidates, soon_doomed))
+    going -= set(ws.keep_the_newest(candidates, now_doomed))
+    return [(p.name, (window - ages[p]) / 86400)
+            for p in sorted(going, key=lambda q: -ages[q])]
+
+
+def prune(root, days):
+    """Delete records older than the retention window. Best-effort and silent, like prune_logs:
+    housekeeping must never be the reason a command the user asked for fails.
+
+    Unbounded is not an option. These accumulate one per working session, in a directory that is
+    committed, in somebody else's repository.
+
+    ONE FILE IS ALWAYS SPARED when the pass would take every one -- `keep_the_newest`. That is
+    deliberate and it is the difference between this docstring and the truth: a directory holding
+    nothing but aged files keeps its newest, however far past the window it is, and a directory
+    holding exactly one aged file never empties at all. The guard cannot tell "a clock jumped 400
+    days and doomed everything at once" from "this directory went quiet a month ago", because from
+    the mtimes alone those look identical. Judged from the user's side, the trade is not close: one
+    stale file left behind is invisible, and a whole retention store wiped by a clock glitch is not.
+    Reproduced 2026-09-08 (R7 agent 3); the claim above used to be stated without this paragraph.
+    """
     d = directory(root)
     if not d.is_dir() or not days:
         return 0
-    cutoff = time.time() - days * 86400
     removed = 0
-    candidates = [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)]
-    doomed = []
+    candidates, doomed = _candidates(d), []
     for path in candidates:
         try:
-            if not path.is_file():
-                continue
-            # The filename's own date first; mtime only when there isn't one. ledger.py documents
-            # this exact trap -- "mtime resets to checkout time on a fresh clone or machine move" --
-            # and avoids it for its own feature, but the fix was never ported here, to the function
-            # that actually DELETES files. Measured: a record filed 2020-01-01, 2,435 days old by
-            # its own name, with mtime reset by a clone, survived prune(days=30) untouched. This
-            # repository migrates machines routinely and the "bounded, never leaks disk" promise
-            # was quietly not being kept.
-            stamp = _DATE.match(path.name)
-            age = None
-            if stamp:
-                try:
-                    y, m, dd = (int(x) for x in stamp.group(1).split("-"))
-                    # date() first, because calendar.timegm does NOT validate the day: it takes
-                    # (2026, 2, 30) and silently returns March 2nd. An impossible date is a typo,
-                    # and a typo must not become a deletion decision that looks correct.
-                    datetime.date(y, m, dd)
-                    _ts = calendar.timegm((y, m, dd, 12, 0, 0))
-                    # 🐛 [2026-09-10] `ledger._ymd_to_ts` refuses a date in the FUTURE and this
-                    # copy — the one that DELETES — never got that half. A record named
-                    # `2099-01-01` gets a negative age, is never doomed, and is therefore always
-                    # the file `keep_the_newest` spares when the pass would take every one: a
-                    # single typo'd filename makes the "always spare one" promise protect the
-                    # wrong file and delete the genuinely newest. A day of slack, so a record
-                    # written in a timezone ahead of this one is not refused for being an hour
-                    # early (R4 agent 3, 2026-09-10, finding 5). Third copy of this parser, third time this
-                    # exact pair has been half-applied.
-                    if _ts > time.time() + 86400:
-                        raise ValueError("a date in the future is not an age")
-                    age = time.time() - _ts
-                except (ValueError, OverflowError):
-                    age = None      # an impossible date is not a date; fall back to mtime
-            if age is not None:
-                if age > days * 86400:
-                    doomed.append(path)
-            elif path.stat().st_mtime < cutoff:
+            age = _age(path)
+            if age is not None and age > days * 86400:
                 doomed.append(path)
         except OSError:
             continue

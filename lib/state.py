@@ -384,7 +384,7 @@ def _load_ages(wsdir):
     and for as long as the file stays broken. `load_json(..., quarantine=True)` moves the
     unreadable file aside and records it instead of overwriting it with nothing.
     """
-    # 🐛 [2026-09-23] Written as `ws.load_json` when this module does not import workspace: it
+    # 🐛 [2026-09-23] (self-measured) Written as `ws.load_json` when this module does not import workspace: it
     # compiled, it imported, and it raised NameError only when the function actually ran — which
     # is the shape `_emit_notice` had earlier the same day, inside a bare except where nothing
     # would ever have said a word.
