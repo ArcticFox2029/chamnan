@@ -69,21 +69,52 @@ def _subject(tool, tool_input):
     return redact.scrub(str(raw))[:CMD_CHARS]
 
 
-def main():
-    try:
-        payload = json.load(sys.stdin)
-        payload = payload if isinstance(payload, dict) else {}
-    except (ValueError, OSError):
-        return 0
-    if payload.get("is_interrupt"):
-        return 0
+def failure_of(payload):
+    """The error this payload describes, or "" if it describes no failure.
+
+    🐛 [2026-09-23, found by chamnan-doctor on its first run] `logs/failures.jsonl` had never been
+    written in this repository, on a day full of commands that exited non-zero. `PostToolUseFailure`
+    fires when the TOOL CALL fails — a denied permission, a bad parameter — and a shell command that
+    returns 1 is a tool call that SUCCEEDED and reported a non-zero exit. So `gotcha.py`, built the
+    same morning to stop a failure repeating, had an input that almost never arrived.
+
+    Both shapes are read here: `error` from the failure event, and a non-zero exit from an ordinary
+    PostToolUse response. A command that exits 1 twice is exactly the habit that rule is about.
+    """
+    if not isinstance(payload, dict) or payload.get("is_interrupt"):
+        return ""
+    direct = _first_line(payload.get("error"))
+    if direct:
+        return direct
+    resp = payload.get("tool_response")
+    if not isinstance(resp, dict):
+        return ""
+    code = resp.get("exit_code", resp.get("exitCode"))
+    if not isinstance(code, int) or code == 0:
+        return ""
+    detail = _first_line(resp.get("stderr") or "")
+    # 🔴 Exit 1 with nothing on stderr is an ANSWER, not a failure: `grep` found no match, `test`
+    # was false, `diff` saw a difference. Recording those would fill the log with normal results
+    # and then `gotcha` would report "this has failed here twice" about a grep that worked. A real
+    # failure almost always says something, and a code other than 1 is not an answer shape at all.
+    if code == 1 and not detail:
+        return ""
+    # The exit code is the KIND; `gotcha.normalise` keeps it whole and drops the detail.
+    return f"Exit code {code}" + (f" — {detail}" if detail else "")
+
+
+def record(payload, err=None):
+    """Write one scrubbed line. Returns True when something was written."""
+    if err is None:
+        err = failure_of(payload)
+    if not err:
+        return False
     root = ws.hook_root(payload)
     if root is None or ws.read_only():
-        return 0
+        return False
     if ws.workspace(root) is None or not ws.workspace(root).is_dir():
-        return 0                          # not a chamnan workspace; say nothing, write nothing
-
-    err = redact.scrub(_first_line(payload.get("error")))[:ERR_CHARS]
+        return False                      # not a chamnan workspace; say nothing, write nothing
+    err = redact.scrub(err)[:ERR_CHARS]
     row = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
            "tool": str(payload.get("tool_name") or "")[:40],
            "subj": _subject(payload.get("tool_name"), payload.get("tool_input")),
@@ -93,6 +124,16 @@ def main():
         row["ms"] = int(ms)
     row.update(ws.actor(payload))
     ws.append_jsonl(root, LOG, row, MAX_RECORDS)
+    return True
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+        payload = payload if isinstance(payload, dict) else {}
+    except (ValueError, OSError):
+        return 0
+    record(payload)
     # Nothing is printed. A failure the session can already see does not need chamnan to repeat it,
     # and this hook exists to remember, not to comment.
     return 0

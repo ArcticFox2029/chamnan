@@ -48775,6 +48775,54 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- a failure log with no input is not a failure log
+# 🐛 [2026-09-23, found by chamnan-doctor on its FIRST run] `logs/failures.jsonl` had never been
+# written in the repository this package is developed in, on a day full of commands that exited
+# non-zero. `PostToolUseFailure` fires when the TOOL CALL fails — a denied permission, a bad
+# parameter — and a shell command returning 1 is a call that SUCCEEDED and reported a non-zero
+# exit. So `gotcha.py`, built that same morning to stop a failure repeating, had an input that
+# almost never arrived: a guard starved at the source, looking healthy from every angle.
+import importlib.util as _tf_ilu  # noqa: E402
+
+_tf_spec = _tf_ilu.spec_from_file_location("_tf", ROOT / "hooks" / "chamnan_tool_failed.py")
+_tf_mod = _tf_ilu.module_from_spec(_tf_spec)
+_tf_spec.loader.exec_module(_tf_mod)
+
+
+def _tf_says(resp):
+    return bool(_tf_mod.failure_of({"tool_name": "Bash", "tool_input": {"command": "x"},
+                                    "tool_response": resp}))
+
+
+# 🔴 Exit 1 with nothing on stderr is an ANSWER, not a failure: grep found no match, test was
+# false, diff saw a difference. Recording those fills the log with normal results and then gotcha
+# reports "this has failed here twice" about a grep that worked — which is how a notice is learned
+# to be ignored.
+_tf_cases = [
+    ("grep with no match", {"exit_code": 1, "stderr": ""}, False),
+    ("a false test", {"exit_code": 1, "stderr": ""}, False),
+    ("a python traceback", {"exit_code": 1, "stderr": "Traceback (most recent call last):"}, True),
+    ("a shell syntax error", {"exit_code": 2, "stderr": "unexpected EOF"}, True),
+    ("a missing command", {"exit_code": 127, "stderr": "foo: command not found"}, True),
+    ("success", {"exit_code": 0, "stderr": ""}, False),
+]
+_tf_wrong = [n for n, resp, want in _tf_cases if _tf_says(resp) != want]
+check("A NON-ZERO EXIT THAT SAYS SOMETHING IS A FAILURE; ONE THAT SAYS NOTHING IS AN ANSWER",
+      _tf_wrong == [], saw=_tf_wrong)
+# The other shape, which is what the event itself delivers.
+check("...and the failure event's own `error` field is still read",
+      bool(_tf_mod.failure_of({"tool_name": "Edit", "error": "File has not been read yet"})))
+check("...while an interrupt is not a mistake and is never recorded",
+      not _tf_mod.failure_of({"tool_name": "Bash", "is_interrupt": True,
+                              "tool_response": {"exit_code": 130, "stderr": "^C"}}))
+# The recorder is CALLED by the PostToolUse hook that already runs, not registered as a fourth
+# process on every Bash call — R18 measured a second hook on Bash at 102 ms of added cost.
+_tf_watch = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8")
+check("...and the PostToolUse hook that already runs is what records it",
+      "chamnan_tool_failed.py" in _tf_watch and ".record(" in _tf_watch,
+      saw="scratch_watch does not call the recorder, so the input is still missing")
+
 # ---------------------------------- the fields a later question will need, written now
 # 🎯 [1.31 queue item 3, 2026-09-23] A second reader's correction: `source_opened` alone cannot be
 # read, because some agents SHOULD open a file — they are about to edit it. The fields that make it

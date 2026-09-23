@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""chamnan-doctor — is any of this actually running? One command, read-only, allowed to say "cannot tell".
+
+  chamnan-doctor                 everything, worst first
+  chamnan-doctor --quiet         only what is wrong
+
+🎯 [1.31, a second reader's #2 after the 2026-09-23 round] The number of machines in this package
+keeps growing — hooks, routers, guards, coverage instruments — and nothing said which of them is
+alive. The day that prompted this found 25 of 29 procedures the router could never reach and 2 of
+243 guards with a recorded proof: both had looked healthy from every angle anyone had bothered to
+look from, because nobody had a single place to look.
+
+**It reports evidence, never reassurance.** Each line is `ok`, `!!` or `??`, and `??` is a real
+answer: a question this cannot decide from disk is worse than a red one, because a red line gets
+fixed and an invented green line gets trusted. Nothing here writes, installs, repairs or phones
+anywhere — it reads files that already exist and says what they say.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+print = redact.emit  # noqa: A001 — every bin/ command scrubs what it prints
+
+OK, BAD, UNKNOWN = "ok", "!!", "??"
+# A log nobody has written to in this long, when the thing that writes it happens daily, is the
+# silence worth naming. Below it, quiet is just quiet.
+SILENT_DAYS = 14
+ROWS = ("commands.jsonl", "block_shape.jsonl", "scratch.jsonl", "edits.jsonl",
+        "subagent_start.jsonl", "agent_results.jsonl", "failures.jsonl", "gate_runs.jsonl")
+
+
+def _age_days(path):
+    try:
+        return (time.time() - path.stat().st_mtime) / 86400.0
+    except OSError:
+        return None
+
+
+def _git(root, *args):
+    try:
+        out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                             timeout=10)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def which_plugin(lines):
+    """Which checkout each host's settings point at, and what version it is."""
+    homes = [Path.home() / ".claude"]
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    if cfg:
+        homes.insert(0, Path(cfg))
+    seen = 0
+    for home in homes:
+        settings = home / "settings.json"
+        if not settings.is_file():
+            continue
+        seen += 1
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            lines.append((UNKNOWN, f"{settings} exists but does not parse — cannot say which "
+                                   f"plugin this host loads"))
+            continue
+        blob = json.dumps(data)
+        here = str(HERE.parent)
+        lines.append((OK if here in blob else UNKNOWN,
+                      f"{home.name}/settings.json {'points at THIS checkout' if here in blob else 'does not name this checkout — another copy may be winning'}"))
+    if not seen:
+        lines.append((UNKNOWN, "no settings.json found for any host — cannot say what is loaded"))
+
+
+def which_hooks(root, wsdir, lines):
+    """Registered vs actually fired, from the logs each one writes."""
+    reg = HERE.parent / "hooks" / "hooks.json"
+    try:
+        data = json.loads(reg.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        lines.append((BAD, "hooks/hooks.json is missing or unreadable — nothing is registered"))
+        return
+    names = set()
+    for event, entries in (data.get("hooks") or data).items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                cmd = hook.get("command", "")
+                names.add(Path(cmd.strip('"').split()[-1]).name)
+    missing = [n for n in sorted(names)
+               if n and not (HERE.parent / "hooks" / n).is_file()]
+    lines.append((BAD if missing else OK,
+                  f"{len(names)} hook(s) registered"
+                  + (f" — MISSING ON DISK: {', '.join(missing)}" if missing else ", all present")))
+    notexec = [n for n in sorted(names)
+               if (HERE.parent / "hooks" / n).is_file()
+               and not os.access(HERE.parent / "hooks" / n, os.X_OK)]
+    if notexec:
+        lines.append((BAD, f"registered but not executable: {', '.join(notexec)}"))
+
+
+def which_logs(wsdir, lines):
+    """A log that stopped growing is a feature that stopped running."""
+    logs = wsdir / "logs"
+    if not logs.is_dir():
+        lines.append((UNKNOWN, "no logs/ directory — nothing has run here, or the workspace moved"))
+        return
+    quiet = []
+    for name in ROWS:
+        age = _age_days(logs / name)
+        if age is None:
+            quiet.append(f"{name} (never written)")
+        elif age > SILENT_DAYS:
+            quiet.append(f"{name} ({age:.0f}d)")
+    lines.append((BAD if quiet else OK,
+                  f"{len(ROWS) - len(quiet)}/{len(ROWS)} recorders written within {SILENT_DAYS}d"
+                  + (f" — SILENT: {', '.join(quiet)}" if quiet else "")))
+
+
+def which_artefacts(root, wsdir, lines):
+    """Is the index describing the tree that exists now?"""
+    amap = wsdir / "MAP.md"
+    if not amap.is_file():
+        lines.append((BAD, "MAP.md is missing — the session block has nothing to point at"))
+        return
+    head = _git(root, "rev-parse", "HEAD")
+    behind = _git(root, "rev-list", "--count", "HEAD") if head else ""
+    stamped = ""
+    try:
+        for line in amap.read_text(encoding="utf-8", errors="replace")[:4000].splitlines():
+            if head and head[:8] in line:
+                stamped = head[:8]
+                break
+    except OSError:
+        pass
+    age = _age_days(amap)
+    if stamped:
+        lines.append((OK, f"MAP.md is stamped with the current commit ({stamped})"))
+    elif not head:
+        lines.append((UNKNOWN, f"MAP.md is {age:.0f}d old and git cannot say what has moved since"))
+    else:
+        lines.append((UNKNOWN, f"MAP.md is {age:.0f}d old and carries no current commit stamp — "
+                               f"rebuild with chamnan-map if the tree has moved"))
+
+
+def which_stores(wsdir, lines):
+    """A store that cannot be read is not a store, whatever it holds."""
+    for name, glob in (("rules", "memory/rules/*.md"), ("skills", "skills/*.md")):
+        found = sorted(wsdir.glob(glob))
+        unreadable = []
+        for p in found:
+            try:
+                if not p.read_text(encoding="utf-8", errors="replace").strip():
+                    unreadable.append(p.name)
+            except OSError:
+                unreadable.append(p.name)
+        if not found:
+            lines.append((UNKNOWN, f"no {name} on disk — nothing to read, and nothing says why"))
+        else:
+            lines.append((BAD if unreadable else OK,
+                          f"{len(found) - len(unreadable)}/{len(found)} {name} readable"
+                          + (f" — EMPTY: {', '.join(unreadable)}" if unreadable else "")))
+
+
+def which_loops(root, lines):
+    """The closed-loop map, if this repository has it — every store with a reader that can reach it."""
+    tool = root / ".chamnan" / "tools" / "invariant_map.py"
+    if not tool.is_file():
+        return
+    try:
+        out = subprocess.run([sys.executable, str(tool), "--quiet"], capture_output=True,
+                             text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        lines.append((UNKNOWN, "invariant_map.py exists but would not run"))
+        return
+    tail = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+    lines.append((OK if out.returncode == 0 else BAD,
+                  tail[-1][:120] if tail else "invariant_map said nothing"))
+
+
+def main(argv):
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
+    quiet = "--quiet" in argv or "-q" in argv
+
+    root = ws.find_root() or Path(os.getcwd())
+    wsdir = ws.workspace(root)
+    if not wsdir.is_dir():
+        print(f"chamnan-doctor: no workspace under {root} — run chamnan-map once to create one")
+        return 2
+
+    lines = []
+    which_plugin(lines)
+    which_hooks(root, wsdir, lines)
+    which_logs(wsdir, lines)
+    which_artefacts(root, wsdir, lines)
+    which_stores(wsdir, lines)
+    which_loops(root, lines)
+
+    order = {BAD: 0, UNKNOWN: 1, OK: 2}
+    lines.sort(key=lambda row: order.get(row[0], 3))
+    shown = [r for r in lines if not quiet or r[0] != OK]
+    for mark, text in shown:
+        print(f"  {mark}  {text}")
+    bad = sum(1 for m, _ in lines if m == BAD)
+    unknown = sum(1 for m, _ in lines if m == UNKNOWN)
+    print()
+    if bad or unknown:
+        print(f"  {bad} broken, {unknown} that this cannot decide from disk. "
+              f"`??` is an answer: it says where the evidence runs out.")
+    else:
+        print(f"  {len(lines)} checks, nothing broken and nothing undecidable.")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

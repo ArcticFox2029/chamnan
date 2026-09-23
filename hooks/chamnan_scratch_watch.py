@@ -730,6 +730,24 @@ def main():
     if not wsdir.is_dir():
         return 0
 
+    # 🐛 [2026-09-23, found by chamnan-doctor] `logs/failures.jsonl` had never been written in the
+    # repository this package was developed in, on a day full of non-zero exits. `PostToolUseFailure`
+    # fires when the TOOL CALL fails; a shell command that returns 1 is a call that SUCCEEDED and
+    # reported a non-zero exit, so `gotcha.py` — built the same morning to stop a failure repeating
+    # — had almost no input. This hook already runs on every Bash/Write/Edit, so it CALLS the
+    # recorder rather than a fourth process doing it: the same reuse the skill pointer makes of the
+    # bulk-read notice, and for the same measured reason (R18: a second hook on Bash cost 102 ms).
+    try:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("_tool_failed",
+                                             Path(__file__).resolve().parent
+                                             / "chamnan_tool_failed.py")
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.record(payload)
+    except Exception:      # noqa: BLE001 — remembering a failure is never worth causing one
+        pass
+
     # Silent and independent of everything below: never prints, so it does not compete for the
     # one-notice-per-turn budget the checks after it share.
     #
