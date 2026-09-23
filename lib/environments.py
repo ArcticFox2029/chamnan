@@ -410,7 +410,12 @@ def render_constraints(root, max_envs=4, max_bullets=4):
         for bullet in env["constraints"][:max_bullets]:
             block.append(f"  - {mdblock.one_line_capped(bullet, MAX_CONSTRAINT_CHARS)}")
         if len(env["constraints"]) > max_bullets:
-            block.append(f"  - _…{len(env['constraints']) - max_bullets} more_")
+            # \U0001F41B [2026-09-23] "_…3 more_" told the reader something had been cut and gave them
+            # no way to see it. Measured the same day: `chamnan-env` had been installed 27 days
+            # and invoked zero times against 6,414 recorded commands, while this line ran on every
+            # session that had a truncated environment. A count without a path is the shape the
+            # owner named — designed, never called, so the process is incomplete.
+            block.append(f"  - _…{len(env['constraints']) - max_bullets} more · `chamnan-env`_")
         cost = sum(len(l) + 1 for l in block)
         # At least one environment always renders, even if it alone exceeds the budget: a section
         # of zero rows is not a summary. The per-item cap above already bounds how bad that one is.
@@ -426,5 +431,8 @@ def render_constraints(root, max_envs=4, max_bullets=4):
         # because "4 more" after four entries reads as the count cap doing its documented job while the
         # reader has in fact lost sections they wrote.
         why = " (this section is full)" if clipped else ""
-        lines.append(f"- _…and {left} more in `.chamnan/{FILENAME}`{why}_")
+        # Names the COMMAND rather than the file: the same bytes, and the reader gets the
+        # constraints rendered instead of a document to search. The file is still there for
+        # anybody who wants to edit it, which is a different job.
+        lines.append(f"- _…and {left} more · `chamnan-env`{why}_")
     return "\n".join(lines)

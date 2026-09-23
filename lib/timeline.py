@@ -440,5 +440,9 @@ def open_titles(root, count=INJECT_OPEN, refuse_conflicts=False):
         lines.append(f"- **{mdblock.one_line_capped(title_of(path, texts[path]))}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
                      f"(`{mdblock.as_quoted(path.name)}`)")
     if len(rows) > count:
-        lines.append(f"- _…and {len(rows) - count} more open in `.chamnan/{DIRNAME}/`_")
+        # \U0001F41B [2026-09-23] Named the DIRECTORY, which leaves a reader to open files and guess.
+        # `chamnan-timeline` was installed 27 days and invoked zero times against 6,414 recorded
+        # commands, while this line told sessions there was more and never said how to see it.
+        # The command costs the same bytes as the path and renders the threads instead.
+        lines.append(f"- _…and {len(rows) - count} more open · `chamnan-timeline`_")
     return "\n".join(lines)
