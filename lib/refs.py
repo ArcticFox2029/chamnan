@@ -480,6 +480,23 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                     continue
                 with open(p, "r", encoding="utf-8", errors="replace") as fh:
                     body = fh.read()
+                # 🎯 [2026-09-23] Both answers below look for the identifier SPELLED OUT: the parser
+                # finds `Name`/`Attribute`/`arg` nodes whose id is this string, and the lexical pass
+                # word-boundary matches it. Neither can find a name whose characters are not in the
+                # file, so a file that does not contain the substring is answered — with zero hits —
+                # by this line, and does not need to be parsed or scrubbed.
+                #
+                # It is exact rather than a heuristic, and that matters for the `unjudged` count: a
+                # file skipped here is JUDGED, including one with a syntax error that `in_source`
+                # would have given up on. Proving no reference exists without parsing is a better
+                # answer than declining to answer.
+                #
+                # Measured on this package, `chamnan-where whole_graphemes`: 113 files parsed and
+                # 1.49 million AST nodes walked to return three results. The three files that
+                # contain the string are the only ones that can hold one.
+                if symbol not in body:
+                    how["exact" if ext == ".py" else "lexical"] += 1
+                    continue
                 if ext == ".py":
                     hits, method = in_source(body, symbol), "exact"
                 else:

@@ -59,13 +59,19 @@ MAX_AGE_DAYS = 30
 # Edit and Write. The retention the sweep applies is mtime-based and structurally cannot catch a
 # file that is appended to every day.
 MAX_LINES = 20_000
+# 🎯 [owner 2026-09-23] "12 months, no more" — a condition on every log this project grows from
+# here. The line cap above is a SIZE bound and cannot deliver it: 20,000 lines is a few months of
+# heavy work and several years of light work, so a quiet repository would carry records from three
+# years ago under a cap that never trips. Both bounds apply, in the same locked pass, so the promise
+# `SELF_PRUNING_LOGS` makes — that this file bounds itself by record — is true in both directions.
+MAX_AGE_TRIM_DAYS = 365
 # Rewritten only when it has grown well past the cap, so the cost is amortised rather than paid on
 # every edit. 20,000 lines is about 1.5 MB and several months of heavy work at the rate measured
 # here; the trim keeps the newest, because a co-edit habit from last quarter is not this one.
 TRIM_AT = int(MAX_LINES * 1.25)
 
 
-def record(wsdir, path):
+def record(wsdir, path, op=None, actor=None):
     """Append one edit. Called from the PostToolUse hook, which already fires on Write and Edit.
 
     🐛 The append used to happen OUTSIDE any lock (`dest.open("a")`, unguarded), with only the
@@ -91,7 +97,14 @@ def record(wsdir, path):
             if not held:
                 return
             with dest.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"at": int(time.time()), "fp": str(path)}) + "\n")
+                row = {"at": int(time.time()), "fp": str(path)}
+                # Absent rather than empty when it does not apply, so a main-thread edit costs the
+                # same two keys it has always cost and a reader can tell "the session did this"
+                # from "an agent did this and we could not say which".
+                if op:
+                    row["op"] = str(op)[:16]
+                row.update(actor or {})
+                fh.write(json.dumps(row) + "\n")
             _trim(dest)
     except OSError:
         pass          # a read-only checkout must still be able to edit files
@@ -117,9 +130,29 @@ def _trim(dest):
         lines = dest.read_text(encoding="utf-8-sig", errors="replace").splitlines(True)
         if len(lines) <= TRIM_AT:
             return
-        ws.atomic_write_text(dest, "".join(lines[-MAX_LINES:]))
+        kept = lines[-MAX_LINES:]
+        ws.atomic_write_text(dest, "".join(_within_age(kept)))
     except OSError:
         pass
+
+
+def _within_age(lines, now=None):
+    """The tail of `lines` from the first record this cannot prove is older than the window.
+
+    The log is append-ordered, so "the first line to keep" is all this has to find: everything after
+    it is newer. A line that cannot be parsed, or carries no `at`, counts as NOT provably old and
+    therefore starts the tail — dropping it would make an unreadable line a reason to delete the
+    readable records that follow it, and this function may only delete what it can prove.
+    """
+    cutoff = (now or time.time()) - MAX_AGE_TRIM_DAYS * 86400
+    for i, line in enumerate(lines):
+        try:
+            at = json.loads(line).get("at")
+        except (ValueError, AttributeError):
+            return list(lines[i:])
+        if not isinstance(at, (int, float)) or at >= cutoff:
+            return list(lines[i:])
+    return []
 
 
 def _sequence(wsdir):
@@ -137,6 +170,52 @@ def _sequence(wsdir):
     except OSError:
         return []
     return out
+
+
+def contested(wsdir, window=WINDOW, since_days=MAX_AGE_DAYS):
+    """[(path, [actors])] for files two or more DIFFERENT actors wrote inside `window` edits.
+
+    🎯 [R43 #5, and the owner's direction A] Measured on real GitHub history: pull requests from
+    different agents conflict 41.7% of the time against 19.8% when they come from the same one. The
+    question that follows — *did two agents just write the same file* — could not be asked here
+    because `edits.jsonl` recorded only a time and a path. It records who since 2026-09-23.
+
+    **This is the reader that justifies the field.** A log nobody queries is weight, not evidence,
+    and the field was added with this in the same change rather than on the promise of a later one.
+
+    Why the WINDOW rather than the whole log: two agents editing one file a week apart is ordinary
+    work on a shared codebase. Inside five edits of each other is the shape that loses one of them.
+
+    The main thread counts as an actor, under the name `session`. A subagent overwriting what the
+    session just wrote is the same defect as two subagents doing it, and leaving the main thread out
+    would hide the commonest case — which is the mistake `_de_silent`'s own comment records in a
+    different form: an exemption needs a reason, and this one would have had none.
+    """
+    cutoff = time.time() - since_days * 86400
+    rows = []
+    try:
+        with (wsdir / LOG).open(encoding="utf-8-sig", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if not isinstance(rec, dict) or not rec.get("fp"):
+                    continue
+                if (rec.get("at") or 0) < cutoff:
+                    continue
+                rows.append((rec["fp"], rec.get("ag") or rec.get("ty") or "session"))
+    except OSError:
+        return []
+    out = {}
+    for i, (fp, who) in enumerate(rows):
+        # Look BACK over the window rather than forward, so one pass answers it and a file edited
+        # at the very end of the log is treated like any other.
+        near = {w for f, w in rows[max(0, i - window):i] if f == fp}
+        if near and near != {who}:
+            out.setdefault(fp, set()).update(near | {who})
+    return sorted(((fp, sorted(who)) for fp, who in out.items()),
+                  key=lambda r: (-len(r[1]), r[0]))
 
 
 def partners(wsdir, path, window=WINDOW):

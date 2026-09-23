@@ -648,6 +648,45 @@ def enabled(part, root=None):
 # The reason it was missed is worth keeping: `blocklog` declares its path as `"logs/block_shape.jsonl"`
 # — WITH the directory — so a search for a bare `"*.jsonl"` filename literal walks straight past it.
 # `44_...` in the check pool now asserts the population instead of trusting this list to be complete.
+# Keys kept short because they land on a hot-path log: `edits.jsonl` gets one line per Write and
+# Edit, for years. `ag` is the run, `ty` is the kind.
+ACTOR_KEYS = ("ag", "ty")
+
+
+def actor(payload):
+    """`{"ag": agent_id, "ty": agent_type}` for a tool call made by a subagent, `{}` otherwise.
+
+    🎯 [2026-09-23] The backlog recorded "the hook cannot see which agent made an edit" as the wall
+    a whole direction stood behind. It is not one. The hooks reference, under *Hooks in subagents*:
+    *"When a subagent calls a tool, tool events such as `PreToolUse` and `PostToolUse` fire the same
+    configured hooks as in the main conversation, and the input carries the `agent_id` and
+    `agent_type` common input fields that identify the subagent."* The fields have been arriving all
+    along and no writer read them.
+
+    **Absent, not empty, on the main thread.** A record with no `ag` means the session itself made
+    the change; a record with `ag: ""` would mean an agent whose id could not be read, and a reader
+    that cannot tell those apart will count the common case as the rare one. It also keeps the
+    ordinary line the size it is today — this log already reaches 20,000 records.
+
+    One helper rather than three call sites reading the payload themselves, because a field added at
+    one writer and forgotten at the identical ones beside it is this repository's most-recorded
+    defect. The suite derives the population from source and asserts every per-tool-call writer
+    passes through here.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    out = {}
+    ident = payload.get("agent_id")
+    kind = payload.get("agent_type")
+    # Truncated at the writer rather than the reader: an id or a name is short, and a payload that
+    # carries something long carries it into every line of a log that is never rewritten.
+    if isinstance(ident, str) and ident.strip():
+        out["ag"] = ident.strip()[:64]
+    if isinstance(kind, str) and kind.strip():
+        out["ty"] = kind.strip()[:60]
+    return out
+
+
 def append_jsonl(root, rel, row, keep):
     """Append one record to a workspace `.jsonl` and trim it to the newest `keep`. Never raises.
 
@@ -692,6 +731,7 @@ def append_jsonl(root, rel, row, keep):
 
 SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl",
                     "subagent_start.jsonl", "block_shape.jsonl", "gate_runs.jsonl",
+                    "failures.jsonl",
                     # One row per subagent run, bounded by record like the rest: what it cost and
                     # whether it ran on the model its own file declares. A cost history is worth
                     # having only if it is long enough to compare against, which an age sweep would

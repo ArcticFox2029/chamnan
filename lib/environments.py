@@ -208,7 +208,7 @@ def render_entry(name, platform="", versions="", constraints=(), checked=""):
 # re-asked. `redact.emit` shadows `print` in `bin/chamnan-env`, `bin/chamnan-timeline` and
 # `bin/chamnan-promote`, so an agent reading a command's stdout sees a scrubbed value -- and
 # `git add` reads the FILE, not the stdout. Reproduced end to end: `chamnan-timeline add
-# deploy-notes "rotated the key, new value is AKIAIOSFODNN7EXAMPLE"` wrote that key verbatim into
+# deploy-notes "rotated the key, new value is AKIA_FIXTURE_ID"` wrote that key verbatim into
 # `.chamnan/threads/deploy-notes.md`, which `git check-ignore` confirms is not ignored, and which
 # the README tells people to commit. `scrub()` catches it; nothing was calling `scrub()`.
 #

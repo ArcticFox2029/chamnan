@@ -389,7 +389,36 @@ def why_this_session(payload):
             cost = f" — {tokens_re:,.0f} tokens"
             if isinstance(usd, (int, float)) and usd > 0:
                 cost += f", about ${usd:,.2f} to write again"
-        return f"_Resumed after the prompt cache expired, so the whole conversation is re-sent{cost}._"
+        # 🎯 [owner 2026-09-23] Saying what it costs and stopping there leaves the reader with a
+        # number and no move. Measured on this machine with `claude -p --output-format json`, same
+        # repository, same account, the same question in both arms: a resume 13.5 and 13.7 hours
+        # old cost 4.03x and 6.69x a fresh session and answered SHORTER both times, because what a
+        # fresh session needs is in the workspace rather than in the transcript.
+        #
+        # The recommendation only appears when BOTH of the owner's conditions hold — a new date and
+        # a night's gap — so it stays silent for the patterns each condition alone gets wrong:
+        # finishing at 22:00 and returning at 02:00 is one sitting, and nine hours inside one
+        # working day is one day. `lib/handoff.py` holds the rule and the cases.
+        #
+        # 🔴 Nothing here may tick. This sentence is part of a block whose two firings in one
+        # session must be byte-identical, or the whole ~8.5 KB is re-cached at cache-WRITE price on
+        # every resume and compaction — the exact cost this paragraph is about. So the elapsed time
+        # is NOT printed, only the verdict, which cannot change between two firings a second apart.
+        advice = ""
+        gap = payload.get("seconds_since_last_response")
+        if isinstance(gap, (int, float)) and gap > 0:
+            try:
+                import handoff as _ho
+                from datetime import datetime as _dt, timedelta as _td
+                now = _dt.now().astimezone()
+                if _ho.decide(now - _td(seconds=float(gap)), now)[0] == _ho.FRESH:
+                    advice = (" A session started fresh here costs a fraction of that and answers "
+                              "from the workspace instead; `chamnan-open` picks between the two "
+                              "before a session starts. The earlier conversation is kept either way.")
+            except Exception:          # noqa: BLE001 — advice is never worth losing the block for
+                advice = ""
+        return (f"_Resumed after the prompt cache expired, so the whole conversation is "
+                f"re-sent{cost}._{advice}")
     return ""
 
 
@@ -1520,6 +1549,7 @@ def main():
                             source=(payload.get("source") if isinstance(payload, dict) else None),
                             session=(payload.get("session_id") if isinstance(payload, dict)
                                      else None),
+                            model=(payload.get("model") if isinstance(payload, dict) else None),
                             resent=False)
         print("\n".join(_lines))
         return 0
@@ -2283,7 +2313,7 @@ def main():
                     ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _thread_clash)
                 # 🐛 [2026-09-08] Appended AFTER `redact.scrub` had already run on `open_threads`,
                 # so the FILENAMES in this warning reached the block unscrubbed -- and a filename is
-                # attacker-controlled in a repository somebody else wrote. `AKIAIOSFODNN7EXAMPLE.md`
+                # attacker-controlled in a repository somebody else wrote. `AKIA_FIXTURE_ID.md`
                 # went in whole. The skills version of this same warning, added in the same commit,
                 # scrubs correctly; two of the three copies did not. Found within the hour by the
                 # round pointed at what had just changed (R7 agent 2, 2026-09-08).
@@ -2848,8 +2878,10 @@ def main():
     if _failed:
         header = ("_" + " Also: ".join(_failed) + "._\n\n") + header
     _briefed = []
+    _briefed_cost = {}
     body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built,
-                               briefed_out=_briefed, briefs=briefs, usage=_opens)
+                               briefed_out=_briefed, briefed_cost_out=_briefed_cost,
+                               briefs=briefs, usage=_opens)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
     # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page
@@ -2886,6 +2918,8 @@ def main():
         blocklog.record(root, body, ceiling=ceiling,
                         when=time.strftime("%Y-%m-%dT%H:%M:%S"),
                         source=(payload.get("source") if isinstance(payload, dict) else None),
+                        model=(payload.get("model") if isinstance(payload, dict) else None),
+                        short_full=_briefed_cost,
                         # 🎯 [R3.3.10] The join key. `pointer.jsonl` records which store a session
                         # opened; this records what that session's block dropped. Neither could
                         # answer "was a dropped section reopened later in the same session" alone.

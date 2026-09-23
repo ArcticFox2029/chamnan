@@ -73,7 +73,8 @@ def _note_query(payload):
     except Exception:                       # noqa: BLE001 — accounting must never break a tool call
         _q = ""
     try:
-        pointer.note_query(wsdir, payload.get("session_id") or "", rel, _q)
+        pointer.note_query(wsdir, payload.get("session_id") or "", rel, _q,
+                           actor=ws.actor(payload))
     except Exception:                       # noqa: BLE001
         pass
     return 0
@@ -115,7 +116,8 @@ def main():
         # pointed at looked identical to one that never did. See pointer.note_opened.
         inner = rel[len(wsdir.name) + 1:]
         if inner.split("/", 1)[0] in ("skills", "memory", "threads"):
-            pointer.note_opened(wsdir, payload.get("session_id") or "", inner)
+            pointer.note_opened(wsdir, payload.get("session_id") or "", inner,
+                                actor=ws.actor(payload))
         return 0
 
     session_id = payload.get("session_id") or ""
@@ -158,7 +160,8 @@ def main():
     if not block:
         return 0
 
-    pointer.note(wsdir, session_id, rel, hits, (time.time() - started) * 1000)
+    pointer.note(wsdir, session_id, rel, hits, (time.time() - started) * 1000,
+                 actor=ws.actor(payload))
     # 🐛 Every title in this block is the first line of a committed file, and none of it went
     # through the redactor. That made this the cheapest leak in the plugin to trigger: no command
     # to run and nothing to opt into, just an ordinary `Read` of any file a stored lesson happens

@@ -2577,11 +2577,11 @@ for _expr in ("default_auth_plugin = plugin_manager.get_auth_plugins()[0]",
     check(f"CODE IS NOT A CREDENTIAL: {_expr.strip()[:40]}", redact.scrub(_expr) == _expr)
 # The half that must not move, and the case the whole aggressive design exists for.
 check("...while a literal INSIDE a call still goes, which is what the whole-expression rule was for",
-      "QUtJQUlPU0ZPRE5ON0VYQU1QTEU" not in
-      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQUlPU0ZPRE5ON0VYQU1QTEU=")'))
+      "QUtJQV9GSVhUVVJFX0lE" not in
+      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQV9GSVhUVVJFX0lE=")'))
 check("...and the call itself now survives, so the line still says where the value comes from",
       "base64.b64decode(" in
-      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQUlPU0ZPRE5ON0VYQU1QTEU=")'))
+      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQV9GSVhUVVJFX0lE=")'))
 check("...an environment lookup keeps its variable name and loses only its fallback secret",
       redact.scrub('API_KEY = os.environ.get("KEY", "hunter2secret")')
       == 'API_KEY = os.environ.get("KEY", "<REDACTED>")')
@@ -3361,10 +3361,10 @@ def _bash(command, session_id):
 # reader and an unguarded one sitting two hooks apart.
 envs.upsert(aw_root, "leaky",
             envs.render_entry("leaky", "somewhere",
-                              "", ["deploy key AKIAIOSFODNN7EXAMPLE is required"], "2026-08-27"))
+                              "", ["deploy key AKIA_FIXTURE_ID is required"], "2026-08-27"))
 _leaky = run_scratch_watch(_bash("kubectl --context leaky get pods", "awleak"), aw_root)
 check("THE ENVIRONMENT NOTICE REDACTS A SECRET IN A DECLARED CONSTRAINT",
-      "AKIAIOSFODNN7EXAMPLE" not in _leaky and "REDACTED" in _leaky)
+      "AKIA_FIXTURE_ID" not in _leaky and "REDACTED" in _leaky)
 check("...and still says which environment it is about", "`leaky`" in _leaky)
 
 first = run_scratch_watch(_bash("kubectl --context production get pods", "aw1"), aw_root)
@@ -5212,7 +5212,7 @@ _pk = Path(tempfile.mkdtemp()) / "repo"
 ws.ensure(_pk)
 (_pk / ".chamnan" / "memory" / "lessons").mkdir(parents=True, exist_ok=True)
 (_pk / ".chamnan" / "memory" / "lessons" / "deploy.md").write_text(
-    "# Rotate AKIAIOSFODNN7EXAMPLE before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
+    "# Rotate AKIA_FIXTURE_ID before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
 (_pk / "src").mkdir(exist_ok=True)
 (_pk / "src" / "deploy.py").write_text("x = 1\n", encoding="utf-8")
 _ptr = subprocess.run(
@@ -5222,7 +5222,7 @@ _ptr = subprocess.run(
                       "cwd": str(_pk)}),
     capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_pk)).stdout
 check("THE FILE POINTER REDACTS A SECRET IN A STORED TITLE",
-      "AKIAIOSFODNN7EXAMPLE" not in _ptr and "REDACTED" in _ptr)
+      "AKIA_FIXTURE_ID" not in _ptr and "REDACTED" in _ptr)
 check("...and still points at the file that records it",
       "memory/lessons/deploy.md" in _ptr)
 _rmtree(_pk.parent, ignore_errors=True)
@@ -6234,12 +6234,12 @@ check("a malformed entry does not take the section with it",
 # an agent runs, so its stdout reaches a session's context exactly like the injected block does.
 (_tw / ".chamnan" / "tools" / "leaky.py").write_text("# a real tool\n", encoding="utf-8")
 _idx = json.loads((_tw / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))
-_idx.append({"name": "leaky.py", "desc": "deploys with AKIAIOSFODNN7EXAMPLE embedded", "runs": 0})
+_idx.append({"name": "leaky.py", "desc": "deploys with AKIA_FIXTURE_ID embedded", "runs": 0})
 (_tw / ".chamnan" / "tools" / "index.json").write_text(json.dumps(_idx), encoding="utf-8")
 _list = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_tw)).stdout
 check("--list REDACTS A SECRET IN A TOOL DESCRIPTION, like the hook already does",
-      "AKIAIOSFODNN7EXAMPLE" not in _list and "REDACTED" in _list)
+      "AKIA_FIXTURE_ID" not in _list and "REDACTED" in _list)
 check("...and never prints a path-shaped name as if it were a filename",
       "escape.sh" not in _list and "unusable name" in _list)
 check("...but still SHOWS the broken rows, because this is the command that cleans them up",
@@ -7521,8 +7521,8 @@ for _label, _text, _secret in [
     ("secretKey",      f'secretKey = "{_F}{_F}"', _F),
     # A value that is a call: the callee was captured AS the secret and replaced, leaving the real
     # payload beside a broken line.
-    ("a call value",   'S = base64.b64decode("QUtJQUlPU0ZPRE5ON0VYQU1QTEU=")'.replace("S =", "AWS_SECRET ="),
-                       "QUtJQUlPU0ZPRE5ON0VYQU1QTEU="),
+    ("a call value",   'S = base64.b64decode("QUtJQV9GSVhUVVJFX0lE=")'.replace("S =", "AWS_SECRET ="),
+                       "QUtJQV9GSVhUVVJFX0lE="),
 ]:
     check(f"{_label}: the secret does not survive", _secret not in redact.scrub(_text))
 
@@ -9130,6 +9130,11 @@ _de_silent = {
     # index, so demanding the create-a-workspace sentence of it would add an error to a command
     # that has none, which is the mistake this list's own comment above records.
     "chamnan-where": "parses source directly and needs no workspace at all",
+    # It answers from the HOST's transcript directory, not from a workspace, and its whole job is
+    # to run before a session exists. Telling somebody to run `chamnan-map` first would be advice
+    # about a file this command never opens — and it is most useful in a repository chamnan has
+    # never indexed, where the question "resume or not" is the same question.
+    "chamnan-open": "reads the host's transcripts and needs no workspace at all",
 }
 _de_missing = []
 for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
@@ -10580,9 +10585,9 @@ if not _NEWLINE_IN_NAME_OK:
     print("      (the newline half is not run here: Windows rejects a newline in a filename, "
           "so the escape it defends against cannot be constructed on this platform)")
 # as_quoted makes a value inert, not non-secret; its own docstring says the caller must still scrub.
-_sec = _notice_for("dump_aws_secret_key=AKIAIOSFODNN7EXAMPLE.min.js")
+_sec = _notice_for("dump_aws_secret_key=AKIA_FIXTURE_ID.min.js")
 check("...and a secret-shaped filename is redacted, because the finished note is scrubbed",
-      "AKIAIOSFODNN7EXAMPLE" not in _sec and "REDACTED" in _sec)
+      "AKIA_FIXTURE_ID" not in _sec and "REDACTED" in _sec)
 # The fix must not start mangling ordinary names, which is every real use of this hook.
 _ord = _quoted_name(_notice_for("bundle.min.js"))
 check("...while an ordinary filename is passed through untouched", _ord == "bundle.min.js")
@@ -13550,7 +13555,7 @@ check("...and the file outside the workspace is untouched", _outside.is_file())
 check("...and the refusal says what a tool name is", "plain filename" in _dem.stderr)
 _rmtree(_demd.parent, ignore_errors=True)
 
-check("redact.emit scrubs a string argument", "AKIA" not in redact.scrub("k AKIAIOSFODNN7EXAMPLE"))
+check("redact.emit scrubs a string argument", "AKIA" not in redact.scrub("k AKIA_FIXTURE_ID"))
 check("...and leaves a non-string alone — a caller printing an int means it",
       redact.emit.__doc__ is not None and "Non-string" in redact.emit.__doc__)
 
@@ -19343,7 +19348,7 @@ for _rd_text, _rd_should, _rd_why in (
     # cases below them; what changed is that a credential-shaped VALUE now overrides a reassuring
     # name. Both halves are in this table because fixing one direction alone is how this rule has
     # gone wrong every previous time.
-    ('api_secret_id = "AKIAIOSFODNN7EXAMPLE1234"', True, "an `_id` tail does not make it a name"),
+    ('api_secret_id = "AKIA_FIXTURE_ID1234"', True, "an `_id` tail does not make it a name"),
     ('db_password_type = "tr0ub4dor3horsebattery"', True, "nor a `_type` tail"),
     ('oauth_client_secret_name = "sk-live-9f2a8b7c6d5e4f3a"', True, "nor a `_name` tail"),
     ('secret_name = "the-name-of-my-secret"', False, "but a name really is a name"),
@@ -22351,7 +22356,7 @@ check("...and a file with no trailing newline does not grow one",
 # 🐛 [2026-09-08] Three copies of one warning went in together. The skills one wrapped its filenames
 # in `redact.scrub`; the threads and sessions ones appended theirs AFTER the surrounding text had
 # already been scrubbed, so the names went into the injected block untouched. A filename is written
-# by whoever wrote the repository, so `AKIAIOSFODNN7EXAMPLE.md` rode in whole (R7 agent 2, 2026-09-06).
+# by whoever wrote the repository, so `AKIA_FIXTURE_ID.md` rode in whole (R7 agent 2, 2026-09-06).
 #
 # Checked by DRIVING every store that can carry a filename into the block, not by reading the two
 # lines that were wrong. Three identical features and one of them correct is exactly the shape that
@@ -22362,7 +22367,7 @@ _leak_root = Path(tempfile.mkdtemp(prefix="chamnan-fnleak-")) / "repo"
 subprocess.run(["git", "init", "-q", str(_leak_root)], capture_output=True)
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_leak_root),
                capture_output=True)
-_KEYLIKE = "AKIAIOSFODNN7EXAMPLE"
+_KEYLIKE = "AKIA_FIXTURE_ID"
 _ws_leak = _leak_root / ".chamnan"
 for _sub, _fname, _body in (
         ("skills", f"{_KEYLIKE}.md", "# A skill\n\nordinary text.\n"),
@@ -22581,7 +22586,7 @@ for _dc_label, _dc_text, _dc_secret in (
         ("comma", "username,password\nadmin,Hunter2Password!\n", "Hunter2Password!"),
         ("quoted comma", 'user,password\n"admin","Hunter2Password!"\n', "Hunter2Password!"),
         ("semicolon", "user;password;role\nadmin;Hunter2Password!;root\n", "Hunter2Password!"),
-        ("tab", "user\tapi_key\nadmin\tAKIAIOSFODNN7EXAMPLE\n", "AKIAIOSFODNN7EXAMPLE"),
+        ("tab", "user\tapi_key\nadmin\tAKIA_FIXTURE_ID\n", "AKIA_FIXTURE_ID"),
         ("a markdown table", "| user | password |\n| admin | Hunter2Password! |\n",
          "Hunter2Password!"),
         ("every row, not only the first", "user,password\na,pw1\nb,pw2\nc,pw3\n", "pw3")):
@@ -22794,7 +22799,7 @@ _ws_root = Path(tempfile.mkdtemp(prefix="chamnan_writescrub_"))
 subprocess.run(["git", "init", "-q"], cwd=_ws_root, check=True)
 (_ws_root / "app.py").write_text("x = 1\n", encoding="utf-8")
 ws.ensure(str(_ws_root))
-_WS_SECRET = "AKIAIOSFODNN7EXAMPLE"
+_WS_SECRET = "AKIA_FIXTURE_ID"
 
 timeline.create(str(_ws_root), "Deploy notes", "2026-09-08")
 _tl_path = timeline.append(str(_ws_root), "deploy-notes", "2026-09-08",
@@ -31743,7 +31748,7 @@ _CASES153 = (
     ("a code fragment carrying an equals sign",
      "breaking a coverage tie on token count picks `per_dir=0`, which names every", False),
     ("...but trailing equals is base64 padding and must still go",
-     "the api key is `QUtJQUlPU0ZPRE5ON0VYQU1QTEU=`", True),
+     "the api key is `QUtJQV9GSVhUVVJFX0lE=`", True),
     ("a colon with no space before it is an assignment, not prose",
      "the password:field `not_a_secret_value` in the schema", False),
 
@@ -47758,7 +47763,7 @@ try:
 except (OSError, NotImplementedError, AttributeError):
     _t_can_link95 = False          # Windows without developer mode; the property still holds there
 (_t_ws95 / "memory" / "rules" / "inline.md").write_text(
-    "# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY=AKIAZZZZZZZZZZZZZZZZ\n",
+    "# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY=AKIA_FIXTURE_ID\n",
     encoding="utf-8")
 (_t_ws95 / "skills" / "README.md").write_text(
     "# Skills\n\nThis folder is an index OF the skills, not a skill.\n", encoding="utf-8")
@@ -47813,7 +47818,7 @@ _t_real95 = ROOT.parent.parent / ".chamnan"
 # directory (`recall.paths_for`'s own docstring says which), and a bare `.rglob()` guarded by
 # `.is_dir()` would silently drop both from this corpus while `build()` below still indexes them —
 # understating the corpus and risking a false FAIL on the ratio check just underneath.
-_t_docs95 = [p for folder, _k, _w in _rc95.KINDS for p in _rc95.paths_for(_t_real95, folder)]
+_t_docs95 = [p for p in _rc95.sources(_t_real95) if p.is_file()]
 if len(_t_docs95) < 20:
     skip("  · this workspace has %d store documents — too few to measure a ratio on" % len(_t_docs95))
 else:
@@ -48338,6 +48343,604 @@ check("THE THREE FALLBACK SITUATIONS HAVE THREE DIFFERENT MESSAGES",
 
 shutil.rmtree(_t_root99, ignore_errors=True)
 # ============================ end of the folded surgical pool
+
+
+# ---------------------------------------- resuming a conversation that costs more than it is worth
+# 🎯 [owner 2026-09-23] Measured with `claude -p --output-format json`, one repository, one account,
+# the same question in both arms: a fresh session cost $0.2339 and $0.2091, and resuming a
+# conversation 13.5 and 13.7 hours old cost $0.9432 and $1.3984 — 4.03x and 6.69x — while answering
+# the question SHORTER both times. chamnan's own block is not the difference: 4,148 tokens on
+# startup against 4,139 on resume in that repository.
+#
+# The rule is TWO conditions and both must hold, and each one alone gets a real working pattern
+# wrong. The cases below are the ones the owner named, and they are the specification.
+import handoff as _ho                                               # noqa: E402
+from datetime import datetime as _hodt                              # noqa: E402
+
+_ho_cases = [
+    # label, last response, now, expected
+    ("finished 22:00, back 02:00 — one sitting across midnight",
+     _hodt(2026, 9, 22, 22, 0), _hodt(2026, 9, 23, 2, 0), _ho.RESUME),
+    ("finished 22:00, back 09:00 — a night apart, across midnight",
+     _hodt(2026, 9, 22, 22, 0), _hodt(2026, 9, 23, 9, 0), _ho.FRESH),
+    ("left at 18:00, back at 08:00 the next day",
+     _hodt(2026, 9, 22, 18, 0), _hodt(2026, 9, 23, 8, 0), _ho.FRESH),
+    ("Friday evening to Monday morning",
+     _hodt(2026, 9, 19, 18, 0), _hodt(2026, 9, 22, 8, 0), _ho.FRESH),
+    ("02:00 to 10:00 on the SAME date — a long break inside one day",
+     _hodt(2026, 9, 23, 2, 0), _hodt(2026, 9, 23, 10, 0), _ho.RESUME),
+    ("09:00 to 18:00, one long working day",
+     _hodt(2026, 9, 23, 9, 0), _hodt(2026, 9, 23, 18, 0), _ho.RESUME),
+    ("an hour for lunch", _hodt(2026, 9, 23, 12, 0), _hodt(2026, 9, 23, 13, 0), _ho.RESUME),
+    ("23:30 to 00:10 — ten minutes, two dates",
+     _hodt(2026, 9, 22, 23, 30), _hodt(2026, 9, 23, 0, 10), _ho.RESUME),
+]
+_ho_wrong = [f"{lbl}: got {_ho.decide(a.astimezone(), b.astimezone())[0]}, wanted {want}"
+             for lbl, a, b, want in _ho_cases
+             if _ho.decide(a.astimezone(), b.astimezone())[0] != want]
+check("EVERY WORKING PATTERN THE OWNER NAMED DECIDES THE WAY THEY SAID",
+      _ho_wrong == [], saw="; ".join(_ho_wrong))
+# An empty population here would pass over nothing, and the table above is the whole specification.
+check("...and the table was not silently emptied", len(_ho_cases) >= 8)
+# Each condition alone is WRONG, which is the argument for requiring both. Asserted rather than
+# explained, so a later simplification to one condition fails here instead of in somebody's evening.
+_ho_midnight = (_hodt(2026, 9, 22, 22, 0).astimezone(), _hodt(2026, 9, 23, 2, 0).astimezone())
+check("a date change ALONE would cut a session that ran past midnight, so it cannot be the rule",
+      _ho_midnight[0].date() != _ho_midnight[1].date()
+      and _ho.decide(*_ho_midnight)[0] == _ho.RESUME)
+_ho_longday = (_hodt(2026, 9, 23, 9, 0).astimezone(), _hodt(2026, 9, 23, 18, 0).astimezone())
+check("...and a gap ALONE would cut one long working day, so that cannot be the rule either",
+      (_ho_longday[1] - _ho_longday[0]).total_seconds() >= _ho.LONG_GAP_SECONDS
+      and _ho.decide(*_ho_longday)[0] == _ho.RESUME)
+# Unknown is not evidence for the destructive reading.
+check("an unreadable timestamp resumes rather than guesses", _ho.decide(None)[0] == _ho.RESUME)
+check("...and every verdict carries a reason a person can read",
+      all(len(_ho.decide(a.astimezone(), b.astimezone())[1]) > 20 for _, a, b, _w in _ho_cases))
+
+# The tail read is what makes this affordable: a transcript in this project reached 826 MB, and
+# reading one whole to find a timestamp in its last kilobyte is a minute of I/O per launch.
+_ho_dir = Path(tempfile.mkdtemp(prefix="chamnan-handoff-"))
+_ho_big = _ho_dir / "big.jsonl"
+with _ho_big.open("w", encoding="utf-8") as _fh:
+    _fh.write(('{"timestamp": "2020-01-01T00:00:00.000Z", "pad": "' + "x" * 500 + '"}\n')
+              * 4000)
+    _fh.write('{"timestamp": "2026-09-22T18:00:00.000Z"}\n')
+_ho_t0 = time.time()
+_ho_read = _ho.last_response_at(_ho_big)
+_ho_ms = (time.time() - _ho_t0) * 1000
+check("the newest timestamp is read from a large transcript",
+      _ho_read is not None and _ho_read.year == 2026 and _ho_read.month == 9,
+      saw=f"read {_ho_read!r}")
+check("...without reading the whole file", _ho_ms < 250, saw=f"{_ho_ms:.0f} ms")
+# A partial last line is what a transcript being written right now looks like.
+with _ho_big.open("a", encoding="utf-8") as _fh:
+    _fh.write('{"timestamp": "2026-09-2')
+check("a half-written last line is skipped rather than raising",
+      _ho.last_response_at(_ho_big) is not None)
+check("a file that is not there answers None, not an exception",
+      _ho.last_response_at(_ho_dir / "absent.jsonl") is None)
+(_ho_dir / "empty.jsonl").write_text("", encoding="utf-8")
+check("...and an empty one does too", _ho.last_response_at(_ho_dir / "empty.jsonl") is None)
+check("a transcript directory that does not exist is None, not a crash",
+      _ho.project_dir(_ho_dir / "no-such-repo", _ho_dir) is None)
+shutil.rmtree(_ho_dir, ignore_errors=True)
+
+# The other half: the session that resumed anyway. The host supplies the gap, so the same rule
+# answers there — and the sentence it adds must obey the constraint the sentence is ABOUT.
+def _ho_fire(gap_hours, expired=True):
+    _pl = {"cwd": str(ROOT), "hook_event_name": "SessionStart", "source": "resume",
+           "session_id": "session-handoff", "prompt_cache_likely_expired": expired,
+           "context_tokens": 163000, "estimated_cache_write_usd": 0.94,
+           "seconds_since_last_response": gap_hours * 3600}
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          input=json.dumps(_pl), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
+
+
+_ho_ADVICE = "picks between the two before a session starts"
+_ho_short, _ho_long = _ho_fire(4), _ho_fire(14)
+check("a stale resume is still told what it cost", "to write again" in _ho_long)
+check("...and a night apart is told what to do about it", _ho_ADVICE in _ho_long)
+check("...while one sitting that ran past midnight is told the cost and nothing else",
+      "to write again" in _ho_short and _ho_ADVICE not in _ho_short)
+# 🔴 The sentence recommends avoiding a cache write. A sentence that differs between two firings
+# of one session causes exactly that, on the whole block, every time.
+_ho_pairs = [(_ho_fire(h), _ho_fire(h)) for h in (4, 14, 62)]
+check("TWO FIRINGS CARRYING THE ADVICE ARE STILL BYTE-IDENTICAL",
+      all(a == b for a, b in _ho_pairs),
+      saw="%d of %d pairs differed" % (sum(1 for a, b in _ho_pairs if a != b), len(_ho_pairs)))
+# Absent fields are the normal case before Claude Code 2.1.251, and on a startup that is not a
+# resume at all. Neither may raise, and neither may advertise a decision nobody made.
+check("a resume with no gap field says nothing about handoff",
+      _ho_ADVICE not in _ho_fire(0, expired=True))
+
+
+# ---------------------------------- a mistake nobody had to type in, so a new workspace has some
+# 🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ" — then the correction that
+# decided the design: the system has to work for somebody else's repository and somebody else's
+# kind of work, not for the pile this one has accumulated.
+#
+# Measured here before building: of 73 rules, lessons, decisions and skills in this workspace,
+# **5 carry a machine-checkable trailer** — 0 of 22 rules do. A gotcha store that has to be written
+# into is empty on the day it is needed most. `PostToolUseFailure` is the one input nobody types:
+# a failing `pytest`, `terraform plan`, `go build` or `psql` arrives identically, in any repository.
+#
+# This records only. "The same failure" is a key that cannot be chosen without real failures to
+# choose it from, and a key too loose warns on healthy work until people stop reading it —
+# `skill_overlap.py` has that outcome recorded.
+_fl_ws = Path(tempfile.mkdtemp(prefix="chamnan-failures-")) / "r"
+(_fl_ws / ".git").mkdir(parents=True)
+ws.ensure(_fl_ws)
+
+
+def _fl_fire(**over):
+    _pl = dict({"cwd": str(_fl_ws), "hook_event_name": "PostToolUseFailure",
+                "session_id": "s-fail"}, **over)
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_tool_failed.py")],
+                          input=json.dumps(_pl), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+
+
+def _fl_rows():
+    _p = _fl_ws / ".chamnan" / "logs" / "failures.jsonl"
+    if not _p.is_file():
+        return []
+    return [json.loads(_l) for _l in _p.read_text(encoding="utf-8").splitlines() if _l.strip()]
+
+
+_fl_r = _fl_fire(tool_name="Bash", tool_input={"command": "pytest tests/"},
+                 error="Exit code 1\nE   ImportError: no module", duration_ms=4187)
+check("a failed tool call is written down without anybody typing anything",
+      len(_fl_rows()) == 1 and _fl_rows()[0]["tool"] == "Bash", saw=_fl_rows())
+check("...keeping the first line of the error, which is where the exit code is",
+      _fl_rows()[0]["err"] == "Exit code 1", saw=_fl_rows()[0].get("err"))
+check("...and saying nothing to the session, which can already see the failure",
+      _fl_r.stdout.strip() == "", saw=_fl_r.stdout[:120])
+
+# 🔴 The command line is the most dangerous string in this payload. A log of unscrubbed commands
+# would be the worst file this package writes — the same trap the context-snapshot direction is
+# parked for, reached by a different road.
+_fl_fire(tool_name="Bash", error="Exit code 22", tool_input={
+    "command": "curl -H 'Authorization: Bearer sk-ant-FIXTURE' https://x.invalid"})
+_fl_secret = _fl_rows()[-1]["subj"]
+check("A CREDENTIAL ON THE FAILING COMMAND LINE IS SCRUBBED BEFORE IT REACHES DISK",
+      "sk-ant-api03" not in _fl_secret and "curl" in _fl_secret, saw=_fl_secret)
+
+# An interrupt is the user changing their mind, not a mistake to remember.
+_fl_before = len(_fl_rows())
+_fl_fire(tool_name="Bash", tool_input={"command": "sleep 900"}, error="aborted", is_interrupt=True)
+check("...while an interrupted command is not recorded as a failure",
+      len(_fl_rows()) == _fl_before, saw=len(_fl_rows()))
+
+# Which agent failed, from the fields added for direction A — one helper, every writer.
+_fl_fire(tool_name="Bash", agent_id="agt_9", agent_type="Explore",
+         tool_input={"command": "go build ./..."}, error="Exit code 2\nundefined: foo")
+check("...and a subagent's failure is attributed to it",
+      _fl_rows()[-1].get("ag") == "agt_9" and _fl_rows()[-1].get("ty") == "Explore",
+      saw=_fl_rows()[-1])
+
+# A repository with no workspace must not be given one by a failing command.
+_fl_bare = Path(tempfile.mkdtemp(prefix="chamnan-failures-bare-"))
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_tool_failed.py")],
+               input=json.dumps({"cwd": str(_fl_bare), "hook_event_name": "PostToolUseFailure",
+                                 "tool_name": "Bash", "tool_input": {"command": "x"},
+                                 "error": "Exit code 1"}),
+               capture_output=True, text=True)
+check("RECORDING NEVER SCAFFOLDS A WORKSPACE WHERE THERE IS NONE",
+      not (_fl_bare / ".chamnan").exists(), saw=sorted(p.name for p in _fl_bare.iterdir()))
+
+# The hook is registered, or it never fires and every check above tests a file nothing runs.
+_fl_reg = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+check("...and the hook is actually registered for the event",
+      any("chamnan_tool_failed.py" in str(_h.get("command", ""))
+          for _g in _fl_reg.get("PostToolUseFailure", []) for _h in _g.get("hooks", [])),
+      saw=sorted(_fl_reg))
+_rmtree(_fl_ws.parent, ignore_errors=True)
+_rmtree(_fl_bare, ignore_errors=True)
+
+
+# ------------------------------- what this repository already tried and put down
+# 🎯 [owner 2026-09-23, direction F] An agent proposing a library does not know the team removed it
+# last quarter and wrote down why. The commits that touched the manifests say so and nothing read
+# them.
+#
+# 🐛 The spec read removed (`-`) lines out of `git log -p`. Measured over 600 commits of three
+# repositories here: 26 such lines, ZERO of them removals — fifteen from moving the app into a
+# subdirectory, ten from one commit that translated the file's comments and rewrote every line, one
+# from a version bump that put the package straight back. Comparing the SET OF NAMES between two
+# revisions survives all three, and the fixture below is built from exactly those cases.
+import deps as _dp  # noqa: E402
+
+_dp_repo = Path(tempfile.mkdtemp(prefix="chamnan-deps-")) / "r"
+_dp_repo.mkdir(parents=True)
+_dp_git = ["git", "-C", str(_dp_repo)]
+subprocess.run(_dp_git + ["init", "-q"], capture_output=True)
+subprocess.run(_dp_git + ["config", "user.email", "t@example.invalid"], capture_output=True)
+subprocess.run(_dp_git + ["config", "user.name", "t"], capture_output=True)
+
+
+def _dp_commit(text, msg):
+    (_dp_repo / "requirements.txt").write_text(text, encoding="utf-8")
+    subprocess.run(_dp_git + ["add", "-A"], capture_output=True)
+    subprocess.run(_dp_git + ["commit", "-qm", msg], capture_output=True)
+
+
+_dp_commit("requests>=2.0\naxios-py>=1.0  # a comment\nflask>=3.0\n", "initial deps")
+_dp_commit("requests>=2.5\nAXIOS-PY>=1.0\nflask>=3.0\n", "bump requests and shout a name")
+_dp_commit("# \u0e41\u0e1b\u0e25\nrequests>=2.5\naxios-py>=1.0\nflask>=3.0\n", "translate comments")
+_dp_commit("requests>=2.5\nflask>=3.0\n",
+           "Remove axios-py: memory leak under load, and requests already does this")
+_dp_found = _dp.removals(_dp_repo)
+check("A PACKAGE THIS REPOSITORY LISTED AND STOPPED LISTING IS FOUND",
+      set(_dp_found) == {"axios-py"}, saw=sorted(_dp_found))
+check("...with the commit that removed it, which is where the reason is written",
+      _dp_found and "memory leak" in _dp_found["axios-py"][0][0], saw=_dp_found.get("axios-py"))
+# The three shapes that made the diff-line reading wrong, each asserted on its own so a regression
+# names which one came back.
+check("...and a VERSION BUMP is not a removal", "requests" not in _dp_found)
+check("...and a case change is not a removal either", "flask" not in _dp_found)
+check("...and a commit that rewrote every line removed nothing", len(_dp_found) == 1,
+      saw=sorted(_dp_found))
+# Names are read off the line, not off the constraint, and a comment paragraph after the entry is
+# what this repository's own requirements file actually looks like.
+check("a requirement's NAME is what is compared, not its whole line",
+      _dp.names("ollama>=0.6.0  # a long explanation, in any language\n", "requirements.txt")
+      == {"ollama"})
+check("...and an unreadable manifest yields nothing rather than guessing",
+      _dp.names("", "requirements.txt") == set()
+      and _dp.names("<<<<<<< HEAD\n", "unknown.xyz") == set())
+_rmtree(_dp_repo.parent, ignore_errors=True)
+
+
+# ------------------------------- what reaches a file, and what has actually happened to it
+# 🐛 [2026-09-23] (self-measured, direction G) `AGENTS.md` is the most-edited file in this
+# repository — 240 of the last 600 commits touched it — and `chamnan-impact` answered "a file
+# nothing imports and nothing has happened to is the cheap case — change it freely". Nothing
+# imports it and no thread names it, both true; the conclusion drawn from them was the opposite of
+# the truth. `state/churn-*.json` held the answer and this command had never asked it.
+#
+# 🔴 Reported as a COUNT, never as a verdict. "Changed often" is not "fragile" — a file under active
+# development changes constantly and is the healthiest thing in the tree. `skill_overlap.py` records
+# what a warning that fires on healthy files does to the people reading it.
+# A REAL repository with real commits. 🐛 The first fixture here planted a `churn-600.json` with a
+# made-up `head`, and `rollup._churn` correctly refused it — that cache is validated against the
+# actual HEAD precisely so a stale ranking is never served as current. A fixture that cannot reach
+# the code it is testing passes or fails for reasons that have nothing to do with the change.
+import rollup as _g_rollup  # noqa: E402
+_g_repo = Path(tempfile.mkdtemp(prefix="chamnan-impact-churn-")) / "r"
+_g_repo.mkdir(parents=True)
+_g_git = ["git", "-C", str(_g_repo)]
+subprocess.run(_g_git + ["init", "-q"], capture_output=True)
+subprocess.run(_g_git + ["config", "user.email", "t@example.invalid"], capture_output=True)
+subprocess.run(_g_git + ["config", "user.name", "t"], capture_output=True)
+ws.ensure(_g_repo)
+(_g_repo / "QUIET.md").write_text("# quiet\n", encoding="utf-8")
+subprocess.run(_g_git + ["add", "-A"], capture_output=True)
+subprocess.run(_g_git + ["commit", "-qm", "first"], capture_output=True)
+# 🐛 [2026-09-23] (self-measured) The first fixture made five commits and this branch never
+# fired. `rollup.MIN_COMMITS_TO_RANK` is 50: churn refuses to RANK from a history too short
+# to mean it, which is correct, and was nearly "fixed" out of the product to make a test
+# pass. A fixture has to clear the bar the code sets, not the other way round.
+for _i in range(_g_rollup.MIN_COMMITS_TO_RANK + 5):
+    (_g_repo / "NOTES.md").write_text(f"# notes {_i}\n", encoding="utf-8")
+    subprocess.run(_g_git + ["add", "NOTES.md"], capture_output=True)
+    subprocess.run(_g_git + ["commit", "-qm", f"edit {_i}"], capture_output=True)
+(_g_repo / ".chamnan" / "MAP.md").write_text(
+    "# Architecture map\n\n## `NOTES.md`\nnotes\n\n## `QUIET.md`\nquiet\n", encoding="utf-8")
+
+
+def _g_run(path):
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-impact"), path],
+                          cwd=str(_g_repo), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
+
+
+_g_out = _g_run("NOTES.md")
+check("A FILE NOTHING IMPORTS IS NOT AN ALL-CLEAR WHEN THE HISTORY SAYS OTHERWISE",
+      "change it freely" not in _g_out, saw=_g_out[:300])
+check("...and the count is given, so the reader can judge rather than be told",
+      f"{_g_rollup.MIN_COMMITS_TO_RANK + 5} time(s)" in _g_out, saw=_g_out[:300])
+# The other direction: a file the history has barely touched must still read as the cheap case, or
+# this becomes a warning on everything, which is the failure it is written to avoid.
+_g_quiet = _g_run("QUIET.md")
+check("...while a file changed once still reads as the cheap case",
+      "change it freely" in _g_quiet, saw=_g_quiet[:300])
+# One definition of the lookup: a summary line and a branch that each fetch it separately are how
+# the two end up disagreeing about the same file.
+_g_src = (ROOT / "bin" / "chamnan-impact").read_text(encoding="utf-8")
+check("the churn history is fetched in ONE place in this command",
+      _g_src.count("rollup._churn(") == 1, saw=_g_src.count("rollup._churn("))
+# And the line that decides "is this a lot" is derived from the repository, not typed in: a
+# constant chosen at a desk is the same guess with better manners.
+check("...and the threshold is the repository's own median, not a number written here",
+      "median" in _g_src and "ranked[len(ranked) // 2]" in _g_src)
+_rmtree(_g_repo.parent, ignore_errors=True)
+
+
+# -------------------------- finding a function by what it DOES, for somebody who did not write it
+# 🎯 [owner 2026-09-23, direction K] `chamnan-recall` searched the stores and not the code, and its
+# tokeniser kept `apply_promo_code` as one term — so somebody who remembers the behaviour and not
+# the name searched `promo` and got nothing. That is the position of everybody new to a codebase.
+import recall as _rc  # noqa: E402
+
+_rc_cases = [
+    ("apply_promo_code", ["apply", "promo", "code"]),
+    ("calculateDiscountRate", ["calculate", "discount", "rate"]),
+    ("XMLHttpRequest", ["xml", "http", "request"]),
+    ("utf8Decode", ["utf8", "decode"]),
+]
+_rc_bad = [f"{src} -> {_rc.terms(src)}" for src, want in _rc_cases
+           if not set(want) <= set(_rc.terms(src))]
+check("A COMPOUND IDENTIFIER IS SEARCHABLE BY ITS PARTS", _rc_bad == [], saw="; ".join(_rc_bad))
+check("...and the whole name survives beside them, so an exact search still wins",
+      all(src.lower() in _rc.terms(src) for src, _ in _rc_cases))
+check("...and a plain word is not split into noise", _rc.terms("plain") == ["plain"])
+check("...and the case table was not emptied", len(_rc_cases) >= 4)
+# 🐛 [2026-09-23] (self-measured) The first version split the already-lowercased word, so a
+# camelCase hump was gone before the splitter saw it: `utf8Decode` stayed one term and the snake_case
+# cases passed, which is the shape that ships a half-working feature.
+check("...and splitting happens BEFORE lowering, or camelCase never splits at all",
+      "decode" in _rc.terms("utf8Decode"), saw=_rc.terms("utf8Decode"))
+
+# The stop words this module derives from document frequency must NOT be replaced by a written
+# list: the stores here are half Thai, and a hand-kept English list is the enumerated-set mistake
+# this package keeps paying for. Pinned because the spec for this direction proposed exactly that.
+_rc_src = (ROOT / "lib" / "recall.py").read_text(encoding="utf-8")
+check("stop words are still DERIVED, not listed", "n * 0.6" in _rc_src)
+
+# The other half: the architecture index's symbols become searchable entries.
+_rc_ws = Path(tempfile.mkdtemp(prefix="chamnan-recall-sym-")) / "r"
+(_rc_ws / ".git").mkdir(parents=True)
+ws.ensure(_rc_ws)
+(_rc_ws / ".chamnan" / "MAP.md").write_text(
+    "# Architecture map\n\n## `src/billing.py`\n"
+    "- `apply_promo_code(order)` — works out the discount a coupon is worth\n"
+    "- `no_description_here(x)`\n", encoding="utf-8")
+_rc_sym = _rc._symbol_entries(_rc_ws / ".chamnan")
+check("every symbol the index names becomes an entry, described or not", len(_rc_sym) == 2,
+      saw=[e["title"] for e in _rc_sym])
+check("...each one pointing at the file it is defined in",
+      all(e["path"] == "src/billing.py" for e in _rc_sym), saw=[e["path"] for e in _rc_sym])
+check("...and a described one is findable by its DESCRIPTION, not only its name",
+      "discount" in _rc_sym[0]["body"] and "coupon" in _rc_sym[0]["body"],
+      saw=sorted(_rc_sym[0]["body"]))
+check("...while an undescribed one is still findable by the parts of its name",
+      "description" in _rc_sym[1]["body"], saw=sorted(_rc_sym[1]["body"]))
+# Weight is the floor on purpose: a rule that governs a function outranks the function's own row.
+check("a symbol never outranks a recorded rule",
+      all(e["weight"] <= min(w for _f, _k, w in _rc.KINDS) for e in _rc_sym),
+      saw=[e["weight"] for e in _rc_sym])
+_rmtree(_rc_ws.parent, ignore_errors=True)
+
+
+# ------------------------------ the question "why did it not know that" now has a place to be asked
+# 🎯 [owner 2026-09-23, direction I] When an agent misses something the repository has written down,
+# there are two explanations needing opposite fixes: it is not recorded, or it is recorded and did
+# not fit. Only the second leaves a trace and nothing read it. Measured here before the command
+# existed: six sections arrived as names only on 40 of the last 40 session starts.
+#
+# It reads the SHAPE log and nothing else — no prompt or file content is stored by this package,
+# which is what makes the audit safe to keep. The check below pins that: the command must answer
+# without opening anything but the log.
+_ex = Path(tempfile.mkdtemp(prefix="chamnan-explain-")) / "r"
+(_ex / ".git").mkdir(parents=True)
+ws.ensure(_ex)
+(_ex / ".chamnan" / "logs").mkdir(parents=True, exist_ok=True)
+(_ex / ".chamnan" / "logs" / "block_shape.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
+    {"t": "2026-09-22T09:00:00", "bytes": 9400, "ceiling": 9500, "tok": 4100,
+     "sec": {"Rules": 900, "Architecture index": 300}, "short": ["Architecture index"],
+     "sfull": {"Architecture index": 1500}, "drop": ["Recent milestones"]},
+    {"t": "2026-09-23T09:00:00", "bytes": 9478, "ceiling": 9500, "tok": 4169,
+     "sec": {"Rules": 900, "Architecture index": 339}, "short": ["Architecture index"],
+     "sfull": {"Architecture index": 1383}},
+]), encoding="utf-8")
+
+
+def _ex_run(*args):
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-explain-context")] + list(args),
+                          cwd=str(_ex), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+
+
+_ex_out = _ex_run()
+check("it names the section that arrived as names only",
+      "Architecture index" in _ex_out.stdout, saw=_ex_out.stdout[:200] + _ex_out.stderr[:200])
+check("...and says how much of it was kept, which is the pair sec+sfull",
+      "339" in _ex_out.stdout and "1,383" in _ex_out.stdout and "25%" in _ex_out.stdout,
+      saw=_ex_out.stdout[:300])
+check("...and reports the trend, because one short block is a budget and forty is a decision",
+      "2 of 2" in _ex_out.stdout or "of 2" in _ex_out.stdout, saw=_ex_out.stdout[-300:])
+check("...and a section dropped on an EARLIER firing still appears in the trend",
+      "Recent milestones" in _ex_out.stdout, saw=_ex_out.stdout[-300:])
+check("it exits 0 on a workspace it can answer for", _ex_out.returncode == 0)
+# A workspace with no firings has not answered the question, and saying "everything fitted" there
+# is the false all-clear this package refuses elsewhere.
+_ex_empty = Path(tempfile.mkdtemp(prefix="chamnan-explain-empty-")) / "r"
+(_ex_empty / ".git").mkdir(parents=True)
+ws.ensure(_ex_empty)
+_ex_none = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-explain-context")],
+                          cwd=str(_ex_empty), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+check("NO RECORDED SESSIONS IS SAID AS SUCH, NOT AS 'EVERYTHING FITTED'",
+      "nothing to explain" in _ex_none.stdout and "fitted" not in _ex_none.stdout,
+      saw=_ex_none.stdout[:200])
+# A record written before `sfull` existed names the section and cannot size it. Printing a 0 there
+# would read as "none of it arrived", which is the opposite of what the record says.
+(_ex / ".chamnan" / "logs" / "block_shape.jsonl").write_text(json.dumps(
+    {"t": "2026-09-20T09:00:00", "bytes": 9400, "ceiling": 9500,
+     "sec": {"Architecture index": 300}, "short": ["Architecture index"]}) + "\n", encoding="utf-8")
+_ex_old = _ex_run()
+check("...and an older record says the figure is missing rather than printing a zero",
+      "predates" in _ex_old.stdout and "0 of" not in _ex_old.stdout, saw=_ex_old.stdout[:300])
+_rmtree(_ex.parent, ignore_errors=True)
+_rmtree(_ex_empty.parent, ignore_errors=True)
+
+
+# --------------------------------- what a section RETAINED, which no record could say before
+# 🐛 [2026-09-23] (self-measured) Asked whether the fitter shrinks well, this session compared the
+# recorded size of shortened sections against unshortened ones and got 120-136%: sections that had
+# apparently GROWN by being cut. The two groups were different weeks — the sections grew, which is
+# why they began to be shortened — so the comparison measured the calendar. `block_shape.jsonl`
+# records only what was SENT, and a section's full size is knowable at exactly one moment, inside
+# the fitter, and nowhere afterwards. One number per shortened section makes the question answerable
+# and cannot be added to yesterday's records.
+_sf_cost = {}
+_sf_briefed = []
+_sf_sections = [
+    ("# Big\n" + ("a section that will not fit. " * 200) + "\n"),
+    ("# Small\n" + "short enough.\n"),
+]
+_sf_body, _sf_dropped = fit.shrink("## chamnan\n", _sf_sections, 400,
+                                   briefs={"Big": "Big: names only"},
+                                   briefed_out=_sf_briefed, briefed_cost_out=_sf_cost)
+check("the fitter reports what a shortened section would have cost whole",
+      all(v > 0 for v in _sf_cost.values()),
+      saw=f"briefed={_sf_briefed} cost={_sf_cost}")
+check("...only for sections it actually shortened",
+      set(_sf_cost) == set(_sf_briefed), saw=f"{sorted(_sf_cost)} vs {sorted(_sf_briefed)}")
+check("...and the figure is the WHOLE size, larger than what was delivered",
+      all(v > 400 for v in _sf_cost.values()) if _sf_cost else True, saw=_sf_cost)
+# The out-parameter is optional, the way `briefed_out` already is: every existing caller passes
+# neither and must keep working.
+check("a caller that asks for neither still gets a block",
+      isinstance(fit.shrink("## chamnan\n", _sf_sections, 400,
+                            briefs={"Big": "Big: names only"})[0], str))
+# And it reaches the log, where the pair `sec` + `sfull` is what a reader divides.
+_sf_rec = blocklog.shape("body", 400, None, "startup", True, (), None, None,
+                         ("Big",), None, None, None, {"Big": 4096})
+check("THE LOG CARRIES THE WHOLE SIZE BESIDE THE DELIVERED ONE",
+      _sf_rec.get("sfull") == {"Big": 4096}, saw=_sf_rec.get("sfull"))
+check("...and a firing that shortened nothing carries no such key",
+      "sfull" not in blocklog.shape("body", 400, None, "startup"))
+
+
+# ------------------------------- a file that does not spell the name cannot be referencing it
+# 🎯 [2026-09-23] `chamnan-where` parsed EVERY source file in the tree. Measured on this package:
+# 113 files parsed and 1.49 million AST nodes walked to answer one question, when only 12 files
+# contained the characters of the name at all. Both answers it can give — the parser's `Name`,
+# `Attribute` and `arg` nodes, and the lexical pass's word-boundary match — require the identifier
+# spelled out in the text, so a substring test settles the other 101 exactly rather than heuristically.
+#
+# Oracle before it shipped: 120 symbols derived from this package's own definitions, each looked up
+# with the prefilter and with it disabled. 0 differing answers, 305.5s against 111.5s.
+import refs as _pf_refs                                                    # noqa: E402
+_pf_root = Path(tempfile.mkdtemp(prefix="chamnan-prefilter-")) / "r"
+(_pf_root / "pkg").mkdir(parents=True)
+(_pf_root / "pkg" / "uses.py").write_text(
+    "def caller():\n    return target_name()\n", encoding="utf-8")
+(_pf_root / "pkg" / "mentions.py").write_text(
+    '"""A docstring about target_name."""\nX = "target_name"  # and a comment\n', encoding="utf-8")
+(_pf_root / "pkg" / "silent.py").write_text("def other():\n    return 1\n", encoding="utf-8")
+_pf_hits, _pf_unjudged, _pf_how = _pf_refs.find(_pf_root, "target_name")
+check("a real use is found", [h for h in _pf_hits if h[0].endswith("uses.py")])
+check("...and a name that only appears in a docstring or a string is not a use",
+      not [h for h in _pf_hits if h[0].endswith("mentions.py")])
+check("...and every file is still accounted for, including the one skipped without parsing",
+      _pf_how["exact"] + _pf_how["lexical"] + _pf_unjudged == 3,
+      saw=f"how={_pf_how} unjudged={_pf_unjudged}")
+
+# 🔴 The signature of the prefilter, asserted through BEHAVIOUR rather than through a timing that
+# would be flaky: a file with a syntax error is `unjudged` when it contains the name — the parser
+# gave up and absence cannot be proven — and JUDGED when it does not, because the substring test
+# proved it without parsing. A prefilter that was removed, or that ran after the parse, fails here.
+(_pf_root / "pkg" / "broken_silent.py").write_text("def (:\n", encoding="utf-8")
+_, _pf_u_silent, _ = _pf_refs.find(_pf_root, "target_name")
+check("AN UNPARSEABLE FILE THAT NEVER SPELLS THE NAME IS ANSWERED, NOT GIVEN UP ON",
+      _pf_u_silent == 0, saw=f"unjudged={_pf_u_silent}")
+(_pf_root / "pkg" / "broken_named.py").write_text("def (: target_name\n", encoding="utf-8")
+_, _pf_u_named, _ = _pf_refs.find(_pf_root, "target_name")
+check("...while one that DOES spell it and cannot be parsed is still reported as unjudged",
+      _pf_u_named == 1, saw=f"unjudged={_pf_u_named}")
+shutil.rmtree(_pf_root.parent, ignore_errors=True)
+
+
+# ------------------------------------- the fields a log cannot be given after the fact
+# 🎯 [owner 2026-09-23] Three directions — multi-agent collisions, which model is enough for which
+# work, and the dashboard — all wait on fields that must already be in the log when the question is
+# asked. `edits.jsonl` recorded `{at, fp}` and nothing else, and the backlog recorded "the hook
+# cannot see which agent made an edit" as the wall the first of those stood behind. The hooks
+# reference says otherwise, under *Hooks in subagents*: PostToolUse "carries the `agent_id` and
+# `agent_type` common input fields that identify the subagent". They were arriving all along.
+_ac_cases = [
+    ("main thread", {"tool_name": "Edit"}, {}),
+    ("subagent", {"agent_id": "agt_01", "agent_type": "Explore"}, {"ag": "agt_01", "ty": "Explore"}),
+    ("id only", {"agent_id": "agt_02"}, {"ag": "agt_02"}),
+    ("blank id is not an id", {"agent_id": "   ", "agent_type": "Explore"}, {"ty": "Explore"}),
+    ("not a dict", None, {}),
+]
+_ac_wrong = [f"{lbl}: {ws.actor(pl)!r} != {want!r}"
+             for lbl, pl, want in _ac_cases if ws.actor(pl) != want]
+check("THE ACTOR IS READ FROM THE PAYLOAD, AND IS ABSENT RATHER THAN EMPTY OFF THE MAIN THREAD",
+      _ac_wrong == [], saw="; ".join(_ac_wrong))
+check("...and the case table was not emptied", len(_ac_cases) >= 5)
+# A long id or name would otherwise be carried on every line of a log that is never rewritten.
+_ac_long = ws.actor({"agent_id": "x" * 500, "agent_type": "y" * 500})
+check("...and both are truncated at the writer", len(_ac_long["ag"]) <= 64 and len(_ac_long["ty"]) <= 60)
+
+# 🔴 The set, not the member. Every hook that writes a per-tool-call log has the same payload and
+# the same field available; adding it at one and forgetting the identical ones beside it is this
+# repository's most-recorded defect. The population is DERIVED — every hook whose own hooks.json
+# registration is PreToolUse or PostToolUse — never a list typed here, because a list is what lets
+# a new writer be forgotten.
+_ac_reg = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+_ac_tool_hooks = set()
+for _ev in ("PreToolUse", "PostToolUse"):
+    for _grp in _ac_reg.get(_ev, []):
+        for _h in _grp.get("hooks", []):
+            _ac_tool_hooks.add(Path(str(_h.get("command", "")).strip('"')).name)
+check("the tool-event hooks were found from the registration, not from a list",
+      len(_ac_tool_hooks) >= 4, saw=sorted(_ac_tool_hooks))
+# Which of them WRITE a per-tool-call log: the ones that reach a recorder at all. A hook that only
+# reads and prints has nothing to attribute, and demanding the call of it would be the decorative
+# kind of check this project keeps finding.
+_ac_writers, _ac_silent = [], []
+for _name in sorted(_ac_tool_hooks):
+    _src = (ROOT / "hooks" / _name).read_text(encoding="utf-8", errors="replace")
+    if not any(m in _src for m in ("coedit.record(", "pointer.note(", "pointer.note_opened(",
+                                   "pointer.note_query(")):
+        continue
+    _ac_writers.append(_name)
+    if "ws.actor(payload)" not in _src:
+        _ac_silent.append(_name)
+check("EVERY TOOL-EVENT HOOK THAT WRITES A LOG ATTRIBUTES IT",
+      _ac_silent == [], saw="not passing ws.actor: " + ", ".join(_ac_silent))
+check("...and there were writers to check, so this is not passing over an empty set",
+      len(_ac_writers) >= 2, saw=sorted(_ac_writers))
+
+# The reader that justifies the field, in the same change rather than on the promise of a later one.
+_ac_ws = Path(tempfile.mkdtemp(prefix="chamnan-actor-")) / "r"
+(_ac_ws / ".git").mkdir(parents=True)
+ws.ensure(_ac_ws)
+_ac_log = _ac_ws / ".chamnan" / "logs" / "edits.jsonl"
+_ac_log.parent.mkdir(parents=True, exist_ok=True)
+_ac_now = int(time.time())
+_ac_log.write_text("".join(json.dumps(r) + "\n" for r in [
+    {"at": _ac_now, "fp": "src/a.py", "op": "Edit"},
+    {"at": _ac_now, "fp": "src/a.py", "op": "Write", "ag": "agt_1", "ty": "Explore"},
+    {"at": _ac_now, "fp": "src/b.py", "op": "Edit", "ag": "agt_2"},
+    {"at": _ac_now, "fp": "src/b.py", "op": "Edit", "ag": "agt_2"},
+    {"at": _ac_now, "fp": "src/c.py", "op": "Edit"},
+]), encoding="utf-8")
+import coedit as _ac_co  # noqa: E402
+_ac_hot = dict(_ac_co.contested(_ac_ws / ".chamnan"))
+check("TWO DIFFERENT ACTORS ON ONE FILE INSIDE THE WINDOW IS REPORTED",
+      sorted(_ac_hot.get("src/a.py", [])) == ["agt_1", "session"], saw=_ac_hot)
+check("...while one actor editing the same file twice is not a collision",
+      "src/b.py" not in _ac_hot)
+check("...and a file only the session touched is not one either", "src/c.py" not in _ac_hot)
+
+# The owner's retention condition, on the file that grows fastest. The line cap that was already
+# here is a SIZE bound and cannot deliver an AGE one.
+check("the edit ledger bounds itself by age as well as by size",
+      _ac_co.MAX_AGE_TRIM_DAYS <= 365)
+_ac_old = _ac_now - 400 * 86400
+_ac_lines = [json.dumps({"at": _ac_old, "fp": "gone.py"}) + "\n",
+             json.dumps({"at": _ac_now, "fp": "here.py"}) + "\n"]
+check("...and a record past the window is dropped while the ones after it are kept",
+      [json.loads(l)["fp"] for l in _ac_co._within_age(_ac_lines, _ac_now)] == ["here.py"])
+check("...while an unreadable line stops the trim rather than being deleted through",
+      len(_ac_co._within_age(["{torn\n"] + _ac_lines, _ac_now)) == 3)
+shutil.rmtree(_ac_ws.parent, ignore_errors=True)
 
 
 total = PASSED + len(FAILED)

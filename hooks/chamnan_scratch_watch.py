@@ -658,7 +658,9 @@ def _record_edit(payload, root, wsdir):
     if rel.parts and rel.parts[0] == ".chamnan":
         return
     import coedit
-    coedit.record(wsdir, rel)
+    # The payload already carries the operation and, inside a subagent, who made it. Both were
+    # thrown away here for months while the questions that need them were recorded as unanswerable.
+    coedit.record(wsdir, rel, op=payload.get("tool_name"), actor=ws.actor(payload))
 
 
 def _index_missed_this_file(payload, root, wsdir, session_id):

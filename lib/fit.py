@@ -291,7 +291,7 @@ def _usage_of(sources, usage):
 
 
 def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
-           briefed_out=None,
+           briefed_out=None, briefed_cost_out=None,
            usage=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
@@ -618,6 +618,19 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
     # this. Titles, not the source paths `_short` holds, because the log keys sections by title.
     if briefed_out is not None:
         briefed_out.extend(sorted({title_of(order[i]) for i in briefed_at}))
+    # 🐛 [2026-09-23] (self-measured) `briefed_out` says WHICH sections arrived as names; nothing
+    # said what that cost. Asked "is the fitter shrinking well?", this session compared the recorded
+    # size of shortened sections against unshortened ones and got 120-136% — sections apparently
+    # GREW by being cut. The two groups were different weeks: the sections grew, which is why they
+    # started being shortened, so the comparison measured the calendar. The log records only what
+    # was SENT, and the size a section would have had is knowable at exactly one moment — here,
+    # where `order[i]` is still the full text — and nowhere afterwards.
+    #
+    # A dict rather than a second list, and a separate out-parameter rather than a changed shape
+    # for `briefed_out`, which has callers.
+    if briefed_cost_out is not None:
+        for i in briefed_at:
+            briefed_cost_out[title_of(order[i])] = len(order[i].encode())
     _line = ""
     if _short:
         _named = ", ".join(f"`{_s}`" for _s in _short[:5])

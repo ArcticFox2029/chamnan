@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""chamnan-explain-context — why the session did not know something, from what the block carried.
+
+  chamnan-explain-context              the last session start, and the trend behind it
+  chamnan-explain-context --all        every section, including the ones that arrived whole
+
+When an agent misses something this repository has written down, there are two explanations and
+they need opposite fixes: the knowledge is not recorded, or it is recorded and did not fit. Only
+the second leaves a trace, and until now nothing read it.
+
+Measured on this repository before the command existed: **65% of session starts shortened at least
+one section to its names**, always the same five or six, and one section was dropped outright on
+16%. The block is over budget as a steady state rather than occasionally, so "it did not fit" is
+the likelier answer and it is worth being able to prove.
+
+It reads `.chamnan/logs/block_shape.jsonl` and nothing else. No prompt is stored anywhere by this
+package -- only the SHAPE of each block: which sections went, how many bytes each took, and what
+the full ones would have taken. That is the whole point: the question is answerable without a copy
+of anything the block said.
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# Shadowed, like every other command here: this prints section titles and repository paths into
+# what becomes an agent's transcript, and a missed scrub is silent. See redact.emit.
+print = redact.emit  # noqa: A001
+
+KNOWN_FLAGS = ("--all", "-h", "--help", "-v", "--version")
+LOG = "logs/block_shape.jsonl"
+TREND = 40
+
+
+def _rows(wsdir):
+    out = []
+    try:
+        with (wsdir / LOG).open(encoding="utf-8-sig", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue              # a torn append is one lost firing, not a broken answer
+                if isinstance(rec, dict) and rec.get("sec"):
+                    out.append(rec)
+    except OSError:
+        return []
+    return out
+
+
+def _pct(part, whole):
+    return f"{part / whole * 100:.0f}%" if whole else "—"
+
+
+def main(argv):
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
+    bad = ws.unknown_flags(argv, KNOWN_FLAGS, (), ())
+    if bad:
+        print(f"chamnan-explain-context: unknown flag {bad[0]} — try --help", file=sys.stderr)
+        return 2
+
+    root = ws.find_root(Path.cwd())
+    wsdir = ws.workspace(root)
+    if wsdir is None or not wsdir.is_dir():
+        print("chamnan-explain-context: no chamnan workspace here. "
+              "Run `chamnan-map` there first.", file=sys.stderr)
+        return 2
+
+    rows = _rows(wsdir)
+    if not rows:
+        # Distinct from "nothing was cut": a workspace with no firings recorded has not answered
+        # the question, and saying "everything arrived" would be the false all-clear this package
+        # refuses everywhere else.
+        print("No session starts are recorded yet, so there is nothing to explain. "
+              f"This reads `.chamnan/{LOG}`, which fills as sessions start.")
+        return 0
+
+    last = rows[-1]
+    sec = last.get("sec") or {}
+    short = set(last.get("short") or [])
+    sfull = last.get("sfull") or {}
+    drop = list(last.get("drop") or [])
+    ceiling = last.get("ceiling")
+
+    print(f"The last session start assembled {last.get('bytes', 0):,} bytes"
+          + (f" against a {ceiling:,}-byte ceiling" if ceiling else "")
+          + (f", {last.get('tok'):,} tokens" if last.get("tok") else "") + ".")
+
+    if drop:
+        print("\nArrived NOT AT ALL — the session never saw these:")
+        for name in sorted(drop):
+            print(f"  · {name}")
+
+    if short:
+        print("\nArrived as NAMES ONLY — the section was there, its text was not:")
+        rows_out = sorted(short, key=lambda n: sfull.get(n, 0), reverse=True)
+        for name in rows_out:
+            whole, sent = sfull.get(name), sec.get(name, 0)
+            if whole:
+                print(f"  · {name}  {sent:,} of {whole:,} bytes ({_pct(sent, whole)} kept)")
+            else:
+                # `sfull` landed in 1.31; a record written before it says WHICH sections were cut
+                # and cannot say by how much. Reporting a 0 there would read as "nothing arrived".
+                print(f"  · {name}  {sent:,} bytes sent (this record predates the full-size figure)")
+
+    if not drop and not short:
+        print("\nEverything the workspace offered fitted. If the session still missed something, "
+              "it is not recorded here — check that it is written down at all.")
+
+    if "--all" in argv:
+        print("\nEvery section in that block:")
+        for name, size in sorted(sec.items(), key=lambda kv: -kv[1]):
+            mark = " (names only)" if name in short else ""
+            print(f"  {size:6,} B  {name}{mark}")
+
+    # The trend is the half a single firing cannot give: one block being short is a budget; the
+    # same section short every time is a decision nobody made on purpose.
+    recent = rows[-TREND:]
+    counts = {}
+    for r in recent:
+        for name in (r.get("short") or []) + list(r.get("drop") or []):
+            counts[name] = counts.get(name, 0) + 1
+    if counts and len(recent) > 1:
+        print(f"\nOver the last {len(recent)} session starts:")
+        for name, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:3} of {len(recent)}  {name}")
+        print("\nA section cut on most starts is not an accident of one block. Either it is worth "
+              "its bytes and something else should go, or it is not and it can be trimmed at the "
+              "source — `chamnan-context` shows what the budget is spent on.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

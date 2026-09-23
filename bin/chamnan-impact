@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 import impact as impact_mod  # noqa: E402
 import mdblock
 import memory  # noqa: E402
+import rollup  # noqa: E402
 import timeline  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
@@ -92,6 +93,31 @@ def _index_age(map_path, root=None):
 KNOWN_FLAGS = ()
 TAKES_VALUE = ()
 TAKES_REST = ()
+
+
+def _churn_count(root, path):
+    """(commits touching `path`, how many files changed more often, whether that is a lot here).
+
+    One definition for every reader below. Two lookups of the same number is how a summary line and
+    a branch end up disagreeing about the same file.
+
+    🐛 [2026-09-23] (self-measured) The first version fired on any non-zero count, so a file touched
+    ONCE in six hundred commits was announced as "not untouched" — a warning on everything, which is
+    the failure `skill_overlap.py` already measured and recorded: people stop reading it. The line
+    has to exist and it must not be typed here either, because a constant chosen at a desk is the
+    same guess with better manners. The MEDIAN of the files that changed at all is the repository's
+    own answer to "is this a lot", and it costs one sort of a dict already in memory.
+    """
+    try:
+        counts = rollup._churn(root)
+    except Exception:              # noqa: BLE001 — a missing history is not a reason to fail
+        return 0, 0, False
+    n = counts.get(path) or 0
+    if not n:
+        return 0, 0, False
+    ranked = sorted(counts.values(), reverse=True)
+    median = ranked[len(ranked) // 2]
+    return n, sum(1 for v in ranked if v > n), n > median
 
 
 def main(argv):
@@ -193,9 +219,23 @@ def main(argv):
                   != pathlib.Path(root).resolve()):
                 print(f"  this file belongs to a repository this index does not cover, so `nothing "
                       f"recorded` is not an answer — ask from inside that repository instead")
+            elif on_disk and _churn_count(root, resolved or target)[2]:
+                # 🐛 [2026-09-23] (self-measured) `AGENTS.md` is the most-edited file in this
+                # repository — 240 of the last 600 commits touched it — and this command answered
+                # "nothing has happened to it, change it freely". Nothing IMPORTS it and no thread
+                # names it, both true, and the conclusion drawn from them was the opposite of the
+                # truth. The commit history was on disk the whole time and this branch never asked.
+                _n, _above, _ = _churn_count(root, resolved or target)
+                print(f"  nothing imports it and no thread names it — but it changed {_n} time(s) "
+                      f"in the last {rollup.CHURN_WINDOW} commits, more often than all but "
+                      f"{_above} file(s) here, so it is not untouched")
             elif on_disk:
+                # The count still goes out when there is one. Below the median it is not a reason
+                # to hesitate, and hiding it would make this branch claim more than it knows.
+                _n = _churn_count(root, resolved or target)[0]
+                _seen = f" It has {_n} commit(s) behind it, which is below this repository's median." if _n else ""
                 print(f"  a file nothing imports and nothing has happened to is the cheap case — "
-                      f"change it freely")
+                      f"change it freely.{_seen}")
             else:
                 # 🐛 A one-character typo used to land here and be told to change it freely. Nothing
                 # is recorded about a path the repository does not contain, and that is a question
@@ -223,6 +263,20 @@ def main(argv):
         print(f"  (from `{map_path.relative_to(root).as_posix()}`, {_index_age(map_path, root)})")
     elif map_path.is_file():
         print(f"  nothing imports it, per `{map_path.relative_to(root).as_posix()}` ({_index_age(map_path, root)})")
+
+    # 🎯 [owner 2026-09-23, direction G] The import graph says what a change REACHES; the commit
+    # history says what has actually happened to this file. Both were already on disk — `MAP.md`
+    # for the first, `state/churn-*.json` for the second — and nobody had ever asked them together.
+    #
+    # 🔴 Stated as a count and NEVER as a judgement. "Changed often" is not "fragile": a file under
+    # active development changes constantly and is the healthiest thing in the tree, while a file
+    # nothing has touched in a year can be the most dangerous. `skill_overlap.py` records what
+    # happens to a warning that fires on healthy files — people stop reading it — so this reports
+    # the number beside the dependents and lets the reader draw the line.
+    _n, _above, _ = _churn_count(root, resolved or target)
+    if _n:
+        print(f"  changed   {_n} time(s) in the last {rollup.CHURN_WINDOW} commits — "
+              f"{_above} file(s) in this repository changed more often")
 
     if history:
         print(f"\n  {len(history)} thread entr{'y' if len(history) == 1 else 'ies'} name this file:")

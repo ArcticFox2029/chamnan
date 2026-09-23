@@ -33,7 +33,8 @@ _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
 def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-          index_behind=None, session=None, short=(), transcript=None, nonce=None):
+          index_behind=None, session=None, short=(), transcript=None, nonce=None, model=None,
+          short_full=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-21] (R84 acc4, 2026-09-21) WHAT EACH FIELD MEANS, because a reader of the JSONL had
@@ -53,9 +54,16 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
       session  the session id this block was assembled for
       tr       that session's transcript path, last 120 characters
       nc       the fence nonce the block was written with
+      model    the model this session runs, WHEN the host supplied one — the hooks reference says
+               only SessionStart ever receives it and "Claude Code doesn't always include it", so
+               an absent key means the host said nothing, not that the session had no model
       resent   present and False only when the block was NOT resent into an existing session
       behind   seconds the architecture index is behind the newest source file
       drop     sections dropped entirely for want of room
+      sfull    {section: the bytes it would have taken whole}, for the sections in `short`. The
+               DELIVERED size is already in `sec`, so the pair is what the section retained.
+               Recorded because the full size is knowable only while the block is being assembled:
+               without it, "is the fitter shrinking well" has no answer that is not the calendar.
       short    sections cut down to their NAMES ONLY — this is a BUDGET decision, and it is
                **not** the ageing pass. Nothing here records `state.age_out`: a section held back
                for staleness leaves its trace in the block's own text, not in this log.
@@ -122,6 +130,19 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
         rec["tr"] = str(transcript)[-120:]
     if nonce:
         rec["nc"] = str(nonce)
+    if short_full:
+        rec["sfull"] = {str(k)[:NAME_CHARS]: int(v) for k, v in short_full.items()}
+    if model:
+        # 🎯 [2026-09-23] The ONLY place the main thread's model is ever offered. The hooks
+        # reference: *"Only `SessionStart` hooks can receive a `model` field, and Claude Code
+        # doesn't always include it"*, and there is no `$CLAUDE_MODEL`. So "which model was this
+        # session" cannot be answered from any other record this package keeps, and a subagent's
+        # model — which `agent_results.jsonl` has recorded since 1.27 — does not stand in for it.
+        #
+        # Written only when the host supplied one. An absent key means the host said nothing, which
+        # is a real and common case after `/clear` and after conversation recovery; a key holding
+        # "" would make that indistinguishable from a model whose name could not be read.
+        rec["model"] = str(model)[:60]
     if not resent:
         # A firing that proved the previous block is still in the transcript and printed a pointer
         # instead. There is no block to measure; the record exists so the log counts the session.
@@ -156,7 +177,8 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
 
 
 def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-           index_behind=None, session=None, short=(), transcript=None, nonce=None):
+           index_behind=None, session=None, short=(), transcript=None, nonce=None, model=None,
+           short_full=None):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -168,7 +190,8 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     # here first, and a second caller (the Agent-result hook) would have made it the eighth function
     # body in this package written in more than one file, in the package that counts them.
     return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
-                                            index_behind, session, short, transcript, nonce), KEEP)
+                                            index_behind, session, short, transcript, nonce,
+                                            model, short_full), KEEP)
 
 
 

@@ -58,7 +58,7 @@ POSITIVES = [
     ("github pat",            f"token ghp_{_F}{_F}",                        f"ghp_{_F}"),
     ("github fine-grained",   f"github_pat_{_F}{_F}{_F}",                   f"github_pat_{_F}"),
     ("slack bot token",       f"xoxb-{_F}-{_F}",                            f"xoxb-{_F}"),
-    ("aws access key id",     "AKIAZZ34567890ABCDEF",                       "AKIAZZ34567890ABCDEF"),
+    ("aws access key id",     "AKIA_FIXTURE_ID",                       "AKIA_FIXTURE_ID"),
     ("google api key",        f"AIza{_F}{_F}zzzzzzzzzz",                    f"AIza{_F}"),
     ("stripe live key",       f"sk_live_{_F}{_F}",                          f"sk_live_{_F}"),
     ("gitlab pat",            f"glpat-{_F}{_F}",                            f"glpat-{_F}"),

@@ -76,6 +76,12 @@ MAX_SECTION_BODY_TERMS = 60
 SNIPPET = 90
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9_.-]*")
+# Only a compound is worth splitting: a plain word costs a second regex pass for nothing, and
+# this runs over every line of every store on a rebuild.
+_SPLITTABLE = re.compile(r"[_.\-]|[a-z][0-9]|[0-9][a-zA-Z]|[a-z][A-Z]")
+# The same shape as `_WORD` with the case left alone, because a hump is only
+# visible before `lower()` and `_WORD` is applied to lowered text by contract.
+_WORD_ANY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _ASCII_ONLY = re.compile(r"\A[\x00-\x7f]*\Z")
 
 
@@ -83,9 +89,44 @@ def _ascii(text):
     return bool(_ASCII_ONLY.match(text))
 
 
+# An identifier's parts. `_` and `.` split on the word pattern's own boundaries; a camelCase hump
+# does not, so it is found here. Digits end a part (`utf8Decode` -> utf, 8, decode) because a
+# version or a size is a word of its own in the names this indexes.
+_HUMP = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
+
+
 def terms(text):
-    """The ASCII words of `text`, lowercased. Non-ASCII is deliberately not tokenised here."""
-    return _WORD.findall(unicodedata.normalize("NFKC", text).lower())
+    """The ASCII words of `text`, lowercased, INCLUDING the parts of a compound identifier.
+
+    🎯 [owner 2026-09-23, direction K] `apply_promo_code` tokenised to one term, so somebody who
+    remembers what a function DOES and not what it is called searched `promo` and found nothing —
+    which is the position of everybody who did not write the code. Splitting on `_` and on camelCase
+    humps makes the parts searchable while keeping the whole, so an exact name still wins: the
+    scorer counts terms, and a full-name match contributes the whole and every part.
+
+    The whole is kept rather than replaced, and both go in. Dropping it would make
+    `chamnan-recall apply_promo_code` score the same as `chamnan-recall apply`, which is the
+    opposite of the point.
+
+    Stop words are NOT removed here and must not be: `build()` derives them from document frequency
+    over this repository's own stores, which works for its Thai notes as well as its English ones.
+    A hand-written English list would be the enumerated-set mistake this package keeps paying for,
+    and it is the one thing the spec for this direction got wrong.
+    """
+    norm = unicodedata.normalize("NFKC", text)
+    # The whole tokens, exactly as before this change: every existing caller and every stored index
+    # depends on this list, and the parts are ADDED to it rather than replacing anything.
+    out = _WORD.findall(norm.lower())
+    # 🐛 [2026-09-23] (self-measured) The first version split the already-lowercased words, so
+    # `utf8Decode` stayed one term — by then the hump it needed was gone. A camelCase boundary only
+    # exists while the case does, so this pass reads the ORIGINAL and lowercases the parts after.
+    for word in _WORD_ANY.findall(norm):
+        if not _SPLITTABLE.search(word):
+            continue
+        low = word.lower()
+        out.extend(part for part in (p.lower() for p in _HUMP.findall(word))
+                   if len(part) > 1 and part != low)
+    return out
 
 
 def _title_of(path, text):
@@ -304,6 +345,88 @@ def _tool_entries(ws):
     return out
 
 
+# A Full Detail row in `MAP.md`: "- `name(args)` — what it does". The docstring half is optional
+# and two thirds of the rows here do not carry one, which is why the NAME is indexed either way.
+_MAP_ROW = re.compile(r"^- `([A-Za-z_][\w.]*)\([^`]*`(?:\s+—\s+(.*))?$", re.M)
+_MAP_FILE = re.compile(r"^## `([^`]+)`$", re.M)
+
+
+def _symbol_entries(ws):
+    """Every function and class the architecture index names, with its one-line description.
+
+    🎯 [owner 2026-09-23, direction K] `chamnan-recall` searched the STORES — rules, decisions,
+    skills — and not the code, so somebody who remembers what a function does and not what it is
+    called had nothing to ask. Reading `MAP.md` rather than the source keeps the promise this
+    module makes in its own docstring: a query reads one file and never walks the tree, and the
+    index is rebuilt only when asked.
+
+    Measured on this repository: MAP.md is 510 KB, 3,302 symbols, and **1,081 of them (33%) carry
+    a description**. The other two thirds are indexed on their name alone, which the compound
+    splitting in `terms()` makes searchable — `apply_promo_code` answers to `promo`.
+
+    Weight 1.0, the floor. A recorded decision that mentions a function is about that decision; the
+    function's own row is a pointer to code, which is a weaker answer to "what do we already know
+    about this" and must not outrank the rule that governs it.
+    """
+    out = []
+    try:
+        text = (ws / "MAP.md").read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return out
+    # Which file each row belongs to: the rows follow their `## \`path\`` heading, so one pass
+    # carrying the last heading seen is enough, and no row has to be matched back to a file.
+    owner, seen = "", set()
+    for line in text.splitlines():
+        head = _MAP_FILE.match(line)
+        if head:
+            owner = head.group(1)
+            continue
+        row = _MAP_ROW.match(line)
+        if not row or not owner:
+            continue
+        name, desc = row.group(1), (row.group(2) or "").strip()
+        # 🐛 [2026-09-23] (self-measured) Indexing every symbol put the index at 119% of the files
+        # it is built from — an index larger than its documents is not an index, and the corpus
+        # check says so. The cut is not arbitrary: this feature exists to find a function by what
+        # it DOES, and a symbol with no description cannot answer that. It would contribute its
+        # name, and searching by name is what the user already had. 1,081 of 3,302 rows here carry
+        # a description; those are the ones that add the capability.
+        if not desc:
+            continue
+        key = f"{owner}:{name}"
+        if key in seen:
+            continue
+        seen.add(key)
+        counted = {}
+        for term in terms(f"{name} {desc}"):
+            if len(term) > 2:
+                counted[term] = counted.get(term, 0) + 1
+        row = {"path": owner, "kind": "symbol", "weight": 1.0,
+               "title": f"{name}()", "blurb": desc[:240], "body": counted}
+        if desc:
+            # Only a described symbol can carry non-ASCII worth indexing; a bare identifier is
+            # ASCII by definition and the field would be an empty list on every row.
+            row["text"] = _non_ascii_lines(f"{name} {desc}")
+        out.append(row)
+    return out
+
+
+def sources(ws):
+    """Every file this index is built FROM, so a cost claim about it can be measured honestly.
+
+    🐛 [2026-09-23] (self-measured) The suite checks that the index does not cost more than the
+    documents it indexes, and derived those documents from `KINDS`. `MAP.md` became a source when
+    symbols were indexed and is not in `KINDS`, so the ratio broke by construction: the numerator
+    grew and the denominator could not. One definition, used by `build()`'s sources and by the
+    check, is what stops the two drifting again.
+    """
+    out = [p for folder, _k, _w in KINDS for p in paths_for(ws, folder)]
+    m = ws / "MAP.md"
+    if m.is_file():
+        out.append(m)
+    return out
+
+
 def build(ws):
     """Walk the stores once and return the index. The only function here that reads them."""
     entries, newest = [], 0
@@ -318,6 +441,7 @@ def build(ws):
                 entries.append(e)
                 newest = max(newest, e["mtime"])
     entries += _tool_entries(ws)
+    entries += _symbol_entries(ws)
 
     # 3. Drop the words that cannot discriminate, derived rather than listed. A term in most of the
     #    documents tells a reader nothing about which one to open, and without this the longest

@@ -384,7 +384,7 @@ def mark_pointed(wsdir, session_id, rel_path):
         pass
 
 
-def note(wsdir, session_id, rel_path, hits, ms):
+def note(wsdir, session_id, rel_path, hits, ms, actor=None):
     """Record that a pointer fired, and what it named.
 
     This is the measurement the last review round asked for and it is deliberately NOT
@@ -396,6 +396,10 @@ def note(wsdir, session_id, rel_path, hits, ms):
     """
     rec = {"t": int(time.time()), "session": session_id, "path": rel_path,
            "named": [h[1] for h in hits], "ms": round(ms, 1)}
+    # Which AGENT was pointed at something, not only which session — a session that dispatches ten
+    # subagents looks like one reader in this log without it, which is the shape M page 2 asks
+    # about. Absent on the main thread, like every other actor field.
+    rec.update(actor or {})
     # 🐛 [2026-09-10] The bound added the day before was a `_trim()` here that did an
     # unlocked read-modify-write on `EVENT_LOG` — and `EVENT_LOG` is ONE path that every session on
     # the machine writes, carrying `session` as a FIELD rather than as a filename. A record appended
@@ -469,7 +473,7 @@ def opens_by_store(root):
     return out
 
 
-def note_opened(wsdir, session_id, rel_path):
+def note_opened(wsdir, session_id, rel_path, actor=None):
     """Record that a session opened one of chamnan's own STORE files directly.
 
     Called from the hook's early return for a path under the workspace itself -- exactly where
@@ -485,10 +489,11 @@ def note_opened(wsdir, session_id, rel_path):
     an empty `named` list -- three existing records already carry one for unrelated reasons.
     """
     rec = {"t": int(time.time()), "session": session_id, "path": rel_path, "event": "opened"}
+    rec.update(actor or {})
     ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
 
 
-def note_query(wsdir, session_id, rel_path, pattern=""):
+def note_query(wsdir, session_id, rel_path, pattern="", actor=None):
     """Record that a session SEARCHED one of chamnan's own files, rather than opening it.
 
     🎯 [R3.11.5, 2026-09-16] `note_opened` can only see a Read, and the two artefacts this plugin
@@ -509,6 +514,7 @@ def note_query(wsdir, session_id, rel_path, pattern=""):
     rec = {"t": int(time.time()), "session": session_id, "path": rel_path, "event": "query"}
     if pattern:
         rec["q"] = pattern[:80]
+    rec.update(actor or {})
     ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
 
 
