@@ -119,9 +119,11 @@ fails when it and the code disagree.</sub>
 
 ## Contents
 
-**Start here** — [Read this before installing](#read-this-before-installing) ·
+**Start here** — [Features, by what you are trying to do](#features-by-what-you-are-trying-to-do) ·
+[Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.31.0](#whats-new-in-1310) · [Commands](#commands)
+[What's new in 1.31.0](#whats-new-in-1310) ·
+[The dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·

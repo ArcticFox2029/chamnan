@@ -50046,8 +50046,21 @@ check("a caller that asks for neither still gets a block",
 # And it reaches the log, where the pair `sec` + `sfull` is what a reader divides.
 _sf_rec = blocklog.shape("body", 400, None, "startup", True, (), None, None,
                          ("Big",), None, None, None, {"Big": 4096})
+# 🐛 [2026-09-24] (self-measured) This asserted the shape the CALLER passes rather than the shape
+# the log STORES, and `blocklog.shape` normalises: a bare int becomes `{"whole": n}` so that a
+# rank can sit beside it. The writer changed and this reader did not — the same set, another
+# member, and the third one found tonight. `chamnan-explain-context` was the first: it read the
+# stored value as an int and died sorting two dicts against each other.
+#
+# Both input shapes are asserted, because both are live: a caller that has not been updated still
+# passes an int, and the log must store one thing whichever arrives.
 check("THE LOG CARRIES THE WHOLE SIZE BESIDE THE DELIVERED ONE",
-      _sf_rec.get("sfull") == {"Big": 4096}, saw=_sf_rec.get("sfull"))
+      _sf_rec.get("sfull") == {"Big": {"whole": 4096}}, saw=_sf_rec.get("sfull"))
+_sf_rec_rank = blocklog.shape("body", 400, None, "startup", True, (), None, None,
+                              ("Big",), None, None, None, {"Big": {"whole": 4096, "rank": 3}})
+check("...and a rank passed beside it is kept, which is what the pair exists for",
+      _sf_rec_rank.get("sfull") == {"Big": {"whole": 4096, "rank": 3}},
+      saw=_sf_rec_rank.get("sfull"))
 check("...and a firing that shortened nothing carries no such key",
       "sfull" not in blocklog.shape("body", 400, None, "startup"))
 
@@ -50125,7 +50138,22 @@ _ac_tool_hooks = set()
 for _ev in ("PreToolUse", "PostToolUse"):
     for _grp in _ac_reg.get(_ev, []):
         for _h in _grp.get("hooks", []):
-            _ac_tool_hooks.add(Path(str(_h.get("command", "")).strip('"')).name)
+            # 🐛 [2026-09-24] (self-measured) `.strip('"')` treats the registration as nothing but
+            # a quoted path, and a registration may carry ARGUMENTS:
+            # `"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_tool_failed.py" --post`, added in d09f277.
+            # The name then came out as `chamnan_tool_failed.py" --post`, and the `read_text`
+            # below raised FileNotFoundError — which took the WHOLE SUITE down at line 50136 of
+            # 50170, before the totals line, so the gate reported no result at all rather than a
+            # failure. It had been doing that since the flag was added, and the gate was deferred
+            # to release that same day, which is why nobody saw it.
+            #
+            # `shlex.split` reads the command the way a shell does, and the hook is whichever
+            # token names a file that is actually in `hooks/` — derived, so a registration that
+            # gains an interpreter prefix or another flag needs no edit here.
+            for _tok in shlex.split(str(_h.get("command", ""))):
+                if (ROOT / "hooks" / Path(_tok).name).is_file():
+                    _ac_tool_hooks.add(Path(_tok).name)
+                    break
 check("the tool-event hooks were found from the registration, not from a list",
       len(_ac_tool_hooks) >= 4, saw=sorted(_ac_tool_hooks))
 # Which of them WRITE a per-tool-call log: the ones that reach a recorder at all. A hook that only
