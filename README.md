@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **3,952 of 3,952** <!-- live: map_claim_check -->; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **4,079 of 4,079** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
@@ -140,6 +140,76 @@ fails when it and the code disagree.</sub>
 **Getting out** — [Troubleshooting](#troubleshooting) ·
 [Update, disable, uninstall](#update-disable-uninstall) ·
 [More documentation](#more-documentation) · [License](#license)
+
+## Features, by what you are trying to do
+
+Twenty commands and eleven skills. Every row links to the detail; nothing here is a feature the
+package does not ship, and nothing it ships is missing from this table — `bin/` is the population
+and a check derives it.
+
+**Know what is there** — the index, and what depends on what.
+
+| | |
+|---|---|
+| [`chamnan-map`](#commands) | build the index; `--preview` prints exactly what a session receives, `--explain` says what each section cost and where it came from |
+| [`chamnan-impact`](#commands) | who depends on this file, what tests cover it, what happened last time it changed |
+| [`chamnan-where`](#commands) | where a name is *used*, not merely mentioned — a comment, a string and a docstring all mention it |
+| [`chamnan-peek`](#bulk-reads) | the shape of a file instead of the whole file — columns, sheets, members, schema, pages |
+| [`/chamnan:bootstrap`](#quick-start) · [`/chamnan:remap`](#keeping-the-index-fresh) | first-time setup, and the rebuild after the repo's shape changes |
+
+**Remember across sessions** — the part that answers "Claude forgot everything again".
+
+| | |
+|---|---|
+| [`/chamnan:resume`](#commands) | write down where this session stopped, so the next one continues |
+| [`/chamnan:remember`](#commands) | a decision, a lesson or a rule, with the reason it exists |
+| [`/chamnan:milestone`](#commands) | a change that reshaped the repository |
+| [`chamnan-timeline`](#commands) | a line of work followed across the sessions it took |
+| [`chamnan-open`](#commands) | resume the last conversation only when resuming is cheaper than starting fresh |
+
+**Reuse what is already solved** — instead of writing it a second time.
+
+| | |
+|---|---|
+| [`chamnan-recall`](#commands) | what the stores already say about this. It points; it never quotes |
+| [`/chamnan:capture`](#commands) | keep a procedure worth repeating |
+| [`/chamnan:promote`](#commands) · [`chamnan-promote`](#commands) | keep a scratch script as a permanent tool; `--list` says what this repo already keeps |
+| [`chamnan-candidates`](#commands) | sequences you have repeated, waiting for review |
+| [`chamnan-gotcha`](#commands) | the lesson written above the line it is about, surfaced the next time anything edits it |
+
+**Decide, and check** — with the evidence counted rather than argued.
+
+| | |
+|---|---|
+| [`/chamnan:decide`](#commands) | counts the evidence on each side and shows the count, with no model in the loop |
+| [`/chamnan:review`](#commands) | review a change against what this repository already knows |
+| [`/chamnan:why`](#troubleshooting) | is this failure your machine or your code, before an hour goes into the wrong one |
+| [`chamnan-env`](#commands) · [`chamnan-age`](#commands) | the constraints nobody writes down, and the knowledge that names a version nothing runs any more |
+
+**Keep secrets in** — the one sentence chamnan's security is.
+
+| | |
+|---|---|
+| [`chamnan-guard`](#secrets) | does anything staged look like a credential — names the file and line, never the value |
+| [`chamnan-guard --history`](#secrets) | the question a staged diff cannot answer: is anything ALREADY committed |
+| [the redactor](#secrets) | everything chamnan writes into `MAP.md` or the session block is scrubbed first, because `MAP.md` is a file it encourages committing |
+
+**Know what it costs you** — measured on your repository, never on ours.
+
+| | |
+|---|---|
+| [`chamnan-vs`](#evidence) | what this repository costs a model three ways, re-derived on your own tree |
+| [`chamnan-report`](#commands) · [`/chamnan:report`](#commands) | the knowledge inventory, usage, and weekly context-per-turn |
+| [`chamnan-context`](#one-file-only-what-applies-and-a-ceiling) | what the budget is actually spent on |
+| [`chamnan-explain-context`](#one-file-only-what-applies-and-a-ceiling) | why the session did not know something: which sections arrived as names only, and how often |
+
+**Keep the install honest** — the failures that are silent by nature.
+
+| | |
+|---|---|
+| [`chamnan-doctor`](#troubleshooting) | is this install actually wired up |
+| [`chamnan-setup`](#update-disable-uninstall) | every host on this machine, its version, and what is stale. One laptop here reached a four-way skew of eleven releases with nothing noticing |
+| [`chamnan-schedule`](#commands) | finish this session's work later, when the limit has reset |
 
 ## Read this before installing
 
@@ -525,6 +595,34 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
+
+## The dashboard: what it actually cost, on your own numbers
+
+**New in 1.31.** Every figure on these pages is read out of your own workspace's logs. Nothing is
+sampled, nothing is estimated, and a page with no data says so rather than filling itself in — a
+fresh clone opens to greyed panels that name the file each one reads, which is the honest first
+view. Build it with `python3 statistic/build_statistic.py` and open `statistic/report/index.html`.
+
+<img src="docs/dashboard/1-impact-hero.png" alt="The impact page: tokens saved by having the plugin, what kind of token each one was, what the repository puts in front of a session, and what the plugin did that would not have happened otherwise." width="100%">
+
+The top line is the one worth arguing with, so it shows its working: the bars **start at the
+common floor rather than at zero**, because the two totals differ by less than a fifth of a
+percent and would otherwise draw as one length. The saving is weighted the way a cache write is
+weighted, and the 25% that turns "characters a local model read" into "tokens saved" is **a
+judgement, not a measurement, and the page says so** — page 4 is where you replace it with your
+own numbers.
+
+| | |
+|---|---|
+| <img src="docs/dashboard/2-token-kinds.png" width="100%"> | **What each kind of token weighs.** A cached read is not an input token and pretending otherwise is how every published ratio in this space gets inflated |
+| <img src="docs/dashboard/3-features-firing.png" width="100%"> | **Which features actually fire**, counted, with the zeros left in. A feature that has never fired on your repository is the most useful row on the page |
+| <img src="docs/dashboard/4-gate-finds.png" width="100%"> | **What the gate finds**, over time |
+| <img src="docs/dashboard/5-file-types.png" width="100%"> | **What is in the tree**, by type — the long tail is where a reader quietly drops files |
+| <img src="docs/dashboard/6-security-caught.png" width="100%"> | **What the redactor caught, and what no pattern can.** Both halves, because a page that shows only its catches is advertising |
+| <img src="docs/dashboard/7-rate-editor.png" width="100%"> | **The weights, editable.** The shipped ones are one provider's published ratios; yours are probably different |
+
+No money and no model names appear on any page, because the plugin does not know which model you
+run and a price printed against the wrong one is worse than no price at all.
 
 ## What's new in 1.30.0
 
@@ -1144,7 +1242,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **3,952 of 3,952** <!-- live: map_claim_check --> rather than asserted.
+claims about the tree are checked at **4,079 of 4,079** <!-- live: map_claim_check --> rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1405,7 +1503,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **3,952 of 3,952** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
+searched for, and its claims about the tree check out at **4,079 of 4,079** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.

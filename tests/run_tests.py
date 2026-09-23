@@ -50128,6 +50128,46 @@ check("...and does NOT ignore the memory a team is meant to share",
 _rmtree(_ss_ws.parent, ignore_errors=True)
 
 
+# ------------------------------- the feature index names everything that ships, and nothing else
+# 🎯 [2026-09-24] (owner) The README gained an index of what chamnan does, grouped by what the
+# reader is trying to do, with every row linking to its detail. An index like that is worth
+# exactly as much as its completeness: a command that ships and is not in it cannot be found by
+# anybody reading the page, and a row for something that was removed sends them looking for a
+# command that is not there. Both are the drift this repository's own README already suffered —
+# it said "the four scripts that plant them" while ten existed.
+#
+# So neither list is typed: `bin/` and `skills/` are the population, and the section is checked
+# against them.
+_fi_readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
+_FI_START, _FI_END = "## Features, by what you are trying to do", "## Read this before installing"
+check("the README carries the feature index the rest of this block checks",
+      _FI_START in _fi_readme and _FI_END in _fi_readme)
+if _FI_START in _fi_readme and _FI_END in _fi_readme:
+    _fi_sec = _fi_readme[_fi_readme.index(_FI_START):_fi_readme.index(_FI_END)]
+    _fi_cmds = sorted(q.name for q in (ROOT / "bin").iterdir()
+                      if q.is_file() and q.name.startswith("chamnan-") and q.suffix != ".cmd")
+    _fi_skills = sorted(q.name for q in (ROOT / "skills").iterdir() if q.is_dir())
+    _fi_missing_c = [c for c in _fi_cmds if c not in _fi_sec]
+    _fi_missing_s = [k for k in _fi_skills if f"/chamnan:{k}" not in _fi_sec]
+    check("EVERY SHIPPED COMMAND IS IN THE FEATURE INDEX",
+          not _fi_missing_c, saw=_fi_missing_c)
+    check("EVERY SHIPPED SKILL IS IN THE FEATURE INDEX",
+          not _fi_missing_s, saw=_fi_missing_s)
+    # The other direction: a row for something that no longer ships sends a reader looking for a
+    # command that is not there, which is the worse of the two failures because it reads as real.
+    _fi_named = set(re.findall(r"`(chamnan-[a-z-]+)`", _fi_sec))
+    _fi_ghost = sorted(n for n in _fi_named if n not in _fi_cmds)
+    check("...and the index names nothing that does not ship", not _fi_ghost, saw=_fi_ghost)
+    check("...and it is grouped rather than being one flat list",
+          _fi_sec.count("\n**") >= 5, saw=_fi_sec.count("\n**"))
+# Every image the README points at has to be in the repository, or the page renders a broken icon
+# to everybody who opens it and nothing here would have said so.
+_fi_imgs = re.findall(r'src="(docs/[^"]+)"', _fi_readme)
+_fi_gone = [i for i in _fi_imgs if not (ROOT / i).is_file()]
+check("every image the README embeds is in the repository",
+      _fi_imgs and not _fi_gone, saw=(len(_fi_imgs), _fi_gone))
+
+
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
 # reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all
