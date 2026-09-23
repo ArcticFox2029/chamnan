@@ -235,6 +235,37 @@ def _block(root):
     return "[chamnan] " + " ".join(parts)
 
 
+# ENFORCES: memory/rules/what-a-dispatched-agent-reads-is-the-cost.md
+# 🎯 What a dispatched agent READS is the cost, and the parent is charged for it again on every
+# later turn. The brief names a file; the agent opens all of it; nothing anywhere says how big it
+# was. This is said INTO THE AGENT'S OWN CONTEXT, at the one moment it can still choose a range —
+# the parent cannot be warned, because by then the Agent call is already made.
+BIG_READ_BYTES = 200_000
+_PATH_IN_PROMPT = re.compile(r"(?:^|[\s(`'\"])([\w./-]+\.(?:py|md|js|ts|json|sh|txt|jsonl))")
+
+
+def _expensive_reads(payload, root):
+    """The files this brief names that are expensive to open whole. "" when none are."""
+    prompt = payload.get("prompt") or payload.get("description") or ""
+    if not isinstance(prompt, str) or not prompt:
+        return ""
+    big = []
+    for raw in dict.fromkeys(_PATH_IN_PROMPT.findall(prompt)):
+        cand = (Path(root) / raw) if not raw.startswith("/") else Path(raw)
+        try:
+            size = cand.stat().st_size
+        except OSError:
+            continue
+        if size >= BIG_READ_BYTES:
+            big.append((raw, size))
+    if not big:
+        return ""
+    named = " · ".join(f"`{r}` {s // 1024:,} KB" for r, s in big[:3])
+    return ("### What is expensive to open here\n"
+            f"{named}. Opening one of these whole is the largest cost of this dispatch, and the "
+            "session that dispatched you pays it again on every turn afterwards. Grep it, or read "
+            "the line range you were given — not the file.\n")
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -271,6 +302,9 @@ def main():
         return 0
 
     text = _block(Path(root))
+    _costly = _expensive_reads(payload, root)
+    if text and _costly:
+        text = text + "\n" + _costly
     if not text:
         _record_a_firing(root, _agent_type, 0, "nothing-to-point-at")
         return 0

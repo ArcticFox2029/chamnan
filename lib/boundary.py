@@ -44,9 +44,12 @@ _OS_MUTATORS = (
     (r"\bchsh\b|\bdseditgroup\b|\bvisudo\b", "an account or privilege change"),
 )
 # Verbs that write to whatever path follows them. The path itself decides, not the verb.
+# 🐛 [2026-09-23] `sed 's/^/    /'` raised "this writes to `/`" — plain `sed` writes nothing, and
+# the `/` came out of its SCRIPT. Only `sed -i` edits a file, and a one-character path is never a
+# target anybody typed.
 _WRITERS = re.compile(
-    r"(?:^|[|;&]\s*)(?:sudo\s+)?(rm|mv|cp|tee|install|truncate|chmod|chown|ln|mkdir|touch|sed)\b"
-    r"([^|;&]*)", re.MULTILINE)
+    r"(?:^|[|;&]\s*)(?:sudo\s+)?(rm|mv|cp|tee|install|truncate|chmod|chown|ln|mkdir|touch"
+    r"|sed\s+-i)\b([^|;&]*)", re.MULTILINE)
 _REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}\s*([^\s|;&]+)")
 _PATHISH = re.compile(r"(?:^|(?<=\s))(?:~|/)[^\s'\"]*")
 
@@ -87,7 +90,7 @@ def _outside_targets(command, root):
     candidates += _REDIRECT.findall(command)
     for raw in candidates:
         p = os.path.expanduser(raw.strip().strip("'\""))
-        if not p.startswith(("/", "~")) or p in seen:
+        if not p.startswith(("/", "~")) or len(p) < 2 or p in seen:
             continue
         seen.add(p)
         if not ours(p, root):

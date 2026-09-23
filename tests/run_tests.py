@@ -48911,6 +48911,14 @@ check("...while `bash -s <<EOF` is an interpreter about to run it",
                       _bd_root)))
 check("...and it never blocks, only says",
       "Nothing is blocked" in _bd.advice("Edit", {"file_path": "/etc/hosts"}, _bd_root))
+# 🐛 [2026-09-23] `sed 's/^/    /'` raised "this writes to `/`": plain sed writes nothing and the
+# `/` came out of its own script. A guard that fires on a pipeline is one people stop reading.
+check("A SED SCRIPT IS NOT A PATH, and plain sed writes nothing",
+      not _bd.advice("Bash", {"command": "grep -n x f | sed 's/^/    /'"}, _bd_root)
+      and not _bd.advice("Bash", {"command": "sed -n '1,5p' ~/.zshrc"}, _bd_root),
+      saw=_bd.advice("Bash", {"command": "grep -n x f | sed 's/^/    /'"}, _bd_root))
+check("...while `sed -i` on a dotfile is exactly the thing",
+      bool(_bd.advice("Bash", {"command": "sed -i '' 's/a/b/' ~/.zshrc"}, _bd_root)))
 _rmtree(_bd_root.parent, ignore_errors=True)
 
 # ---------------------------------- prose ABOUT work is not work
