@@ -48764,6 +48764,56 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- 4,144 lessons nobody could reach
+# ENFORCES: memory/rules/a-bad-result-earns-a-gotcha.md
+# 🎯 [owner 2026-09-23] "ให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ". Measured that day in this repository: 4,144
+# gotchas recorded in 478 files, and NOTHING read one of them. They are written above the line they
+# are about, by sessions that had just paid for the lesson, and the only way a later session saw
+# one was by happening to read that part of the file — which the rest of this plugin exists to
+# avoid doing. The store was full and the retrieval was missing.
+import bugnotes as _bn  # noqa: E402
+
+_bn_ws = Path(tempfile.mkdtemp(prefix="chamnan-bugnotes-"))
+(_bn_ws / "m.py").write_text(
+    "def a():\n"
+    "    return 1\n"
+    "\n"
+    "\N{BUG} [2026-09-01] The first version cached this and the cache outlived the file.\n"
+    "# It is recomputed every call on purpose.\n"
+    "def b():\n"
+    "    return 2\n"
+    "\n"
+    + "\n".join(f"# filler {i}" for i in range(60)) + "\n"
+    "def far():\n"
+    "    return 3\n", encoding="utf-8")
+
+_bn_hit = _bn.advice("Edit", {"file_path": str(_bn_ws / "m.py"), "old_string": "def b():"})
+check("THE LESSON RECORDED AT THIS PLACE IS SAID WHEN SOMEBODY EDITS IT AGAIN",
+      "cache outlived" in _bn_hit, saw=_bn_hit[:200])
+check("...and it says where, so it can be read in full", "m.py:4" in _bn_hit, saw=_bn_hit[:120])
+# 🔴 A note 60 lines up is about different code. Quoting it is how a notice teaches people that the
+# notice is unreliable — the same reason `gotcha.py`'s key starts tight.
+check("...while a note far above is about other code and is not dragged in",
+      _bn.advice("Edit", {"file_path": str(_bn_ws / "m.py"), "old_string": "def far():"}) == "",
+      saw=_bn.advice("Edit", {"file_path": str(_bn_ws / "m.py"), "old_string": "def far():"}))
+check("...and an edit in a file that records nothing is not interrupted",
+      _bn.advice("Edit", {"file_path": str(_bn_ws / "m.py"), "old_string": "def a():"}) == "",
+      saw=_bn.advice("Edit", {"file_path": str(_bn_ws / "m.py"), "old_string": "def a():"}))
+# A full overwrite discards every lesson in the file, which is worth a sentence BEFORE rather than
+# a `git log` afterwards.
+(_bn_ws / "many.py").write_text("\n".join(
+    f"\N{BUG} [2026-09-0{i}] lesson {i}\nx = {i}" for i in range(1, 5)), encoding="utf-8")
+check("A FULL OVERWRITE OF A FILE THAT RECORDS LESSONS IS SAID OUT LOUD",
+      "records 4 gotcha" in _bn.advice("Write", {"file_path": str(_bn_ws / "many.py")}),
+      saw=_bn.advice("Write", {"file_path": str(_bn_ws / "many.py")})[:140])
+check("...but not for a file with one stray marker, which is noise",
+      _bn.advice("Write", {"file_path": str(_bn_ws / "m.py")}) == "",
+      saw=_bn.advice("Write", {"file_path": str(_bn_ws / "m.py")}))
+check("...and nothing is blocked either way",
+      "Nothing is blocked" in _bn.advice("Write", {"file_path": str(_bn_ws / "many.py")}))
+_rmtree(_bn_ws, ignore_errors=True)
+
 # ---------------------------------- the identical ones beside it
 # ENFORCES: memory/rules/the-set-not-the-member.md
 # 🎯 The most-recorded failure in this workspace — eighteen instances counted before this was

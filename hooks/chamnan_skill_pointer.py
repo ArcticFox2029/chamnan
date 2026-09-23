@@ -430,6 +430,19 @@ def _outside_the_checkout(payload):
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
         return ""
 
+def _the_lesson_recorded_here(payload):
+    """"this place already records a lesson" — the 4,144 nobody could reach.
+
+    `lib/bugnotes.py` carries the measurement. Said on Edit, where the lesson can still change the
+    cut, and on a full Write, where it is about to be destroyed.
+    """
+    try:
+        import bugnotes
+        return bugnotes.advice(payload.get("tool_name") or "",
+                               payload.get("tool_input") or {}, ws.hook_root(payload))
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        return ""
+
 def _the_others_in_the_set(payload):
     """"this text is also in N files beside it" — the most-recorded failure here, with a search.
 
@@ -565,6 +578,12 @@ def main():
         if _already:
             _emit(_already)
             return 0
+    # 🔴 The lesson comes FIRST of the edit notices: a sibling sweep tells you where else to cut,
+    # but a recorded gotcha may tell you not to cut at all.
+    if _tool in ("Edit", "Write"):
+        _lesson = _the_lesson_recorded_here(payload)
+        if _lesson:
+            _emit(_lesson)
     if _tool == "Edit":
         _set = _the_others_in_the_set(payload)
         if _set:
