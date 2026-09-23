@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>statistics · overview</title>
+<link rel="stylesheet" href="app.css">
+</head><body>
+<header></header>
+<main id="main"></main>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+head(1);
+const M = document.getElementById("main");
+
+/* ---- what kind of tokens. Volume is not cost: a cache read bills at a tenth of ordinary input,
+   which is why a bar that is 99% blue is not a bill that is 99% anything. The RATE column is the
+   multiplier, never money — the owner asked for no money and no model names on this page. */
+const tk = S.token_kinds || {};
+const kinds = tk.kinds || [];
+const colour = { cache_read: "var(--accent)", cache_write: "var(--warm)",
+                 output: "var(--good)", new_input: "var(--grey)" };
+M.append(panel("what kind of tokens",
+  "a cache read bills at a fraction of ordinary input — cheaper than the volume looks",
+  `~/.claude/projects/** · ${n(tk.requests)} request(s)`,
+  [
+    el("div", { class: "stack" }, kinds.map((k) =>
+      el("span", { style: `width:${Math.max(k.share, 0.4)}%;background:${colour[k.kind] || "var(--grey)"}` }))),
+    el("div", { class: "key" }, kinds.map((k) =>
+      el("span", {}, el("i", { style: `background:${colour[k.kind] || "var(--grey)"}` }),
+        k.kind.replace("_", " ")))),
+    table(["kind", { t: "tokens", n: 1 }, { t: "share", n: 1 }, { t: "rate", n: 1 }],
+      kinds.map((k) => [k.kind.replace("_", " "), { t: n(k.tokens), n: 1 },
+                        { t: k.share.toFixed(1) + "%", n: 1 }, { t: k.rate, n: 1 }])),
+  ], { wide: true }));
+
+/* ---- what the context is made of. The host's own share (system prompt, tools, the conversation)
+   is NOT on disk and is not guessable, so it is a row that says so rather than a number. */
+M.append(panel("what the context is made of",
+  "what this repository puts in front of a session, per part",
+  "CLAUDE.md · .claude/agents · .chamnan/skills · logs/block_shape.jsonl",
+  table(["part", { t: "files", n: 1 }, { t: "tokens", n: 1 }, "who it belongs to"],
+    (S.context_parts || []).map((c) => [c.part, { t: c.files || "—", n: 1 },
+      { t: c.tokens === null ? "not on disk" : n(c.tokens), n: 1 }, c.owner]))));
+
+/* ---- when the work happens */
+const bh = S.by_hour || {};
+const cmds = bh.commands || [];
+const peak = Math.max(1, ...cmds);
+M.append(panel("when the work happens",
+  "shell commands by hour of day, over the recorded window",
+  "logs/commands.jsonl",
+  [
+    el("div", { class: "hours" }, cmds.map((v) =>
+      el("div", { style: `height:${Math.round(100 * v / peak)}%`, title: `${v}` }))),
+    el("div", { class: "hlabel" }, el("span", {}, "00"), el("span", {}, "06"),
+      el("span", {}, "12"), el("span", {}, "18"), el("span", {}, "23")),
+  ]));
+
+/* ---- what is being opened, and where */
+const pl = S.places || {};
+const byExt = pl.by_extension || [];
+const extTop = Math.max(1, ...byExt.map((r) => r[1]));
+M.append(panel("what kind of file is opened",
+  "by extension, from the files a session actually reached for",
+  "logs/pointer.jsonl · logs/edits.jsonl",
+  table(["kind", { t: "opens", n: 1 }, ""],
+    byExt.slice(0, 8).map((r) => [r[0], { t: n(r[1]), n: 1 }, bar(pct(r[1], extTop))]))));
+
+const byDir = pl.by_directory || [];
+const dirTop = Math.max(1, ...byDir.map((r) => r[1]));
+M.append(panel("which part of the repository",
+  "top-level directory, from the same paths",
+  "logs/pointer.jsonl · logs/edits.jsonl",
+  table(["directory", { t: "touches", n: 1 }, ""],
+    byDir.slice(0, 8).map((r) => [r[0], { t: n(r[1]), n: 1 }, bar(pct(r[1], dirTop))]))));
+
+/* ---- reading against writing */
+const rw = S.read_vs_write || {};
+/* 🐛 [2026-09-23] This read `rw.note`, which the builder has never emitted — so the caption
+   silently fell back to its default and the one thing a reader needed to know went unsaid. The
+   note is BUILT here from the two numbers that carry it: `op` (Write versus Edit) landed on
+   edits.jsonl only today, so most rows cannot be split and the panel says which share can. */
+const known = rw.op_known || 0, total = rw.op_total || 0;
+const rwNote = total && known < total
+  ? `${n(known)} of ${n(total)} changes record whether they were a write or an edit — the rest `
+    + `predate that field, so "changed" is not split here`
+  : null;
+M.append(panel("reading against writing",
+  rwNote || "files opened versus files changed, newest day first",
+  "logs/pointer.jsonl · logs/long_reads.jsonl · logs/edits.jsonl",
+  [
+    table(["day", { t: "opened", n: 1 }, { t: "changed", n: 1 }, ""],
+      (rw.days || []).slice(0, 10).map((d, i) => {
+        const o = (rw.opens || [])[i] || 0, w = (rw.edits || [])[i] || 0;
+        return [d, { t: n(o), n: 1 }, { t: n(w), n: 1 },
+          el("div", { class: "stack", style: "margin:0" },
+            el("span", { style: `width:${pct(o, Math.max(o + w, 1))}%;background:var(--accent)` }),
+            el("span", { style: `width:${pct(w, Math.max(o + w, 1))}%;background:var(--warm)` }))];
+      })),
+    rwNote ? el("p", { class: "note" }, rwNote) : null,
+  ], { wide: true }));
+
+/* ---- the session block */
+const bl = S.block || {};
+M.append(panel("the session block, by where it came from",
+  `${n(bl.bytes)} bytes · ~${n(bl.tok)} tokens, most recent assembly`,
+  "logs/block_shape.jsonl — `sec` and `srcs`",
+  table(["section", { t: "bytes", n: 1 }, "built from"],
+    (bl.sections || []).map((s) => [s.title, { t: n(s.bytes), n: 1 },
+      el("code", {}, s.from || "—")])), { wide: true }));
+</script>
+</body></html>

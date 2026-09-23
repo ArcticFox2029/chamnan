@@ -1,0 +1,4 @@
+# Generated on every build from .chamnan/logs/**. Committing it would put one machine's activity
+# into everybody's checkout, and the page rebuilds in under a second.
+data/
+report/data.js
