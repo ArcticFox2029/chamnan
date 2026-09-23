@@ -636,8 +636,15 @@ def found():
         d = day_of(g)
         if d:
             by_day[d] = g            # later rows overwrite: the last run of that day wins
+    # \U0001F41B [2026-09-23, owner: "\u0e40\u0e2b\u0e21\u0e37\u0e2d\u0e19\u0e22\u0e31\u0e07\u0e21\u0e35\u0e1a\u0e31\u0e04\u0e19\u0e30 none , -"] Two rows carried no check count and
+    # were drawn as a dash beside successful runs. They are not missing data: `exit: 1` with no
+    # count is a run that CRASHED before it could finish counting \u2014 one of them four seconds in.
+    # This workspace's own rule says it out loud, "absence of FAIL is not success", and the page
+    # was showing exactly that shape as a blank. `exit` is carried so the table can say which.
     return {"gate_runs": [{"day": d, "checks": g.get("checks"),
                            "failing": g.get("failing"), "seconds": g.get("seconds"),
+                           "exit": g.get("exit"),
+                           "finished": g.get("checks") is not None,
                            "runs": sum(1 for x in gates if day_of(x) == d)}
                           for d, g in sorted(by_day.items())[-20:]][::-1],
             "mutation_proved": len({v.get("check") for v in proofs.values()

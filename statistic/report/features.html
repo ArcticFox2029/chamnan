@@ -76,9 +76,13 @@ M.append(panel("what the gate finds", "ด่านตรวจเจออะ�
            { t: "took", n: 1 }, { t: "runs that day", n: 1 }],
       (fd.gate_runs || []).slice(0, 8).map((g) => [
         g.day,
-        { t: n(g.checks), n: 1 },
-        { t: g.failing === null || g.failing === undefined ? "—"
-             : (g.failing ? String(g.failing) : "none"), n: 1 },
+        // \U0001F41B [2026-09-23, owner] A run with no check count was drawn as a dash beside
+        // successful ones, as though a number were merely absent. It is a run that CRASHED
+        // before it could count — `exit` says so — and this workspace's own rule is that the
+        // absence of a failure line is not success. The row says which happened.
+        { t: g.finished ? n(g.checks) : T("did not finish", "รันไม่จบ"), n: 1 },
+        { t: !g.finished ? (g.exit === undefined || g.exit === null ? "—" : `exit ${g.exit}`)
+             : String(g.failing ?? 0), n: 1 },
         { t: g.seconds ? (g.seconds >= 90 ? `${Math.round(g.seconds / 60)} min`
                                           : `${g.seconds}s`) : "—", n: 1 },
         { t: g.runs > 1 ? String(g.runs) : "", n: 1 }])),
