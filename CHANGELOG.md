@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1300), and every one of these is on the
+[README](README.md#whats-new-in-1310), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -20,6 +20,59 @@ already reports the last released number while running newer code.
 ---
 
 ## Unreleased
+
+_Nothing yet._
+
+---
+
+## What's new in 1.31.0
+
+**This release is about the difference between a tool that works and a tool that can show you it
+worked.** Four pages of your own numbers, a doctor that says whether the install is actually wired
+up, and a corpus of a hundred ways a context tool can cost the person who installed it — which is
+how six of the fixes below were found.
+
+### You can now see what it cost, on your own numbers
+
+`statistic/build_statistic.py` builds four pages out of your workspace's own logs: what the plugin
+changed about a period's token weight, which features fire and how often, what the redactor caught
+and what no pattern can, and an editor for the weights. **A fresh clone opens to greyed panels
+that name the file each one reads** — nothing is sampled, nothing is estimated, and no sample
+dataset ships to make the pages look populated.
+
+The top line shows its working, because it is the one worth arguing with: the bars start at the
+common floor rather than at zero and say so, the saving is weighted the way a cache write is
+weighted, and the 25% that turns "characters a local model read" into "tokens saved" is **named as
+a judgement, not a measurement**, with the page that replaces it. No money and no model names
+appear anywhere, because the plugin does not know which model you run.
+
+### `chamnan-doctor` — is this install actually doing anything
+
+Four copies of chamnan at four versions were found on one laptop, `.version` reading whichever
+wrote last, and nothing downstream could tell. The doctor asks whether the hook is registered,
+whether the recorders are writing, and whether the index describes the tree. **It found a dead
+feature on its first run**: the failure recorder had been registered on an event that fires when a
+TOOL CALL fails, which is not what a command exiting 1 is, so `logs/failures.jsonl` had never been
+written at all.
+
+### The questions a workspace could not answer before
+
+`chamnan-explain-context` answers "why did the session not know that" from the shape of the block
+rather than from a guess — which sections arrived as names only, how much of each was kept, and
+how often that has happened lately. It reads the shape log and nothing else: **no prompt and no
+file content is stored anywhere by this package**, which is what makes the audit safe to keep.
+`chamnan-where`, `chamnan-vs` and `chamnan-setup` answer three more.
+
+### The README is now an index of what this does
+
+Seven groups, by what you are trying to do rather than by the order things were written, every row
+linking to its detail. Neither list is typed: `bin/` and `skills/` are the population and a check
+asserts both directions, because a command that ships and is missing cannot be found by anybody
+reading the page, and a row for something that was removed is worse — it reads as real.
+
+---
+
+## Under the hood
 
 **Three recorders that were writing nothing, and the lessons already in the code became readable.**
 

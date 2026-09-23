@@ -121,7 +121,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.30.0](#whats-new-in-1300) · [Commands](#commands)
+[What's new in 1.31.0](#whats-new-in-1310) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -624,31 +624,38 @@ own numbers.
 No money and no model names appear on any page, because the plugin does not know which model you
 run and a price printed against the wrong one is worse than no price at all.
 
-## What's new in 1.30.0
+## What's new in 1.31.0
 
-**Five new commands, and most of the effort spent on the moment somebody asks the repository a
-question rather than on the moment a session starts.**
+**This release is about the difference between a tool that works and a tool that can show you it
+worked.**
 
-`chamnan-where` answers where a name is actually *used* — a comment, a string and a docstring all
-mention it and none of them uses it. `chamnan-vs` prints three numbers measured on **your**
-repository rather than on ours. `/chamnan:why` asks whether the thing you are debugging is the
-machine or the code, before an hour goes into the wrong one. `/chamnan:review` reviews a change
-against what the repository already knows. `/chamnan:decide` counts the evidence on each side and
-shows the count, with no model in the loop.
+Four pages of **your own numbers**, built by `statistic/build_statistic.py` out of your workspace's
+own logs — what the plugin changed about a period's token weight, which features fire and how
+often, what the redactor caught and what no pattern can, and an editor for the weights. A fresh
+clone opens to greyed panels naming the file each one reads: nothing is sampled, nothing is
+estimated, and no sample dataset ships to make the pages look full. The top line shows its working
+because it is the one worth arguing with — the bars start at the common floor rather than at zero
+and say so, and the 25% that turns characters read into tokens saved is named as **a judgement,
+not a measurement**, beside the page that replaces it.
 
-Naming an edit that will not survive went from **33.5 ms to 0.5 ms** per Edit. The cache behind the
-similarity path went from a **23.5% hit ratio to 90.3%**. A reference scan reads **21 languages**
-instead of one, lexically and labelled as lexical — comments and strings are blanked first, which
-against the AST's verdict on six real symbols removes **98%** of the noise a plain grep returns.
-Instruction files are now checked for claims that stopped being true, and on this machine that was
-**between 50% and 80%** of each file it read.
+`chamnan-doctor` answers whether this install is doing anything at all, and **found a dead feature
+on its first run**: the failure recorder had been registered on an event that fires when a tool
+CALL fails, which is not what a command exiting 1 is, so its log had never been written.
+`chamnan-explain-context` answers why the session did not know something — which sections of the
+block arrived as names only and how often — from the shape log and nothing else, so no prompt and
+no file content is stored anywhere to answer it.
 
-Homoglyph detection closes the half of Trojan Source the redactor never answered: the bidirectional
-and zero-width halves were already scrubbed, a Cyrillic character standing in for a Latin one was
-not. It detects and names; it never rewrites a path.
+**A corpus of a hundred ways a context tool can cost the person who installed it**, and six
+defects it found. A credential a formatter had split across two string literals was reaching
+`MAP.md` whole. Four session-wide warnings were being deleted on their way out of the block while
+the drop accounting reported nothing. Session records — handoffs somebody wrote — were deleted on
+the retention window with no notice, in a workspace this plugin tells you to commit. Three
+per-machine state files were in every teammate's diff, one of them a per-person notice counter, so
+the first teammate to see a notice silenced it for the whole team. And the first step of the
+release gate could not run at all.
 
-Resuming a session no longer pays for a block it already has. A repository whose index has fallen
-behind asks once and then stops asking. A tool call produces one notice, not one per hook.
+Sixty-seven of the hundred are planted, twelve were already there, and **the twenty-one no corpus
+can hold are listed with the reason** rather than quietly dropped.
 
 ## Bootstrap does not rewrite your code
 
