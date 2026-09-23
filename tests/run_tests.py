@@ -48807,6 +48807,21 @@ check("AN EXECUTED HEREDOC IS STILL THE WORK, even though the pointer drops one"
       bool(_bd.advice("Bash", {"command": _bd_hd}, _bd_root)), saw=_bd.advice("Bash", {"command": _bd_hd}, _bd_root))
 check("...while a COMMIT MESSAGE naming the same command is not",
       not _bd.advice("Bash", {"command": 'git commit -m "note about ' + "defaults" + ' write"'}, _bd_root))
+# 🐛 [2026-09-23, second correction, minutes later] Keeping EVERY heredoc made the guard fire on
+# its own commit message, which named the rule's command list inside `git commit -F - <<EOF`. A
+# heredoc is executable only when an interpreter is reading it; one going to `git commit -F -`,
+# `cat > file` or `tee` is data. The question is not "is there a heredoc" but "is something about
+# to RUN it" — and a guard that fires on writing ABOUT the rule is the noise that gets it ignored.
+_bd_msg_hd = "git commit -F - <<EOF\nnames " + "defaults" + " write, launchctl, dscl\nEOF"
+check("A HEREDOC GOING TO git commit IS DATA, not the work",
+      not _bd.advice("Bash", {"command": _bd_msg_hd}, _bd_root),
+      saw=_bd.advice("Bash", {"command": _bd_msg_hd}, _bd_root))
+check("...and one going to `cat > file` is too",
+      not _bd.advice("Bash", {"command": "cat > /tmp/n.md <<EOF\n" + "defaults" + " write x\nEOF"},
+                     _bd_root))
+check("...while `bash -s <<EOF` is an interpreter about to run it",
+      bool(_bd.advice("Bash", {"command": "bash -s <<'EOF'\n" + "defaults" + " write a b\nEOF"},
+                      _bd_root)))
 check("...and it never blocks, only says",
       "Nothing is blocked" in _bd.advice("Edit", {"file_path": "/etc/hosts"}, _bd_root))
 _rmtree(_bd_root.parent, ignore_errors=True)
