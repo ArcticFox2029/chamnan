@@ -1078,9 +1078,19 @@ BLOCKED_SUFFIXES = (
 # `.pgpass` and `pgpass.conf` are libpq's password file in its two spellings, and every line in one
 # ends with the password in clear. All four are credential stores whose whole content is the secret,
 # which is the property this list is for — not "a file that might contain one".
+# 🐛 [2026-09-23] `secrets.yml` and `secrets.yaml` were named one by one, so `secrets.toml` —
+# the file Streamlit puts live API keys in, and the one this very repository keeps them in — was
+# not refused. Two members of a set were fixed and the identical ones beside them were not, which
+# is this project's most repeated defect and the reason the entry is now the STEM.
+#
+# `credentials` is already handled that way and shows why it is safe: `_is_blocked_name` blocks a
+# bare stem only when the name does not end in a SOURCE extension, so `secrets.toml`, `.json`,
+# `.ini`, `.yaml`, `.yml` and a bare `secrets` are all refused while `secrets.py` and `secrets.ts`
+# stay ordinary modules. Only the leaf name is judged, so a directory called `secrets/` is
+# untouched and the files inside it are each judged on their own.
 BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc", "_netrc",
                  ".pgpass", "pgpass.conf",
-                 "credentials", "secrets.yml", "secrets.yaml")
+                 "credentials", "secrets")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
 # database at all -- it indexes source, and a .sqlite is not source. peek is asked for one file by
@@ -1582,10 +1592,27 @@ def _names_a_mechanism(key, value=None):
     quote correctly. Two helpers, one file, the same job, different normalisation — so they share
     `_bare_key` now.
     """
+    # 🐛 [2026-09-23, found by the grown corpus] `API_KEY=<your-api-key-here>` was redacted by all
+    # SEVEN assignment carriers — bare, quoted, spaced, colon, rocket, flag and YAML block. The
+    # exemption for it existed and was scoped to WEAK key names only, so the commonest line in every
+    # quickstart in every README came back as `API_KEY=<REDACTED>`, which destroys the instruction
+    # it was giving. A value wrapped in angle brackets is a placeholder whatever the key is called:
+    # `<` and `>` are in no issuer's alphabet, and a shell reads `<` as redirection, so a real
+    # credential cannot arrive in that shape. Derived from the delimiters, not from a word list.
+    if _is_an_angle_placeholder(value):
+        return True
     tail = _bare_key(key).rsplit("_", 1)[-1].rsplit("-", 1)[-1]
     if tail not in NAMING_SUFFIXES:
         return False
     return not _value_overrides_the_name(value, key)
+
+
+def _is_an_angle_placeholder(value):
+    """`<anything-without-spaces>` — the README placeholder, under a strong key name or a weak one."""
+    v = (value or "").strip().strip("'\"`")
+    return (len(v) > 2 and v.startswith("<") and v.endswith(">")
+            and "<" not in v[1:-1] and ">" not in v[1:-1]
+            and not any(c.isspace() for c in v))
 
 
 # 🐛 [2026-09-04, R14 agent 2 finding 02, verified before acting] A value that continued past a
@@ -2848,7 +2875,11 @@ def scrub(text, windowed=True, *, _unmask=True):
     # (38 secrets, 30 decoys) before and after — identical results, not merely a similar score.
     if "=>" in text:
         text = ROCKET_SECRET.sub(
-            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
+            # 🐛 [2026-09-23] This passed group(2) — the QUOTE CHARACTER — as the value, so every
+            # value-side question `_names_a_mechanism` asks was being asked about `'`. The value is
+            # group 3. Found by the placeholder exemption failing in exactly two of the seven
+            # carriers, which is how a value-blind guard shows itself at all.
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(3))
             else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # 🐛 The first version of this gate tested `"|" in text or ">" in text`, which is TRUE on any
     # markdown document — a table uses `|` and a blockquote uses `>` — so it skipped nothing and the
@@ -2874,6 +2905,9 @@ def scrub(text, windowed=True, *, _unmask=True):
              f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
     _flag = lambda chunk: FLAG_SECRET.sub(
         lambda m: m.group(0) if PLACEHOLDER in m.group(2)
+        # `--api-key <your-api-key-here>` is a usage line, not a credential. Same reasoning as
+        # `_names_a_mechanism`'s angle-placeholder branch; this rule has its own guard chain.
+        or _is_an_angle_placeholder(m.group(2))
         # The next FLAG is not this flag's value. `tool --password --verbose` means the password
         # was not given on the command line at all; redacting `--verbose` would be pure noise.
         # A lookahead in the pattern was tried first and let this through, so it is asserted here.
