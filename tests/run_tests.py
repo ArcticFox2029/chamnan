@@ -48765,6 +48765,46 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- an edit that lands in the middle of a running program
+# ENFORCES: memory/rules/the-full-gate-runs-twice.md
+# 🐛 [2026-09-23] Twice in one hour, the second an hour AFTER the first was recorded as a lesson
+# with chamnan-gotcha. Four research rounds in flight, the dispatcher edited, all four dead with
+# `unexpected EOF`; then a fifth round running, the same file edited again, same death. A recorded
+# lesson only reaches a session touching the same LINE — bugnotes.py is positional on purpose —
+# and this is the other half: a script is read from disk AS it runs.
+import inuse as _iu  # noqa: E402
+
+_iu_dir = Path(tempfile.mkdtemp(prefix="chamnan-inuse-"))
+_iu_script = _iu_dir / "sleeper.sh"
+_iu_script.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+_iu_script.chmod(0o755)
+_iu_doc = _iu_dir / "notes.md"
+_iu_doc.write_text("about sleeper.sh\n", encoding="utf-8")
+_iu_proc = subprocess.Popen(["/bin/sh", str(_iu_script)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    time.sleep(0.4)               # let the process appear in the table
+    _iu_said = _iu.advice("Edit", {"file_path": str(_iu_script)})
+    check("EDITING A SCRIPT THAT IS RUNNING RIGHT NOW IS SAID BEFORE THE EDIT",
+          "running right now" in _iu_said and "sleeper.sh" in _iu_said, saw=_iu_said[:180])
+    check("...and it names the process, so it can be checked rather than believed",
+          str(_iu_proc.pid) in _iu_said or "pid" in _iu_said, saw=_iu_said[:120])
+    check("...and nothing is blocked", "Nothing is blocked" in _iu_said)
+    # 🔴 A document is not a program. Editing a .md that merely NAMES a running script is ordinary
+    # work, and a guard that fires on it is one people switch off.
+    check("...while a DOCUMENT is not a program, whatever it mentions",
+          _iu.advice("Edit", {"file_path": str(_iu_doc)}) == "",
+          saw=_iu.advice("Edit", {"file_path": str(_iu_doc)}))
+finally:
+    _iu_proc.terminate()
+    _iu_proc.wait(timeout=5)
+time.sleep(0.3)
+check("...and once it has stopped, the same edit is not interrupted",
+      _iu.advice("Edit", {"file_path": str(_iu_script)}) == "",
+      saw=_iu.advice("Edit", {"file_path": str(_iu_script)}))
+_rmtree(_iu_dir, ignore_errors=True)
+
 # ---------------------------------- 4,144 lessons nobody could reach
 # ENFORCES: memory/rules/a-bad-result-earns-a-gotcha.md
 # 🎯 [owner 2026-09-23] "ให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ". Measured that day in this repository: 4,144

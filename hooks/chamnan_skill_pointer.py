@@ -430,6 +430,19 @@ def _outside_the_checkout(payload):
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
         return ""
 
+def _running_right_now(payload):
+    """"that file is executing" — the edit that lands in the middle of a running program.
+
+    `lib/inuse.py` carries the two incidents. Said before the lesson notice, because a lesson about
+    the code matters less than the fact that the code is being read from disk as it runs.
+    """
+    try:
+        import inuse
+        return inuse.advice(payload.get("tool_name") or "",
+                            payload.get("tool_input") or {}, ws.hook_root(payload))
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        return ""
+
 def _the_lesson_recorded_here(payload):
     """"this place already records a lesson" — the 4,144 nobody could reach.
 
@@ -580,6 +593,10 @@ def main():
             return 0
     # 🔴 The lesson comes FIRST of the edit notices: a sibling sweep tells you where else to cut,
     # but a recorded gotcha may tell you not to cut at all.
+    if _tool in ("Edit", "Write", "NotebookEdit"):
+        _live = _running_right_now(payload)
+        if _live:
+            _emit(_live)
     if _tool in ("Edit", "Write"):
         _lesson = _the_lesson_recorded_here(payload)
         if _lesson:
