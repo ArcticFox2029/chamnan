@@ -55,6 +55,21 @@ def _pct(part, whole):
     return f"{part / whole * 100:.0f}%" if whole else "—"
 
 
+def _whole(sfull, name):
+    """The bytes a shortened section would have taken, from either shape `sfull` has had.
+
+    It landed as a bare int, and became `{"whole", "rank"}` when the fitter's ranking was recorded
+    beside the size. Both shapes are live in one log -- no backfill is possible, so every record
+    written before the change keeps the int -- and a reader that assumes either one crashes on the
+    other. Returns None when the record cannot size the section at all, which is what the caller
+    already distinguishes from a zero.
+    """
+    v = sfull.get(name)
+    if isinstance(v, dict):
+        v = v.get("whole")
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
 def main(argv):
     if ws.wants_version(argv):
         print(ws.version_line())
@@ -101,9 +116,9 @@ def main(argv):
 
     if short:
         print("\nArrived as NAMES ONLY — the section was there, its text was not:")
-        rows_out = sorted(short, key=lambda n: sfull.get(n, 0), reverse=True)
+        rows_out = sorted(short, key=lambda n: _whole(sfull, n) or 0, reverse=True)
         for name in rows_out:
-            whole, sent = sfull.get(name), sec.get(name, 0)
+            whole, sent = _whole(sfull, name), sec.get(name, 0)
             if whole:
                 print(f"  · {name}  {sent:,} of {whole:,} bytes ({_pct(sent, whole)} kept)")
             else:

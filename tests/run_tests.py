@@ -49685,13 +49685,21 @@ _ex = Path(tempfile.mkdtemp(prefix="chamnan-explain-")) / "r"
 (_ex / ".git").mkdir(parents=True)
 ws.ensure(_ex)
 (_ex / ".chamnan" / "logs").mkdir(parents=True, exist_ok=True)
+# 🐛 [2026-09-24] Both shapes of `sfull` are in this fixture on purpose. It was written as a bare
+# int and became `{"whole", "rank"}` when the fitter's ranking was recorded beside the size; old
+# records cannot be backfilled, so one log holds both forever. The fixture pinned only the int, the
+# reader was never taught the dict, and on real data it died at the sort with
+# `TypeError: '<' not supported between instances of 'dict' and 'dict'` -- which needs TWO
+# shortened sections to fire, so the last record below has two.
 (_ex / ".chamnan" / "logs" / "block_shape.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
     {"t": "2026-09-22T09:00:00", "bytes": 9400, "ceiling": 9500, "tok": 4100,
      "sec": {"Rules": 900, "Architecture index": 300}, "short": ["Architecture index"],
      "sfull": {"Architecture index": 1500}, "drop": ["Recent milestones"]},
     {"t": "2026-09-23T09:00:00", "bytes": 9478, "ceiling": 9500, "tok": 4169,
-     "sec": {"Rules": 900, "Architecture index": 339}, "short": ["Architecture index"],
-     "sfull": {"Architecture index": 1383}},
+     "sec": {"Rules": 900, "Architecture index": 339, "Recorded procedures": 403},
+     "short": ["Architecture index", "Recorded procedures"],
+     "sfull": {"Architecture index": {"whole": 1383, "rank": 8},
+               "Recorded procedures": {"whole": 1524, "rank": 2}}},
 ]), encoding="utf-8")
 
 
@@ -49712,6 +49720,17 @@ check("...and reports the trend, because one short block is a budget and forty i
 check("...and a section dropped on an EARLIER firing still appears in the trend",
       "Recent milestones" in _ex_out.stdout, saw=_ex_out.stdout[-300:])
 check("it exits 0 on a workspace it can answer for", _ex_out.returncode == 0)
+# The size lives under `whole` in the current shape, and two of them in one record are what the
+# sort compares. Asserting the ORDER, not just the presence: a key that returns the raw dict
+# raises before either name is printed, and a key that returns 0 for both prints them in the
+# wrong order without raising at all.
+check("...and sizes a section recorded in the CURRENT {whole, rank} shape",
+      "1,524" in _ex_out.stdout and "403" in _ex_out.stdout, saw=_ex_out.stdout[:400])
+check("...and ranks the two shortened sections by what each would have taken",
+      _ex_out.stdout.find("Recorded procedures") < _ex_out.stdout.find("Architecture index"),
+      saw=_ex_out.stdout[:400])
+check("...and does not die doing it — a traceback and a clean answer both exit through stdout",
+      "Traceback" not in _ex_out.stderr, saw=_ex_out.stderr[-300:])
 # A workspace with no firings has not answered the question, and saying "everything fitted" there
 # is the false all-clear this package refuses elsewhere.
 _ex_empty = Path(tempfile.mkdtemp(prefix="chamnan-explain-empty-")) / "r"
@@ -49731,6 +49750,15 @@ check("NO RECORDED SESSIONS IS SAID AS SUCH, NOT AS 'EVERYTHING FITTED'",
 _ex_old = _ex_run()
 check("...and an older record says the figure is missing rather than printing a zero",
       "predates" in _ex_old.stdout and "0 of" not in _ex_old.stdout, saw=_ex_old.stdout[:300])
+# And the int form has to keep being SIZED, not merely survived: only the last record is sized, so
+# it has to be the last one to be under test at all.
+(_ex / ".chamnan" / "logs" / "block_shape.jsonl").write_text(json.dumps(
+    {"t": "2026-09-21T09:00:00", "bytes": 9400, "ceiling": 9500,
+     "sec": {"Architecture index": 300}, "short": ["Architecture index"],
+     "sfull": {"Architecture index": 1500}}) + "\n", encoding="utf-8")
+_ex_int = _ex_run()
+check("...and a record in the older int shape is still sized from it",
+      "300 of 1,500" in _ex_int.stdout, saw=_ex_int.stdout[:300])
 _rmtree(_ex.parent, ignore_errors=True)
 _rmtree(_ex_empty.parent, ignore_errors=True)
 
