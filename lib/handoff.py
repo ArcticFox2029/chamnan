@@ -24,6 +24,27 @@ someone who spent nine hours of one working day in meetings. Requiring both mean
 always to resume, and the split only happens when the evidence is unambiguous: a new day AND a
 night's worth of silence.
 
+**What the ladder settles, and what it does not (measured 2026-09-23, direction O).** A second
+reader objected that the 8 had no measurement under it, and that the mechanism is cache continuity
+rather than the calendar. Both halves were answered from 160 transcripts already on disk — 6,905
+requests, each one's own usage — by asking what share of the first request after a gap was charged
+as a cache WRITE. `.chamnan/tools/resume_ladder.py` recomputes it:
+
+    gap ≤ 30m     9.5% written        the cache is essentially intact
+    gap ≤  1h    30.8%
+    gap ≤  2h    89.4%                the cache is essentially gone
+    gap ≤  8h    96.2%
+    gap ≤ 24h    95.8%
+
+**Continuity breaks between one and two hours, not at eight.** The largest step in the whole ladder
+is there: 58.7 points. Everything past 2h is flat, so the extra six hours in `LONG_GAP_SECONDS`
+save nothing that 2h had not already lost.
+
+**That does not move the threshold, and the reason is the trade below rather than the number.** By
+2h the money is already spent whatever this decides, so the gap is no longer a cost lever at all —
+which means the 8 is doing the only job left: protecting continuity. Cutting at 2h would split
+sittings all day to save nothing. The rule stands, and its justification is now the right one.
+
 The case this deliberately lets resume: finishing at 02:00 and returning at 10:00 the same date.
 That is a new sitting by any reasonable reading, and it will pay. Accepted, because the cost of a
 wrong cut is a person losing the thread of their own work, and the cost of a wrong resume is money.
