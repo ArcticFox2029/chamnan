@@ -62,6 +62,27 @@ from pathlib import Path
 # Eight hours, the owner's number, chosen as "a night" rather than fitted to data. It is a
 # CONFIGURABLE floor rather than a constant so a team that works in shifts can move it; the pair of
 # conditions is what makes the default safe, not the precision of this figure.
+#
+# 🎯 [1.31, direction O, measured 2026-09-23] A second reader called the 8 provisional because
+# nothing measured stood under it. Something does now, and it did not move the number — it moved
+# the ARGUMENT, which had been the wrong one. `tools/resume_ladder.py` over 160 transcripts, gap
+# between consecutive requests against the share of input that had to be re-cached:
+#
+#       up to 30m     9.5% cache write        up to 4h     92.6%
+#       up to  1h    30.8%                    up to 8h     96.2%
+#       up to  2h    89.4%                    up to 24h    95.8%
+#
+# The step is between 1h and 2h, 58.7 points, and it is mechanical rather than behavioural: it is
+# the prompt cache expiring. 🔴 So the cost of resuming stops varying at about two hours — past
+# that a resume pays a full re-cache whether the gap is three hours or thirty. Every hour of this
+# floor above ~2h therefore buys nothing in money and is a judgement about the PERSON: has the
+# reader lost the thread of their own work. That is the right question to answer with a human
+# number, and "a night" is a good answer to it.
+#
+# What the measurement does rule out is defending this figure on cost. It also rules out the
+# opposite move, lowering it to 2h to "save money": below the floor the module resumes, and
+# between 2h and 8h a resume already costs full price, so lowering it would cut sittings apart
+# to save nothing. The ladder is archived at `state/resume_ladder_2026-09-23.txt`.
 LONG_GAP_SECONDS = 8 * 3600
 
 FRESH, RESUME = "fresh", "resume"
