@@ -1378,6 +1378,7 @@ def main():
     wsdir = ws.workspace(root)
     first_session = not wsdir.is_dir()
     _expiring = []
+    _expiring_s = []
     if not first_session:
         # Retention was reachable from `chamnan-report` and `chamnan-map` and from nowhere else --
         # 2 of the 9 commands in bin/. Someone who only ever uses the write skills accumulates
@@ -1393,6 +1394,13 @@ def main():
             _expiring = ws.expiring_logs(root)
         except Exception:
             _expiring = []
+        # Measured HERE, before the prune below runs, for the reason the emit site records: after
+        # the sweep there is nothing left to warn about. Its own try, because one subsystem's
+        # failure must not cancel another's -- the same lesson the loop below was split for.
+        try:
+            _expiring_s = ws.expiring_sessions(root)
+        except Exception:
+            _expiring_s = []
         # 🐛 [2026-09-15] These three shared one `try`, so a failure in the first silently
         # cancelled the other two -- for ever, since nothing retries and nothing reports. The
         # comment above justifies being SILENT about a failure, which is right and stays; it does
@@ -1574,6 +1582,18 @@ def main():
             f"_⚠ **{len(_expiring)} written log(s) expire within a day** — {_names}{_rest}. "
             f"`logs/` is scratch and they are deleted on the window; if any of it is worth keeping, "
             f"`/chamnan:remember` puts it somewhere that is not on a timer._\n"))
+    if _expiring_s:
+        # A session record is not scratch: somebody wrote it as a handoff, and this plugin tells
+        # people to commit the workspace. So the deletion lands in THEIR git status as a `D` they
+        # did not ask for, fails a CI step running `git diff --exit-code`, and is committed away by
+        # the next `git add -A`. Named once, like the logs above, so keeping it is a choice.
+        _snames = ", ".join(f"`{mdblock.as_quoted(n)}`" for n, _ in _expiring_s[:3])
+        _srest = f" _+{len(_expiring_s) - 3} more_" if len(_expiring_s) > 3 else ""
+        out.append(redact.scrub(
+            f"_⚠ **{len(_expiring_s)} session record(s) expire within a day** — {_snames}{_srest}. "
+            f"They are deleted on the retention window even when committed, so the deletion shows "
+            f"up in `git status` as a change nobody made; `/chamnan:remember` moves what matters "
+            f"off the timer._\n"))
     # The repository's own instruction files — CLAUDE.md, AGENTS.md and fifteen more conventions —
     # say things that stopped being true, and the agent reads one every session and believes it
     # absolutely. One line, only when something has actually gone: the owner's condition, and the

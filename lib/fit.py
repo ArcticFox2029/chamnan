@@ -192,6 +192,11 @@ EMIT_LAST = [
 ]
 
 
+# Which parts are a section's own footnotes, by identity, as `reorder` saw them. Empty when
+# `reorder` was never called, and `_followers` then behaves exactly as it did before this existed.
+_OWNED = set()
+
+
 def reorder(parts):
     """Constraints to the front, the session handoff to the back, everything else left alone.
 
@@ -231,6 +236,21 @@ def reorder(parts):
                 return (2, i)
         return (1, 0)
 
+    # 🐛 [2026-09-24] Recorded here because this is the only place that KNOWS it. `_followers`
+    # treats every bare line after a section as that section's footnote, which was true until this
+    # function started moving standalone notices to the end of the block -- and a notice sitting
+    # after the last section then reads as that section's footnote to code that can only see
+    # adjacency. Measured on chamnan-corpus: the last section was replaced by a brief, the brief
+    # pass deliberately does not bring followers back, and FOUR session-wide warnings went with it
+    # -- log expiry, session expiry, "source has changed since this index was built", and "25 of
+    # 576 file(s) this index names no longer exist" -- while `dropped` reported nothing at all,
+    # because the section itself had been restored. Two correct decisions, and the combination
+    # deletes the warnings this package exists to emit.
+    #
+    # Identity, not position: something may be appended after this runs. A part this function did
+    # not see is not owned by anything either, so it is protected by the same rule.
+    _OWNED.clear()
+    _OWNED.update(id(part) for block in blocks for part in block[1:])
     ordered = sorted(range(len(blocks)), key=lambda i: (rank(blocks[i]), i))
     return lead + [part for i in ordered for part in blocks[i]] + tail
 
@@ -243,6 +263,12 @@ def _followers(order, i):
     section it had left out. A pointer to a heading that is not there is worse than silence."""
     j, out = i + 1, []
     while j < len(order) and not title_of(order[j]):
+        # A standalone notice that `reorder` moved to the end of the block is NOT this section's
+        # footnote; it only sits behind it. Absorbing one means it is blanked with the section and
+        # never restored by the brief pass, which says in as many words that followers do not come
+        # back. See `reorder`: `_OWNED` is every bare line that actually trailed a heading.
+        if _OWNED and id(order[j]) not in _OWNED:
+            break
         out.append(j)
         j += 1
     return out

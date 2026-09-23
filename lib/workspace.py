@@ -1295,6 +1295,21 @@ def _rmtree_quietly(path):
         pass
 
 
+def expiring_sessions(root=None, within_days=1.0):
+    """Session records `prune_sessions` will delete within a day, newest first.
+
+    The sibling of `expiring_logs`, and added because it was missing. That one exists because a
+    dated `.md` note somebody typed was being deleted in silence; a session record is the same
+    kind of file with a stronger claim -- `sessions.prune` calls it "committed work rather than
+    cache" in its own comment -- and had no warning at all. One number, one window, one place the
+    rule lives: `sessions.expiring` asks what the delete will actually do rather than re-deriving
+    it beside it.
+    """
+    import sessions
+    return sessions.expiring(root, load_config(root).get("session_retention_days", 30),
+                             within_days)
+
+
 def prune_sessions(root=None):
     """Apply session_retention_days to sessions/. Called alongside prune_logs from the same
     bin/ commands; separate because the two windows differ and conflating them would mean one

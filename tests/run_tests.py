@@ -49930,6 +49930,113 @@ check("...while an unreadable line stops the trim rather than being deleted thro
 shutil.rmtree(_ac_ws.parent, ignore_errors=True)
 
 
+# ------------------- a session-wide warning is not the last section's footnote, and was deleted as one
+# 🐛 [2026-09-24] Measured on chamnan-corpus, not imagined. `reorder` moves every standalone `_⚠`
+# notice to the END of the block -- correct, and done for the prompt cache. `_followers` treats
+# every bare line after a section as that section's footnote -- correct, and done so a dropped
+# index does not leave "Full detail lives in MAP.md" pointing at nothing. Put together, a notice
+# that merely SITS behind the last section is absorbed by it, and the brief pass says in as many
+# words that followers do not come back.
+#
+# The corpus run lost four at once -- log expiry, session expiry, "source has changed since this
+# index was built", and "25 of 576 file(s) this index names no longer exist" -- and `dropped` was
+# EMPTY, because the section itself had been restored as a brief. A block that looks complete,
+# with the warnings it exists to emit missing and nothing anywhere saying so.
+_fw_title = "Where the last session stopped"
+_fw_head = "## chamnan\n"
+_fw_big = ("\n### Rules this repository works under\n[repo:zz]\n"
+           + "a rule that takes room. " * 40 + "\n[/repo:zz]\n")
+_fw_last = f"\n### {_fw_title}\n[repo:zz]\n" + "the handoff, at length. " * 40 + "\n[/repo:zz]\n"
+_fw_foot = "_Full detail lives in `.chamnan/MAP.md`._\n"
+_fw_note = "_⚠ **1 session record(s) expire within a day** — `2026-08-25-x.md`._\n"
+_fw_briefs = {_fw_title: f"\n### {_fw_title}\n_A handoff is recorded; open it when it applies._\n"}
+# 1,550 bytes is not a round number and is not a constant: it is where the block lands in the state
+# that produced the finding -- the last section replaced by its brief, `dropped` EMPTY because the
+# section came back, and the footnote gone with the full form as the brief pass intends. Swept
+# 700..2050 in fifty-byte steps to find it; outside 1,450-1,600 the unfixed code keeps the notice
+# by accident, and a fixture written at one of those widths would have passed either way.
+_FW_CEIL = 1550
+
+
+def _fw_run(owned):
+    parts = fit.reorder([_fw_note, _fw_big, _fw_last, _fw_foot])
+    if not owned:
+        fit._OWNED.clear()      # exactly the unfixed `_followers`, and nothing else changed
+    return fit.shrink(_fw_head, list(parts), _FW_CEIL, {_fw_title: "sessions/"},
+                      briefs=_fw_briefs)
+
+
+check("reorder puts a standalone notice behind the sections, which is what created the trap",
+      fit.reorder([_fw_note, _fw_big, _fw_last, _fw_foot])[-1] == _fw_note)
+_fw_body, _fw_dropped = _fw_run(True)
+# The trap needs all three to be true at once, so they are asserted rather than assumed: if the
+# fixture stops reproducing the state, this says so instead of going quietly green.
+check("the fixture is in the state that produced the finding — briefed, and `dropped` empty",
+      "_A handoff is recorded" in _fw_body and _fw_dropped == [],
+      saw=(_fw_dropped, _fw_body[-200:]))
+check("A SESSION-WIDE WARNING SURVIVES THE SECTION IT MERELY SITS BEHIND",
+      "expire within a day" in _fw_body, saw=_fw_body[-400:])
+# The other half, which must not regress: a line that genuinely trailed its own heading is still
+# that heading's footnote and still leaves with it. A fix that protected every bare line would
+# strand "Full detail lives in MAP.md" pointing at a section the block no longer carries.
+check("...while a real footnote still leaves with the section it belongs to",
+      "Full detail lives" not in _fw_body, saw=_fw_body[-300:])
+_fw_unfixed, _ = _fw_run(False)
+check("...and the check is not a decoration: without the fix this fixture loses the notice",
+      "expire within a day" not in _fw_unfixed, saw=_fw_unfixed[-300:])
+fit._OWNED.clear()
+check("with reorder never called, _followers is exactly what it was",
+      fit._followers([_fw_big, _fw_foot, _fw_note], 0) == [1, 2])
+
+
+# ------------------------------------ the sweep that deletes a person's handoff now names it first
+# 🐛 [2026-09-24] `expiring_logs` exists because `prune_logs` was deleting a dated `.md` note
+# somebody had typed, in silence, and the fix was to NAME it once before it goes. `prune_sessions`
+# deletes `sessions/*.md` -- every one written by a person, in a directory this plugin tells people
+# to commit -- and never got the same treatment, though `sessions.prune`'s own comment calls a
+# session record "committed work rather than cache". Reproduced on the corpus: opening one session
+# deleted a tracked, committed record and the only trace was a `D` in `git status`.
+_se = Path(tempfile.mkdtemp(prefix="chamnan-expiring-sessions-")) / "r"
+(_se / ".git").mkdir(parents=True)
+ws.ensure(_se)
+_se_today = datetime.date.today()
+
+
+def _se_write(days_ago, name):
+    p = (_se / ".chamnan" / "sessions" /
+         f"{_se_today - datetime.timedelta(days=days_ago)}-{name}.md")
+    p.write_text(f"# {name}\n\n## Remaining\n\n- a handoff\n", encoding="utf-8")
+    return p.name
+
+
+_se_old, _se_due, _se_next, _se_new = (_se_write(40, "ancient"), _se_write(30, "due-tomorrow"),
+                                       _se_write(29, "due-in-two"), _se_write(2, "recent"))
+_se_named = [n for n, _d in sessions.expiring(_se, 30)]
+check("the record about to be deleted is NAMED before the sweep takes it",
+      _se_named == [_se_due], saw=_se_named)
+# Not the one already past the window: that one is going NOW, not "within a day", and reporting it
+# as about-to-expire would be a warning about something the same session already deleted.
+check("...and one already past the window is not reported as expiring soon",
+      _se_old not in _se_named, saw=_se_named)
+check("...nor one that is still two days off, at this window",
+      _se_next not in _se_named and _se_new not in _se_named, saw=_se_named)
+check("a wider notice window reaches further, so the number is the window's and not a constant",
+      [n for n, _d in sessions.expiring(_se, 30, within_days=3)] == [_se_due, _se_next],
+      saw=[n for n, _d in sessions.expiring(_se, 30, within_days=3)])
+check("a retention of 0 keeps everything, so nothing is ever about to expire",
+      sessions.expiring(_se, 0) == [])
+# The warning must describe what the DELETE will actually do, which is why both read one `_age`.
+check("the notice and the delete agree: what was named is what goes on the next window",
+      sessions.prune(_se, 30) == 1
+      and not (_se / ".chamnan" / "sessions" / _se_old).is_file()
+      and (_se / ".chamnan" / "sessions" / _se_due).is_file(),
+      saw=sorted(p.name for p in (_se / ".chamnan" / "sessions").glob("*.md")))
+check("and the workspace wrapper reads the configured window rather than a literal",
+      [n for n, _d in ws.expiring_sessions(_se)] == [_se_due],
+      saw=ws.expiring_sessions(_se))
+_rmtree(_se.parent, ignore_errors=True)
+
+
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
 # reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all
