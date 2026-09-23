@@ -48777,6 +48777,77 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- one fixture, every adapter, the same contract
+# 🎯 [1.31, a second reader's #6] "Supports 22 hosts" is worth something only if all 22 can be
+# shown to keep the same behaviour contract. Each adapter has had its own checks; none of them
+# asked the question across the whole set, which is the shape this repository's most-recorded
+# defect takes — a property held by the members somebody looked at.
+import adapters as _ct  # noqa: E402
+
+_CT_MARK = "MARKER-7f3a-DO-NOT-LOSE"
+_ct_body = ("# chamnan\n\nA line of prose.\n\n" + _CT_MARK + "\n\n"
+            "```\na fenced block\n```\n\n- a bullet\n")
+_ct_names = sorted(_ct.ADAPTERS)
+check(f"the harness runs against every adapter, derived from the registry — {len(_ct_names)}",
+      len(_ct_names) >= 15, saw=_ct_names)
+
+_ct_bad = {"shape": [], "content": [], "newline": [], "pure": [], "target": [], "ceiling": []}
+for _ct_n in _ct_names:
+    _ct_m = _ct.ADAPTERS[_ct_n]
+    if not callable(getattr(_ct_m, "render", None)) or not getattr(_ct_m, "TARGET", ""):
+        _ct_bad["shape"].append(_ct_n)
+        continue
+    _ct_in = _ct_body
+    _ct_out = _ct_m.render(_ct_in)
+    if not isinstance(_ct_out, str) or _CT_MARK not in _ct_out:
+        _ct_bad["content"].append(_ct_n)
+    # 🐛 [2026-09-23, first run] "ends with exactly one newline" flagged `gemini`, whose render
+    # returns a JSON object for the agent's hook stdout — printed by the caller, never written as
+    # a file. The property belongs to FILE content, and which kind an adapter produces is derived
+    # from the output rather than from a list of names kept here.
+    try:
+        json.loads(_ct_out)
+        _ct_is_file = False
+    except (ValueError, TypeError):
+        _ct_is_file = True
+    if _ct_is_file and (not isinstance(_ct_out, str) or not _ct_out.endswith("\n")
+                        or _ct_out.endswith("\n\n")):
+        _ct_bad["newline"].append(_ct_n)
+    # 🔴 Pure in both directions: the same input twice must give the same output, and the caller's
+    # string must come back unchanged. An adapter that mutated what it was handed would corrupt
+    # every adapter rendered after it in the same run — a failure that depends on ORDER, which is
+    # the hardest kind to see in a test that passes.
+    if _ct_m.render(_ct_body) != _ct_out or _ct_in != _ct_body:
+        _ct_bad["pure"].append(_ct_n)
+    _ct_t = str(getattr(_ct_m, "TARGET", ""))
+    if _ct_t.startswith("/") or ".." in _ct_t.split("/"):
+        _ct_bad["target"].append(_ct_n)
+    # 🐛 [2026-09-23, first run] This asserted that render() TRUNCATES to its declared ceiling, and
+    # six adapters "failed". They do not truncate and are not meant to: `chamnan-context` sizes the
+    # BODY first, subtracting `len(render(""))` for the wrapper. The property that is actually
+    # load-bearing is that the wrapper leaves room — a check pinned to where a decision is NOT made
+    # reports a defect that is not there, which this suite has a note about one screen up.
+    _ct_c = getattr(_ct_m, "CEILING", None)
+    if isinstance(_ct_c, int) and _ct_c > 0:
+        _ct_wrap = len(_ct_m.render("").encode())
+        if _ct_wrap >= _ct_c:
+            _ct_bad["ceiling"].append(f"{_ct_n}: wrapper is {_ct_wrap}B of a {_ct_c}B ceiling")
+
+check("EVERY ADAPTER EXPOSES THE SAME SHAPE: a TARGET and a render()", not _ct_bad["shape"],
+      saw=_ct_bad["shape"])
+check("...and none of them loses the block's content", not _ct_bad["content"],
+      saw=_ct_bad["content"])
+check("...and each ends with exactly one newline, so a file written twice is byte-identical",
+      not _ct_bad["newline"], saw=_ct_bad["newline"])
+check("...and render is PURE — same answer twice, and the caller's string comes back unchanged",
+      not _ct_bad["pure"], saw=_ct_bad["pure"])
+# A TARGET is written into somebody's repository. An absolute path or a `..` is not a filename.
+check("...and every TARGET stays inside the repository it is written to", not _ct_bad["target"],
+      saw=_ct_bad["target"])
+check("...and an adapter that declares a ceiling leaves room in it for a block",
+      not _ct_bad["ceiling"], saw=_ct_bad["ceiling"])
+
 # ---------------------------------- where each piece of the block came from, written down
 # 🎯 [1.31, a second reader's #4] Provenance: every piece of the block should be able to say where
 # it came from, machine-readably, because that is the raw material an allocator needs to decide
