@@ -48760,6 +48760,57 @@ check("THE GUARD DOES NOT MATCH ITS OWN SOURCE",
 _rmtree(_cn_ws, ignore_errors=True)
 
 
+
+# ---------------------------------- the one rule where being wrong is not a revert
+# 🔴 [owner 2026-09-10] `defaults write com.apple.Terminal "Window Settings" -dict-add "Clear Dark"
+# ""` replaced a dictionary with an empty string; Terminal aborted before drawing a window and the
+# owner's settings were gone permanently. That rule has been the loudest line in the store since,
+# and until 2026-09-23 NOTHING enforced it — NIOSH's fourth control tier of five, which works
+# exactly as well as the person remembering it.
+import boundary as _bd  # noqa: E402
+
+_bd_root = Path(tempfile.mkdtemp(prefix="chamnan-boundary-")) / "repo"
+(_bd_root / ".git").mkdir(parents=True)
+_bd_cases = [
+    ("the incident itself", "Bash",
+     {"command": 'defaults write com.apple.Terminal "Window Settings" -dict-add "x" ""'}, True),
+    ("launchctl changing what the machine runs", "Bash",
+     {"command": "launchctl unload ~/Library/LaunchAgents/com.x.plist"}, True),
+    ("a write to the owner's dotfile", "Bash", {"command": "echo x > ~/.zshrc"}, True),
+    ("rm inside an app's preferences", "Bash",
+     {"command": "rm -rf ~/Library/Preferences/com.apple.Terminal.plist"}, True),
+    ("an Edit outside the checkout", "Edit", {"file_path": "/etc/hosts"}, True),
+    # 🔴 The other half, and the half that decides whether anyone keeps the hook on: READING is
+    # free, and every fact in the 2026-09-10 incident came from a read-only command.
+    ("reading a crash report", "Bash",
+     {"command": "cat ~/Library/Logs/DiagnosticReports/a.crash"}, False),
+    ("pmset REPORTING rather than setting", "Bash", {"command": "pmset -g assertions"}, False),
+    ("ordinary work inside the checkout", "Bash", {"command": "rm -f .chamnan/logs/x.json"}, False),
+    ("a scratch file", "Bash", {"command": "echo hi > /tmp/scratch.txt"}, False),
+    ("an Edit inside the checkout", "Edit", {"file_path": str(_bd_root / "a.py")}, False),
+]
+_bd_wrong = [n for n, tool, inp, want in _bd_cases
+             if bool(_bd.advice(tool, inp, _bd_root)) != want]
+check("THE HIGHEST-SEVERITY RULE NOW HAS A MACHINE — all 10 cases, write and read alike",
+      _bd_wrong == [], saw=_bd_wrong)
+# The rule's own words: "Diagnose all you like — reading is free." A guard that fires on `cat` is
+# a guard somebody switches off, and then the write it existed for goes unremarked.
+check("...and it stays silent on every READ, which is what keeps it switched on",
+      all(not _bd.advice(t, i, _bd_root) for n, t, i, w in _bd_cases if not w),
+      saw=[n for n, t, i, w in _bd_cases if not w and _bd.advice(t, i, _bd_root)])
+# 🐛 [2026-09-23] It fired on a heredoc that was WRITING A TEST about the incident command, and
+# the fix had to go the other way from the pointer's: a heredoc fed to `python3 -` or `bash -s` IS
+# executed, so `cmdtext.without_prose(..., drop_heredoc=False)` keeps it. One module, two policies —
+# the difference is the whole reason it is a parameter rather than a second copy.
+_bd_hd = "python3 - <<EOF\nos.system('" + "defaults" + " write com.apple.Terminal x y')\nEOF"
+check("AN EXECUTED HEREDOC IS STILL THE WORK, even though the pointer drops one",
+      bool(_bd.advice("Bash", {"command": _bd_hd}, _bd_root)), saw=_bd.advice("Bash", {"command": _bd_hd}, _bd_root))
+check("...while a COMMIT MESSAGE naming the same command is not",
+      not _bd.advice("Bash", {"command": 'git commit -m "note about ' + "defaults" + ' write"'}, _bd_root))
+check("...and it never blocks, only says",
+      "Nothing is blocked" in _bd.advice("Edit", {"file_path": "/etc/hosts"}, _bd_root))
+_rmtree(_bd_root.parent, ignore_errors=True)
+
 # ---------------------------------- prose ABOUT work is not work
 # 🐛 [2026-09-23] Caught live: `git commit -m "fix 2dspeak/ lipsync"` raised the Live2D procedure,
 # because the pointer matched the COMMIT MESSAGE. A message, a heredoc body and a shell comment all

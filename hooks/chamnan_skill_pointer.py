@@ -101,18 +101,13 @@ def _first_steps(path):
 # and matching them is how a pointer earns its way into being ignored — the same "noise gets a
 # guard switched off" reasoning the nudge budget below is built on.
 
-_PROSE = re.compile(
-    # Greedy and un-anchored: EVERYTHING after a heredoc marker is body. A non-greedy `*?$` under
-    # re.MULTILINE stops at the first newline and leaves the body matching — measured.
-    "<<-?'?\\w+'?[\\s\\S]*"              # a heredoc body: prose handed to a command
-    "|(?:-m|--message)\\s+(?:\"[^\"]*\"|'[^']*')"   # a commit message
-    "|#.*$",                                  # a shell comment
-    re.MULTILINE)
-
-
 def _the_work_itself(command):
     """`command` with the prose stripped out: what is being RUN, not what is being said about it."""
-    return _PROSE.sub(" ", command)
+    try:
+        import cmdtext
+        return cmdtext.without_prose(command, drop_heredoc=True)
+    except Exception:              # noqa: BLE001 — matching the raw command is the safe fallback
+        return command
 
 def _nudge_path(wsdir, session_id):
     """One state file per session, never one shared dict keyed by session id — the same reasoning
@@ -418,6 +413,20 @@ def _repeat_notice(payload):
         return ""
 
 
+def _outside_the_checkout(payload):
+    """🔴 The highest-severity rule in the store, with a machine behind it at last.
+
+    `lib/boundary.py` carries the reasoning and the incident. First of every notice here because it
+    is the only one where being wrong is not a revert — and a return, because nothing this hook has
+    to say afterwards matters more than "that is not ours to write".
+    """
+    try:
+        import boundary
+        return boundary.advice(payload.get("tool_name") or "",
+                               payload.get("tool_input") or {}, ws.hook_root(payload))
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        return ""
+
 def _wrong_shape(payload):
     """"you are running this script without the flag it says it needs" — or "".
 
@@ -526,6 +535,10 @@ def main():
     global _CALL
     _CALL = payload
     _tool = payload.get("tool_name") or ""
+    _outside = _outside_the_checkout(payload)
+    if _outside:
+        _emit(_outside)
+        return 0
     if _tool in ("Edit", "Write", "NotebookEdit"):
         _doomed = _edit_will_not_survive(payload)
         if _doomed:
