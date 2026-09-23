@@ -68,7 +68,7 @@ def which_plugin(lines):
             continue
         seen += 1
         try:
-            data = json.loads(settings.read_text(encoding="utf-8"))
+            data = json.loads(settings.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             lines.append((UNKNOWN, f"{settings} exists but does not parse — cannot say which "
                                    f"plugin this host loads"))
@@ -85,7 +85,7 @@ def which_hooks(root, wsdir, lines):
     """Registered vs actually fired, from the logs each one writes."""
     reg = HERE.parent / "hooks" / "hooks.json"
     try:
-        data = json.loads(reg.read_text(encoding="utf-8"))
+        data = json.loads(reg.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         lines.append((BAD, "hooks/hooks.json is missing or unreadable — nothing is registered"))
         return
@@ -232,6 +232,9 @@ def which_loops(root, lines):
                   tail[-1][:120] if tail else "invariant_map said nothing"))
 
 
+KNOWN_FLAGS = ("--quiet", "-q", "--count", "-C", "-h", "--help", "-v", "--version")
+
+
 def main(argv):
     if ws.wants_version(argv):
         print(ws.version_line())
@@ -239,6 +242,17 @@ def main(argv):
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+    # 🐛 [2026-09-24] (self-measured) Every other command in `bin/` refuses a flag it does not
+    # know, and the two newest — this and `chamnan-open` — never got the rule, so a misspelt flag
+    # ran the default action in silence. `ws.unknown_flags` exists precisely because adopting a
+    # rule in some of a set and stopping is this project's commonest defect; the gate caught both
+    # in the same sweep, by name, the first time it was able to report at all since 2026-09-23.
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if _bad:
+        print(f"chamnan-doctor: unknown option {_bad[0]!r} — {', '.join(KNOWN_FLAGS)}",
+              file=sys.stderr)
+        return 2
+
     quiet = "--quiet" in argv or "-q" in argv
 
     root = ws.find_root() or Path(os.getcwd())

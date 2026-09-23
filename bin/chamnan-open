@@ -33,6 +33,9 @@ print = redact.emit  # noqa: A001
 KNOWN_FLAGS = ("--dry-run", "-h", "--help", "-v", "--version")
 
 
+KNOWN_FLAGS = ("--dry-run", "-h", "--help", "-v", "--version")
+
+
 def main(argv):
     # Version before help, and help before anything that could read a path: `-h` must answer
     # wherever this sits, including a directory with no workspace and no git, and must write
@@ -50,6 +53,15 @@ def main(argv):
     if "--" in argv:
         cut = argv.index("--")
         argv, extra = argv[:cut], argv[cut + 1:]
+    # 🐛 [2026-09-24] (self-measured) The same rule every sibling has, and the gate named this
+    # command and `chamnan-doctor` as the two silent ones. Checked AFTER the `--` split on
+    # purpose: everything past `--` belongs to `claude`, and refusing a flag meant for another
+    # program is how a passthrough stops being one.
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if _bad:
+        print(f"chamnan-open: unknown option {_bad[0]!r} — {', '.join(KNOWN_FLAGS)}; "
+              f"anything for `claude` itself goes after `--`", file=sys.stderr)
+        return 2
     repo = Path(argv[0]).resolve() if argv else Path.cwd()
 
     got = handoff.newest_session(repo)

@@ -43828,7 +43828,14 @@ else:
     # `"${CLAUDE_PLUGIN_ROOT}/hooks/x.py"` -> the file on disk.
     _t_files55, _t_unresolved55 = [], []
     for _t_c55 in _t_cmds55:
-        _t_rel55 = _t_c55.strip().strip('"').replace("${CLAUDE_PLUGIN_ROOT}/", "")
+        # 🐛 [2026-09-24] (self-measured) A registration may carry ARGUMENTS as well as a path —
+        # `"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_tool_failed.py" --post`, added in d09f277 — and
+        # `.strip('"')` leaves the flag glued to the filename, so the file "does not exist". Its
+        # sibling check, which derives the tool-event hooks from the same registrations, crashed
+        # outright on the same string and took the whole gate down with it. Same registration,
+        # same parse, two places: this is the set-and-member defect, and the flag found both.
+        _t_tok55 = shlex.split(_t_c55.strip()) or [""]
+        _t_rel55 = _t_tok55[0].replace("${CLAUDE_PLUGIN_ROOT}/", "")
         _t_p55 = ROOT / _t_rel55
         if _t_p55.is_file():
             _t_files55.append(_t_p55)

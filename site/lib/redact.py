@@ -2636,7 +2636,29 @@ def _unmask_split_credentials(text):
     without the false positives a broad rule would otherwise cost. A line of prose containing
     `"a" "b"` is rewritten and then thrown away, because nothing in it matched.
     """
-    return _SPLIT_JOIN.sub("", text) if ('"' in text or "'" in text) else text
+    if '"' not in text and "'" not in text:
+        return text
+    joined = _SPLIT_JOIN.sub("", text)
+    if joined == text:
+        return text
+    # 🐛 [2026-09-24] (self-measured) The first form handed the joined text to `scrub` and kept it
+    # whenever it redacted MORE, which is the contract the two disguises above use — and that is
+    # too loose for a rule that rewrites ordinary source. Joining `_REQUIRES_KEY = "chamnan-" +
+    # "canonical"` produces `_REQUIRES_KEY = "chamnan-canonical"`, the NAME-based assignment rule
+    # fires on `_KEY =`, and a constant in this package's own `lib/canonical.py` came out redacted.
+    # The self-scan check caught it in the same gate run that this rule shipped in.
+    #
+    # So the join is accepted only when it makes a VENDOR-SHAPED pattern match — the prefixed
+    # families in `PATTERNS` and `LATE_PREFIXES`, which is the case this exists for: `("ghp_"
+    # "EXAMPLE…")` is a GitHub token whichever way the source wrote it. A name-based rule firing
+    # on the joined form is not evidence that the source split a credential; it is evidence that
+    # the variable is called `key`, which was already true before anything was joined.
+    for _pat in PATTERNS + LATE_PREFIXES:
+        if _pat is DELIMITED_AFTER_SECRET_WORD or _pat is AUTH_SCHEME_SECRET:
+            continue                  # name-based, not a vendor shape — see above
+        if _pat.search(joined) and not _pat.search(text):
+            return joined
+    return text
 
 
 def _unmask_invisible_secret_words(text):

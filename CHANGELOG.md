@@ -30,7 +30,7 @@ _Nothing yet._
 **This release is about the difference between a tool that works and a tool that can show you it
 worked.** Four pages of your own numbers, a doctor that says whether the install is actually wired
 up, and a corpus of a hundred ways a context tool can cost the person who installed it — which is
-how six of the fixes below were found.
+how five of the six fixes below were found; the sixth was reported by somebody using it.
 
 ### You can now see what it cost, on your own numbers
 
