@@ -194,7 +194,15 @@ attached to this release.
 
 ### Verification
 
-VERIFICATION_TOTALS_PENDING
+```
+5847/5847 checks passed, 4 block(s) skipped on this platform
+```
+
+Quoted from the run on the tagged code, not remembered. The public CI matrix — Ubuntu, macOS and
+Windows on Python 3.8 and 3.13 — is green on the same commit (`5485/5485` on its Ubuntu 3.13 leg),
+and the suite was also run from a checkout with no development workspace above it (`5484/5484`),
+which is what anybody cloning the repository gets. The three differ only in how many blocks each
+one can reach: a bare checkout skips 81 that read a workspace, and CI skips the same 81.
 
 The suite covers known regressions, malformed and hostile input, platform-specific behaviour,
 research-derived edge cases and adversarial security fixtures. It is not a claim that this package
