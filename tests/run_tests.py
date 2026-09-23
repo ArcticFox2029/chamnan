@@ -33986,12 +33986,32 @@ _ws_src172 = (ROOT / "lib" / "workspace.py").read_text(encoding="utf-8", errors=
 _tree172 = _ast172s.parse(_ws_src172)
 # The population is derived: every function whose job is the swap, found by what it calls, never
 # by a name kept here.
+def _dotted172(node):
+    """`os.replace` from the AST of a call's callee, on any Python this package declares."""
+    parts = []
+    while isinstance(node, _ast172s.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, _ast172s.Name):
+        parts.append(node.id)
+    elif parts:
+        parts.append("?")
+    return ".".join(reversed(parts))
+
+
 _swappers172 = []
 for _fn172 in _ast172s.walk(_tree172):
     if not isinstance(_fn172, (_ast172s.FunctionDef, _ast172s.AsyncFunctionDef)):
         continue
-    _calls172 = {_ast172s.unparse(_c172.func) for _c172 in _ast172s.walk(_fn172)
+    # 🐛 [2026-09-24] (self-measured) The `ast` unparser arrived in 3.9 and chamnan declares 3.8 —
+    # the rule this suite enforces on everything it ships, broken inside the suite itself, and
+    # the check that enforces it named this file. The name is not spelled out above on purpose:
+    # a comment recording the removal of a forbidden literal, written with that literal in it,
+    # is matched by the very check it is explaining. This repository has paid for that once.
+    # Only a dotted callee name is wanted here, which is four lines that run anywhere.
+    _calls172 = {_dotted172(_c172.func) for _c172 in _ast172s.walk(_fn172)
                  if isinstance(_c172, _ast172s.Call)}
+    _calls172.discard("")
     if {"os.replace"} & _calls172 or any(c.endswith(".rename") for c in _calls172):
         _swappers172.append((_fn172.name, _calls172))
 

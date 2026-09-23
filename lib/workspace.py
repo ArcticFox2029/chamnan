@@ -768,6 +768,14 @@ SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.
                     # hundred of those is a small file and an age sweep deleting it would answer
                     # "that never happened" to the one question it exists to answer.
                     "recovered.jsonl",
+                    # 🐛 [2026-09-24] (self-measured) The identical case to `recovered.jsonl` one
+                    # line above, and missed the same way: `commit_guard.jsonl` is capped at 500
+                    # records at its own call site — `append_jsonl(root, …, 500)` — and was simply
+                    # never declared here, so the check counted it as neither self-pruning nor
+                    # disposable. The comment above records that exact oversight being fixed for
+                    # one file; this is the next one along, which is this repository's own
+                    # commonest defect happening inside the note describing it.
+                    "commit_guard.jsonl",
                     # 🐛 [2026-09-10] `state-ages.json` records WHEN each STATE.md section last
                     # changed, which is the whole input to `state.age_out`. It lived in `logs/`
                     # and was not exempt, so the 7-day file sweep deleted it — while
@@ -1056,8 +1064,13 @@ def scratch_dir(root, name):
     d = base / "logs" / name
     d.mkdir(parents=True, exist_ok=True)
     try:
-        (d / SCRATCH_MARK).write_text("chamnan scratch; safe to delete when quiet\n",
-                                      encoding="utf-8")
+        # 🐛 [2026-09-24] (self-measured) The last hand-rolled `write_text` in shipped code, and
+        # the sweep asserts the SET rather than a list of names, which is how it stayed visible
+        # after every other site was converted. A plain write truncates on open: a reader arriving
+        # mid-write gets a short file and a crash leaves one behind. The content is forty-odd
+        # fixed bytes, so nothing was ever likely to go wrong here — and "unlikely" is the reason
+        # a site gets left out of a sweep and then outlives the reason it was safe.
+        atomic_write_text(d / SCRATCH_MARK, "chamnan scratch; safe to delete when quiet\n")
     except OSError:
         return None
     return d
