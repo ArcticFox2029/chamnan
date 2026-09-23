@@ -1,5 +1,7 @@
 """Reading markdown structure out of text that a person -- or an agent -- wrote freely.
 
+READS: .chamnan/logs/nudge/*.json via { at least 1
+
 Four modules in this package find their structure by scanning for lines that start with `#`:
 session records split on `##`, milestones and environments parse entries back out of one appended
 file, and memory demotes an entry's own headings before injecting it. Every one of them was a

@@ -37,6 +37,7 @@ own re-ask marks so the two numbers cannot drift apart.
 
 READS: .chamnan/skills/*.md via COVERS: within 1500 except README.md
 READS: .chamnan/skills/*.md via FIRST: within 1500 except README.md
+READS: .chamnan/logs/skill_pointer_nudge/*.json via { at least 1
 """
 
 import json

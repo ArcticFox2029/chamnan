@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """PreToolUse hook — say when a file about to be read is bulk with no reading value.
 
+READS: .chamnan/logs/long_read_nudge/*.json via { at least 1
+
 ENFORCES: memory/rules/the-local-model-reads-long-things-first.md — at the moment of the
 command, which is the only placement the evidence supports (R19: administrative controls rank
 fourth of five *because* they rely on people following rules).
