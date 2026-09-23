@@ -48455,6 +48455,68 @@ check("a resume with no gap field says nothing about handoff",
       _ho_ADVICE not in _ho_fire(0, expired=True))
 
 
+# ------------------------------------- and the half that makes it "not twice", said before it runs
+# 🎯 [owner 2026-09-23] Recording is not learning. This is the half that acts: at `PreToolUse`,
+# before the command runs, which is the only moment saying anything can change the outcome.
+#
+# 🔴 The key is at its TIGHTEST setting and that is the whole design. `commands.jsonl` has 6,389
+# rows and carries no failure signal, so there was no data to choose a key from. Of the two ways to
+# be wrong, one is recoverable: too tight says nothing and can be loosened once `failures.jsonl`
+# has a week in it, while too loose warns on healthy work until people stop reading it —
+# `skill_overlap.py` records that outcome as the reason a feature was dropped.
+import gotcha as _gt  # noqa: E402
+
+_gt_ws = Path(tempfile.mkdtemp(prefix="chamnan-gotcha-")) / "r"
+(_gt_ws / ".git").mkdir(parents=True)
+ws.ensure(_gt_ws)
+(_gt_ws / ".chamnan" / "logs").mkdir(parents=True, exist_ok=True)
+(_gt_ws / ".chamnan" / "logs" / "failures.jsonl").write_text("".join(
+    json.dumps(r) + "\n" for r in [
+        {"at": "2026-09-22T01:00:00Z", "tool": "Bash", "subj": "pytest tests/", "err": "Exit code 1"},
+        {"at": "2026-09-22T02:00:00Z", "tool": "Bash", "subj": "pytest tests/", "err": "Exit code 1"},
+        {"at": "2026-09-22T03:00:00Z", "tool": "Bash", "subj": "npm test", "err": "Exit code 1"},
+        {"at": "2026-09-22T04:00:00Z", "tool": "Bash", "subj": "pytest tests/", "err": "Exit code 2"},
+    ]), encoding="utf-8")
+
+check("TWO IDENTICAL FAILURES ARE A REPEAT", 
+      _gt.about_to_repeat(_gt_ws / ".chamnan", "Bash", "pytest tests/")[0] == 2,
+      saw=_gt.about_to_repeat(_gt_ws / ".chamnan", "Bash", "pytest tests/"))
+check("...while ONE is how anybody learns what the flags are, and says nothing",
+      _gt.about_to_repeat(_gt_ws / ".chamnan", "Bash", "npm test") is None)
+# The same command failing a DIFFERENT way is a different problem. Grouping them would be the
+# loosening this design refuses to do without data.
+check("...and the same command with a different error is not the same failure",
+      len({k for k in _gt.repeats(_gt_ws / ".chamnan")}) == 1,
+      saw=sorted(k.replace("\x00", " | ") for k in _gt.repeats(_gt_ws / ".chamnan")))
+check("a row that cannot be keyed is skipped, not grouped with every other unreadable row",
+      _gt.key({"tool": "Bash"}) == "" and _gt.key(None) == "")
+
+
+def _gt_notice(cmd):
+    _pl = {"cwd": str(_gt_ws), "hook_event_name": "PreToolUse", "tool_name": "Bash",
+           "tool_input": {"command": cmd}, "session_id": "s-gotcha"}
+    _out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_skill_pointer.py")],
+                          input=json.dumps(_pl), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
+    for _l in _out.splitlines():
+        try:
+            return json.loads(_l)["hookSpecificOutput"].get("additionalContext", "")
+        except Exception:      # noqa: BLE001 — other lines are other notices
+            continue
+    return ""
+
+
+_gt_said = _gt_notice("pytest tests/")
+check("THE SESSION IS TOLD BEFORE THE COMMAND RUNS, NOT AFTER",
+      "failed here 2 times" in _gt_said, saw=_gt_said[:200])
+check("...and it is told what the error was, so it can act on it",
+      "Exit code 1" in _gt_said, saw=_gt_said[:200])
+check("...and nothing is blocked", "nothing is blocked" in _gt_said, saw=_gt_said[:200])
+check("...while a command with no history here is not interrupted",
+      "failed here" not in _gt_notice("pytest other/"), saw=_gt_notice("pytest other/")[:160])
+_rmtree(_gt_ws.parent, ignore_errors=True)
+
+
 # ---------------------------------- a mistake nobody had to type in, so a new workspace has some
 # 🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ" — then the correction that
 # decided the design: the system has to work for somebody else's repository and somebody else's

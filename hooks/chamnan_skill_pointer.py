@@ -370,6 +370,36 @@ def _surgery_belongs_to_the_operator(payload):
     return 0
 
 
+def _repeat_notice(payload):
+    """"this failed here before" — or "" almost every time, which is the point.
+
+    Never blocks and never rewrites the command: `chamnan_agent_result.py` states the rule for
+    every hook in this package, and a notice that changes what runs is a decision belonging to the
+    person typing it.
+    """
+    try:
+        import gotcha
+        import mdblock
+        import redact
+        root = ws.hook_root(payload)
+        wsdir = ws.workspace(root) if root else None
+        if wsdir is None or not wsdir.is_dir():
+            return ""
+        tool = payload.get("tool_name") or ""
+        inp = payload.get("tool_input") or {}
+        subj = (inp.get("command") or inp.get("file_path") or inp.get("path") or "") \
+            if isinstance(inp, dict) else ""
+        hit = gotcha.about_to_repeat(wsdir, tool, redact.scrub(str(subj))[:300])
+        if not hit:
+            return ""
+        count, err, when = hit
+        return (f"chamnan: this exact command has failed here {count} times, most recently "
+                f"{str(when)[:10]} — `{mdblock.as_quoted(err, 120)}`. Same command, same error; "
+                f"nothing is blocked.")
+    except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        return ""
+
+
 def _long_read_notice(payload):
     """The bulk-read notice, from the module that owns it. "" when it has nothing to say."""
     import io as _io
@@ -494,6 +524,18 @@ def main():
     # does both jobs by CALLING the other module rather than copying it: the long-read notice lives
     # in `chamnan_bulk_read_notice.py` and stays there, which is the difference between reusing a
     # guard and forking one.
+    # 🎯 [owner 2026-09-23] "ไม่ทำผิดซ้ำๆ" — said BEFORE the command runs, which is the only moment
+    # it can change anything. `chamnan_tool_failed.py` does the remembering; `lib/gotcha.py` decides
+    # what counts as a repeat, and its key is at its tightest setting on purpose: the same tool, the
+    # same command, the same error, twice. A first failure says nothing, because a first failure is
+    # how anybody learns what the flags are.
+    _again = _repeat_notice(payload)
+    if _again:
+        _emit(_again)
+        # Deliberately NOT a return: this is information about a command that is about to run, not
+        # a reason to stop evaluating it. The pointer below may still have something to say, and
+        # `_emit` already carries the one-notice-per-call coordination.
+
     _long = _long_read_notice(payload)
     if _long:
         _emit(_long)

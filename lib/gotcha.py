@@ -1,0 +1,83 @@
+"""Has this exact thing failed here before? — read from what failed, not from what anybody wrote.
+
+🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ". `chamnan_tool_failed.py`
+does the remembering; this is the part that acts on it.
+
+**The key starts at its TIGHTEST setting, deliberately.** What counts as "the same failure" cannot
+be chosen from data that does not exist yet — `commands.jsonl` has 6,389 rows and carries no
+failure signal at all, so there was nothing to learn a key from. Between the two ways of being
+wrong, one is recoverable and one is not: a key too tight says nothing and can be loosened when
+`failures.jsonl` has a week in it, while a key too loose warns on healthy work until people stop
+reading it, and `skill_overlap.py` has that outcome recorded as the reason a feature was dropped.
+
+So the key is the whole subject, exactly: the same tool, the same command or path, and the same
+first line of error. Two different `pytest` failures do not match each other. That will miss
+repeats it could have caught, and missing them is the intended trade.
+
+**The first failure is not a gotcha.** Everybody's first attempt at a command can fail; that is how
+people find out what the flags are. Only a SECOND identical failure is a pattern, which is also
+what makes this cheap: nothing is ever said about work that went wrong once.
+"""
+import json
+
+LOG = "logs/failures.jsonl"
+# How many identical failures before this is worth saying out loud. Two, because one is learning.
+REPEATS = 2
+# Rows past this are not read. A failure from six months ago is not what somebody is about to
+# repeat, and the file is bounded at 4,000 records anyway.
+WINDOW = 1_000
+
+
+def key(row):
+    """The tightest identity a repeat can have: same tool, same subject, same first error line.
+
+    Returns "" for a row that cannot be keyed, and a caller must skip those rather than group
+    them together — an empty key would make every unreadable row a repeat of every other.
+    """
+    if not isinstance(row, dict):
+        return ""
+    tool, subj, err = row.get("tool"), row.get("subj"), row.get("err")
+    if not tool or not subj:
+        return ""
+    return "\x00".join((str(tool), str(subj), str(err or "")))
+
+
+def repeats(wsdir, minimum=REPEATS):
+    """{key: (count, subject, error, when)} for failures seen at least `minimum` times."""
+    seen = {}
+    try:
+        with (wsdir / LOG).open(encoding="utf-8-sig", errors="replace") as fh:
+            rows = fh.readlines()[-WINDOW:]
+    except OSError:
+        return {}
+    for line in rows:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        k = key(row)
+        if not k:
+            continue
+        count, _s, _e, _w = seen.get(k, (0, "", "", ""))
+        seen[k] = (count + 1, row.get("subj", ""), row.get("err", ""), row.get("at", ""))
+    return {k: v for k, v in seen.items() if v[0] >= minimum}
+
+
+def about_to_repeat(wsdir, tool, subject):
+    """(count, error, when) when this exact tool and subject has already failed `REPEATS` times.
+
+    None otherwise, which is the answer almost every time — a session runs hundreds of commands and
+    this is about the handful somebody is going back to after it already failed twice.
+
+    The ERROR is not part of what the caller knows before running, so the lookup is by tool and
+    subject, and the recorded error comes back with the answer. That is the asymmetry that makes
+    this usable at all: the key includes the error, but the question cannot.
+    """
+    if not tool or not subject:
+        return None
+    best = None
+    for k, (count, subj, err, when) in repeats(wsdir).items():
+        if k.split("\x00")[0] == str(tool) and subj == str(subject):
+            if best is None or count > best[0]:
+                best = (count, err, when)
+    return best

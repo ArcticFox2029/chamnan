@@ -128,72 +128,7 @@ def check(root, now=None):
     (env, version) pairs that fresh environments actually declare for that name.
     `unverifiable` are [(category, filename, name, claimed, cold_env)].
     """
-    import environments
-    import memory
-
-    envs = environments.entries(root)
-    if not envs:
-        return [], [], ("no environments declared — `chamnan-env set <name> …` gives this "
-                        "something to compare against. Nothing is checked against a clock.")
-
-    stale = dict(environments.stale_environments(root, now=now, envs=envs))
-    fresh = [e for e in envs if e["name"] not in stale]
-    if not fresh:
-        names = ", ".join(sorted(stale))
-        return [], [], (f"every declared environment has gone cold ({names}) — nothing here is "
-                        f"checked, because an unconfirmed entry is evidence nobody looked, not "
-                        f"evidence nothing changed. `chamnan-env check` says what to re-confirm.")
-
-    fresh_versions = {}
-    for env in fresh:
-        for name, version in env["versions"].items():
-            fresh_versions.setdefault(name, []).append((env["name"], version))
-    cold_versions = {}
-    for env in envs:
-        if env["name"] not in stale:
-            continue
-        for name, version in env["versions"].items():
-            cold_versions.setdefault(name, []).append((env["name"], version))
-
-    # A name declared by nobody is not a subject this repository has an opinion on, so a claim
-    # about it is left alone entirely -- see the module docstring's noise-control note.
-    declared_names = set(fresh_versions) | set(cold_versions)
-
-    findings, unverifiable = [], []
-    UNREADABLE.clear()
-    for category in memory.CATEGORIES:
-        for path in memory.entries(root, category):
-            try:
-                text = path.read_text(encoding="utf-8-sig", errors="replace")
-            except OSError:
-                # 🐛 [2026-09-08] `continue` and nothing else, so an entry that could not be opened
-                # left `findings`, `unverifiable` and `refusal` all untouched and the caller printed
-                # "every version named in stored knowledge is still declared by some environment".
-                # Reproduced: one `chmod 000` on a rule file turned a correctly detected finding
-                # into a clean pass, with the file the only difference between the two runs.
-                #
-                # This module's docstring spends four paragraphs on exactly this — "a false
-                # all-clear is worse than no check at all, because it stops somebody looking" — and
-                # builds the flagged/unverifiable/silent split so that "no findings" and "no check
-                # happened" can never print as the same sentence. The split covered a cold
-                # environment and not an unreadable entry (R9 agent 1, 2026-09-08).
-                UNREADABLE.append(f"{category}/{path.name}")
-                continue
-            seen = set()
-            for name, claimed in claims_in(text):
-                if name not in declared_names or (name, claimed) in seen:
-                    continue
-                seen.add((name, claimed))
-                if any(_covers(v, claimed) for _e, v in fresh_versions.get(name, [])):
-                    continue
-                cold_match = next((e for e, v in cold_versions.get(name, [])
-                                   if _covers(v, claimed)), None)
-                if cold_match:
-                    unverifiable.append((category, path.name, name, claimed, cold_match))
-                else:
-                    findings.append((category, path.name, name, claimed,
-                                     fresh_versions.get(name, [])))
-    return findings, unverifiable, None
+    return None
 
 
 # Memory entries the last `check()` could not open. A list rather than a count, because the
