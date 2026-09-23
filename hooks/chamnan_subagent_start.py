@@ -82,7 +82,7 @@ FIRINGS = "logs/subagent_start.jsonl"
 MAX_FIRINGS = 400
 
 
-def _record_a_firing(root, agent_type, size, outcome="delivered"):
+def _record_a_firing(root, agent_type, size, outcome="delivered", costly=None, session=None):
     """Append one line saying this hook ran, and what came of it.
 
     🐛 `outcome` is here because the first version wrote the line AFTER four early returns — a fork
@@ -103,9 +103,23 @@ def _record_a_firing(root, agent_type, size, outcome="delivered"):
         if not path.parent.parent.is_dir():
             return
         path.parent.mkdir(parents=True, exist_ok=True)
+        # 🎯 [1.31 queue item 3, 2026-09-23] Three fields a second reader asked for, because
+        # `source_opened` alone cannot be read: some agents SHOULD open a file, being about to edit
+        # it. Two of the three are observable here and are written from now on, since history
+        # cannot be made retroactively:
+        #   `pointer_triggered` — did this agent receive the block at all, which is the denominator
+        #     for every later question about whether being pointed at something changed anything;
+        #   `costly_named`     — the large files its brief named, which is what it will be charged
+        #     for if it opens them whole.
+        # The third, `before_or_after_first_task_action`, needs per-tool-call ordering inside the
+        # SUBAGENT's own session and is not observable from here; `session` is recorded so the two
+        # can be joined when it is.
         entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                  "agent_type": _md.one_line(agent_type or "")[:60], "bytes": size,
-                 "outcome": outcome}
+                 "outcome": outcome,
+                 "pointer_triggered": outcome == "delivered" and size > 0,
+                 "costly_named": costly or [],
+                 "session": (session or "")[:40]}
 
         # 🐛 [2026-09-07] Read the last MAX_FIRINGS-1 lines, append one, write the whole file back —
         # unlocked. This hook fires once per subagent, and subagents are dispatched in BATCHES: ten
@@ -241,6 +255,7 @@ def _block(root):
 # was. This is said INTO THE AGENT'S OWN CONTEXT, at the one moment it can still choose a range —
 # the parent cannot be warned, because by then the Agent call is already made.
 BIG_READ_BYTES = 200_000
+_COSTLY_NAMED = []
 _PATH_IN_PROMPT = re.compile(r"(?:^|[\s(`'\"])([\w./-]+\.(?:py|md|js|ts|json|sh|txt|jsonl))")
 
 
@@ -260,6 +275,8 @@ def _expensive_reads(payload, root):
             big.append((raw, size))
     if not big:
         return ""
+    global _COSTLY_NAMED
+    _COSTLY_NAMED = [r for r, _s in big[:3]]
     named = " · ".join(f"`{r}` {s // 1024:,} KB" for r, s in big[:3])
     return ("### What is expensive to open here\n"
             f"{named}. Opening one of these whole is the largest cost of this dispatch, and the "
@@ -287,18 +304,18 @@ def main():
     if (_agent_type or "").lower() == "fork":
         # A fork is a firing, and one that produces nothing on purpose: it already carries the
         # parent's whole conversation.
-        _record_a_firing(root, _agent_type, 0, "fork")
+        _record_a_firing(root, _agent_type, 0, "fork", session=payload.get("session_id"))
         return 0
     # `find_root` returns the directory it was given when nothing above it is a repository, so it
     # is never None and this gate spent its first evening unreachable — asking the wrong question of
     # a function that cannot answer it. What "no workspace" means is that the root it settled on has
     # none, which is a thing that can actually be checked.
     if not (root / ws.WORKSPACE_DIRNAME).is_dir():
-        _record_a_firing(root, _agent_type, 0, "no-workspace")
+        _record_a_firing(root, _agent_type, 0, "no-workspace", session=payload.get("session_id"))
         return 0
     # Default-on, switchable off in .chamnan/config.json like every other section.
     if not ws.enabled("subagent_pointer", root):
-        _record_a_firing(root, _agent_type, 0, "disabled")
+        _record_a_firing(root, _agent_type, 0, "disabled", session=payload.get("session_id"))
         return 0
 
     text = _block(Path(root))
@@ -306,7 +323,7 @@ def main():
     if text and _costly:
         text = text + "\n" + _costly
     if not text:
-        _record_a_firing(root, _agent_type, 0, "nothing-to-point-at")
+        _record_a_firing(root, _agent_type, 0, "nothing-to-point-at", session=payload.get("session_id"))
         return 0
     # Scrubbed at the one place it leaves the process, as chamnan_file_pointer.py does: a rule
     # TITLE is repository text, and a title has carried a live credential before.
@@ -329,7 +346,8 @@ def main():
     # worse than one imprecise word with a note beside it. Nothing reads this field and treats it as
     # proof -- only the retention list names the file -- so this is a future reader's trap, and the
     # smallest fix that answers it is this sentence. Read `delivered` as `emitted`.
-    _record_a_firing(root, _agent_type, len(text.encode()), "delivered")
+    _record_a_firing(root, _agent_type, len(text.encode()), "delivered",
+                     costly=_COSTLY_NAMED, session=payload.get("session_id"))
     # \U0001f41b [2026-09-07] The `print` shadow at the top of this file DOES apply
     # `for_a_terminal` -- but to the argument it is given, which here is the finished JSON string.
     # `json.dumps` has already escaped every smuggled code point to `\uXXXX` text by then, so the

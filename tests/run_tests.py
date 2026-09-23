@@ -48774,6 +48774,50 @@ _rmtree(_cn_ws, ignore_errors=True)
 
 
 
+
+# ---------------------------------- the fields a later question will need, written now
+# 🎯 [1.31 queue item 3, 2026-09-23] A second reader's correction: `source_opened` alone cannot be
+# read, because some agents SHOULD open a file — they are about to edit it. The fields that make it
+# readable have to be written BEFORE the question is asked, since history cannot be made
+# retroactively, which is why this item sits first in the queue rather than last.
+import importlib.util as _tel_ilu  # noqa: E402
+
+_tel_dir = Path(tempfile.mkdtemp(prefix="chamnan-tel-")) / "repo"
+(_tel_dir / ".chamnan" / "logs").mkdir(parents=True)
+(_tel_dir / ".git").mkdir()
+(_tel_dir / ".chamnan" / "MAP.md").write_text("# Architecture map\n\n## `a.py`\n- `f()` — does a\n",
+                                              encoding="utf-8")
+_tel_big = _tel_dir / "huge.py"
+_tel_big.write_text("# x\n" * 60_000, encoding="utf-8")
+_tel_out = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+    input=json.dumps({"agent_type": "general-purpose", "cwd": str(_tel_dir),
+                      "session_id": "tel-probe", "prompt": "read huge.py and report"}),
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+_tel_log = _tel_dir / ".chamnan" / "logs" / "subagent_start.jsonl"
+_tel_row = {}
+if _tel_log.is_file():
+    for _l in _tel_log.read_text(encoding="utf-8").splitlines():
+        try:
+            _tel_row = json.loads(_l)
+        except Exception:      # noqa: BLE001
+            continue
+check("THE FIRING RECORD SAYS WHETHER THE AGENT WAS POINTED AT ANYTHING AT ALL",
+      "pointer_triggered" in _tel_row, saw=sorted(_tel_row))
+# 🔴 The denominator. Without it, "the agent opened the file anyway" cannot be told from "the agent
+# was never handed a block", and every later ratio is computed over the wrong population.
+check("...and it names the expensive files the brief named, which is what it will be charged for",
+      _tel_row.get("costly_named") == ["huge.py"], saw=_tel_row.get("costly_named"))
+check("...and carries the session, so the subagent's own tool order can be joined to it later",
+      _tel_row.get("session") == "tel-probe", saw=_tel_row.get("session"))
+# Every field written is named in the source that writes it — the same contract the block record
+# is held to two thousand lines up.
+_tel_src = (ROOT / "hooks" / "chamnan_subagent_start.py").read_text(encoding="utf-8")
+_tel_undoc = [k for k in ("pointer_triggered", "costly_named", "session")
+              if _tel_src.count(k) < 2]
+check("...and each new field is documented where it is written", _tel_undoc == [], saw=_tel_undoc)
+_rmtree(_tel_dir.parent, ignore_errors=True)
+
 # ---------------------------------- an edit that lands in the middle of a running program
 # ENFORCES: memory/rules/the-full-gate-runs-twice.md
 # 🐛 [2026-09-23] Twice in one hour, the second an hour AFTER the first was recorded as a lesson
