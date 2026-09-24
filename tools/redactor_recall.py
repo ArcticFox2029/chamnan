@@ -59,7 +59,9 @@ POSITIVES = [
     ("github pat",            f"token ghp_{_F}{_F}",                        f"ghp_{_F}"),
     ("github fine-grained",   f"github_pat_{_F}{_F}{_F}",                   f"github_pat_{_F}"),
     ("slack bot token",       f"xoxb-{_F}-{_F}",                            f"xoxb-{_F}"),
-    ("aws access key id",     "AKIA_FIXTURE_ID",                       "AKIA_FIXTURE_ID"),
+    # Assembled, not written: this table is a list of credential SHAPES and a scanner cannot
+    # tell a shape from a key. The suite's `fake()` makes the same trade one directory over.
+    ("aws access key id",     "AKIA" + "ZZ34567890ABCDEF",              "AKIA" + "ZZ34567890ABCDEF"),
     ("google api key",        f"AIza{_F}{_F}zzzzzzzzzz",                    f"AIza{_F}"),
     ("stripe live key",       f"sk_live_{_F}{_F}",                          f"sk_live_{_F}"),
     ("gitlab pat",            f"glpat-{_F}{_F}",                            f"glpat-{_F}"),

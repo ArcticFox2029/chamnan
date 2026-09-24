@@ -255,6 +255,15 @@ def fake(*parts):
     return "".join(parts)
 
 
+# 🐛 [2026-09-24] (self-measured) Seventeen fixtures wrote this literal out while three used
+# `fake()` — the helper that exists for exactly this, whose own docstring records push
+# protection blocking this repository once already. The same seventeen are in the tree v1.30.0
+# put on GitHub, so nothing about them is new; GitHub's setting changed and the rule that was
+# adopted in three places and stopped is what let it matter. Assembled once here, referenced
+# everywhere, so a scanner has nothing to match and every test works on the identical string.
+AKIA_FIXTURE = fake("AKIA", "IOSFODNN7EXAMPLE")
+AKIA_ALL_Z = fake("AKIA", "Z" * 16)
+
 PASSED = 0
 FAILED = []
 
@@ -3374,10 +3383,10 @@ def _bash(command, session_id):
 # reader and an unguarded one sitting two hooks apart.
 envs.upsert(aw_root, "leaky",
             envs.render_entry("leaky", "somewhere",
-                              "", ["deploy key AKIA_FIXTURE_ID is required"], "2026-08-27"))
+                              "", [f"deploy key {AKIA_FIXTURE} is required"], "2026-08-27"))
 _leaky = run_scratch_watch(_bash("kubectl --context leaky get pods", "awleak"), aw_root)
 check("THE ENVIRONMENT NOTICE REDACTS A SECRET IN A DECLARED CONSTRAINT",
-      "AKIA_FIXTURE_ID" not in _leaky and "REDACTED" in _leaky)
+      AKIA_FIXTURE not in _leaky and "REDACTED" in _leaky)
 check("...and still says which environment it is about", "`leaky`" in _leaky)
 
 first = run_scratch_watch(_bash("kubectl --context production get pods", "aw1"), aw_root)
@@ -5225,7 +5234,7 @@ _pk = Path(tempfile.mkdtemp()) / "repo"
 ws.ensure(_pk)
 (_pk / ".chamnan" / "memory" / "lessons").mkdir(parents=True, exist_ok=True)
 (_pk / ".chamnan" / "memory" / "lessons" / "deploy.md").write_text(
-    "# Rotate AKIA_FIXTURE_ID before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
+    f"# Rotate {AKIA_FIXTURE} before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
 (_pk / "src").mkdir(exist_ok=True)
 (_pk / "src" / "deploy.py").write_text("x = 1\n", encoding="utf-8")
 _ptr = subprocess.run(
@@ -5235,7 +5244,7 @@ _ptr = subprocess.run(
                       "cwd": str(_pk)}),
     capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_pk)).stdout
 check("THE FILE POINTER REDACTS A SECRET IN A STORED TITLE",
-      "AKIA_FIXTURE_ID" not in _ptr and "REDACTED" in _ptr)
+      AKIA_FIXTURE not in _ptr and "REDACTED" in _ptr)
 check("...and still points at the file that records it",
       "memory/lessons/deploy.md" in _ptr)
 _rmtree(_pk.parent, ignore_errors=True)
@@ -6247,12 +6256,12 @@ check("a malformed entry does not take the section with it",
 # an agent runs, so its stdout reaches a session's context exactly like the injected block does.
 (_tw / ".chamnan" / "tools" / "leaky.py").write_text("# a real tool\n", encoding="utf-8")
 _idx = json.loads((_tw / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))
-_idx.append({"name": "leaky.py", "desc": "deploys with AKIA_FIXTURE_ID embedded", "runs": 0})
+_idx.append({"name": "leaky.py", "desc": f"deploys with {AKIA_FIXTURE} embedded", "runs": 0})
 (_tw / ".chamnan" / "tools" / "index.json").write_text(json.dumps(_idx), encoding="utf-8")
 _list = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_tw)).stdout
 check("--list REDACTS A SECRET IN A TOOL DESCRIPTION, like the hook already does",
-      "AKIA_FIXTURE_ID" not in _list and "REDACTED" in _list)
+      AKIA_FIXTURE not in _list and "REDACTED" in _list)
 check("...and never prints a path-shaped name as if it were a filename",
       "escape.sh" not in _list and "unusable name" in _list)
 check("...but still SHOWS the broken rows, because this is the command that cleans them up",
@@ -10604,9 +10613,9 @@ if not _NEWLINE_IN_NAME_OK:
     print("      (the newline half is not run here: Windows rejects a newline in a filename, "
           "so the escape it defends against cannot be constructed on this platform)")
 # as_quoted makes a value inert, not non-secret; its own docstring says the caller must still scrub.
-_sec = _notice_for("dump_aws_secret_key=AKIA_FIXTURE_ID.min.js")
+_sec = _notice_for(f"dump_aws_secret_key={AKIA_FIXTURE}.min.js")
 check("...and a secret-shaped filename is redacted, because the finished note is scrubbed",
-      "AKIA_FIXTURE_ID" not in _sec and "REDACTED" in _sec)
+      AKIA_FIXTURE not in _sec and "REDACTED" in _sec)
 # The fix must not start mangling ordinary names, which is every real use of this hook.
 _ord = _quoted_name(_notice_for("bundle.min.js"))
 check("...while an ordinary filename is passed through untouched", _ord == "bundle.min.js")
@@ -13574,7 +13583,8 @@ check("...and the file outside the workspace is untouched", _outside.is_file())
 check("...and the refusal says what a tool name is", "plain filename" in _dem.stderr)
 _rmtree(_demd.parent, ignore_errors=True)
 
-check("redact.emit scrubs a string argument", "AKIA" not in redact.scrub("k AKIA_FIXTURE_ID"))
+check("redact.emit scrubs a string argument",
+      "AKIA" not in redact.scrub(f"k {AKIA_FIXTURE}"))
 check("...and leaves a non-string alone — a caller printing an int means it",
       redact.emit.__doc__ is not None and "Non-string" in redact.emit.__doc__)
 
@@ -19367,7 +19377,7 @@ for _rd_text, _rd_should, _rd_why in (
     # cases below them; what changed is that a credential-shaped VALUE now overrides a reassuring
     # name. Both halves are in this table because fixing one direction alone is how this rule has
     # gone wrong every previous time.
-    ('api_secret_id = "AKIA_FIXTURE_ID1234"', True, "an `_id` tail does not make it a name"),
+    (f'api_secret_id = "{AKIA_FIXTURE}1234"', True, "an `_id` tail does not make it a name"),
     ('db_password_type = "tr0ub4dor3horsebattery"', True, "nor a `_type` tail"),
     ('oauth_client_secret_name = "sk-live-9f2a8b7c6d5e4f3a"', True, "nor a `_name` tail"),
     ('secret_name = "the-name-of-my-secret"', False, "but a name really is a name"),
@@ -22375,7 +22385,7 @@ check("...and a file with no trailing newline does not grow one",
 # 🐛 [2026-09-08] Three copies of one warning went in together. The skills one wrapped its filenames
 # in `redact.scrub`; the threads and sessions ones appended theirs AFTER the surrounding text had
 # already been scrubbed, so the names went into the injected block untouched. A filename is written
-# by whoever wrote the repository, so `AKIA_FIXTURE_ID.md` rode in whole (R7 agent 2, 2026-09-06).
+# by whoever wrote the repository, so a key-shaped `.md` NAME rode in whole (R7 agent 2, 2026-09-06).
 #
 # Checked by DRIVING every store that can carry a filename into the block, not by reading the two
 # lines that were wrong. Three identical features and one of them correct is exactly the shape that
@@ -22386,7 +22396,7 @@ _leak_root = Path(tempfile.mkdtemp(prefix="chamnan-fnleak-")) / "repo"
 subprocess.run(["git", "init", "-q", str(_leak_root)], capture_output=True)
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_leak_root),
                capture_output=True)
-_KEYLIKE = "AKIA_FIXTURE_ID"
+_KEYLIKE = AKIA_FIXTURE
 _ws_leak = _leak_root / ".chamnan"
 for _sub, _fname, _body in (
         ("skills", f"{_KEYLIKE}.md", "# A skill\n\nordinary text.\n"),
@@ -22605,7 +22615,7 @@ for _dc_label, _dc_text, _dc_secret in (
         ("comma", "username,password\nadmin,Hunter2Password!\n", "Hunter2Password!"),
         ("quoted comma", 'user,password\n"admin","Hunter2Password!"\n', "Hunter2Password!"),
         ("semicolon", "user;password;role\nadmin;Hunter2Password!;root\n", "Hunter2Password!"),
-        ("tab", "user\tapi_key\nadmin\tAKIA_FIXTURE_ID\n", "AKIA_FIXTURE_ID"),
+        ("tab", f"user\tapi_key\nadmin\t{AKIA_FIXTURE}\n", AKIA_FIXTURE),
         ("a markdown table", "| user | password |\n| admin | Hunter2Password! |\n",
          "Hunter2Password!"),
         ("every row, not only the first", "user,password\na,pw1\nb,pw2\nc,pw3\n", "pw3")):
@@ -22818,7 +22828,7 @@ _ws_root = Path(tempfile.mkdtemp(prefix="chamnan_writescrub_"))
 subprocess.run(["git", "init", "-q"], cwd=_ws_root, check=True)
 (_ws_root / "app.py").write_text("x = 1\n", encoding="utf-8")
 ws.ensure(str(_ws_root))
-_WS_SECRET = "AKIA_FIXTURE_ID"
+_WS_SECRET = AKIA_FIXTURE
 
 timeline.create(str(_ws_root), "Deploy notes", "2026-09-08")
 _tl_path = timeline.append(str(_ws_root), "deploy-notes", "2026-09-08",
@@ -48136,7 +48146,7 @@ try:
 except (OSError, NotImplementedError, AttributeError):
     _t_can_link95 = False          # Windows without developer mode; the property still holds there
 (_t_ws95 / "memory" / "rules" / "inline.md").write_text(
-    "# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY=AKIA_FIXTURE_ID\n",
+    f"# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY={AKIA_ALL_Z}\n",
     encoding="utf-8")
 (_t_ws95 / "skills" / "README.md").write_text(
     "# Skills\n\nThis folder is an index OF the skills, not a skill.\n", encoding="utf-8")
@@ -48156,7 +48166,7 @@ else:
 # the written form is a question the index can never answer yes to — which is how the first version
 # of this check passed with the scrub deleted.
 check("...and a credential written INSIDE a store is scrubbed before the index is persisted",
-      "akiazzzzzzzzzzzzzzzz" not in _t_blob95.lower() and "REDACTED" in _t_blob95,
+      AKIA_ALL_Z.lower() not in _t_blob95.lower() and "REDACTED" in _t_blob95,
       saw="the index is a file on disk and `mapper.py` scrubs for `MAP.md` on the same grounds")
 
 _t_readmes95 = [e for e in _t_five95["entries"] if e["path"].endswith("README.md")]
@@ -49180,7 +49190,7 @@ _ph_real = {
     "bare": "API_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYzz",
     "quoted": 'password = "tr0ub4dor-0123456789abcdefghij"',
     "rocket": "'api_key' => 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLE'",
-    "flag": "--api-key AKIA_FIXTURE_ID1234",
+    "flag": f"--api-key {AKIA_FIXTURE}1234",
 }
 _ph_missed = [k for k, v in _ph_real.items() if _ph.PLACEHOLDER not in _ph.scrub(v)]
 check("...and a real value in the same carrier is still redacted", _ph_missed == [],

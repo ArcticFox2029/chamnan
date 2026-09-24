@@ -2336,7 +2336,7 @@ def main():
                     ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _thread_clash)
                 # 🐛 [2026-09-08] Appended AFTER `redact.scrub` had already run on `open_threads`,
                 # so the FILENAMES in this warning reached the block unscrubbed -- and a filename is
-                # attacker-controlled in a repository somebody else wrote. `AKIA_FIXTURE_ID.md`
+                # attacker-controlled in a repository somebody else wrote. `AKIA…EXAMPLE.md`
                 # went in whole. The skills version of this same warning, added in the same commit,
                 # scrubs correctly; two of the three copies did not. Found within the hour by the
                 # round pointed at what had just changed (R7 agent 2, 2026-09-08).

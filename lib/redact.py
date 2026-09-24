@@ -1356,7 +1356,7 @@ def _looks_like_a_credential_name(key, value=None):
         return True
     # 🐛 The tail decided alone, so ~50 ordinary endings — `id`, `type`, `name`, `field` — exempted
     # the value whatever it was. Reproduced end to end through `bin/chamnan-peek --find`:
-    # `api_secret_id = "AKIA_FIXTURE_ID1234"` and `db_password_type = "tr0ub4dor3horsebattery"`
+    # `api_secret_id = "AKIA…EXAMPLE1234"` and `db_password_type = "tr0ub4dor3horsebattery"`
     # printed in full (R12 agent 2, 2026-09-07). The exemption is still needed — `secret_name` and
     # `api_key_path` genuinely name things, and redacting those is the noise that gets a redactor
     # switched off — so the name still decides unless the VALUE settles it.
@@ -1544,7 +1544,7 @@ def _value_overrides_the_name(value, key=""):
         if _NOT_IN_ANY_NAME.search(_bare_value):
             return True
         # Otherwise fall through. The tests below already decide every case this one does not:
-        # `AKIA_FIXTURE_ID1234` and `tr0ub4dor3horsebattery` are long, mixed, letters AND
+        # `AKIA…EXAMPLE1234` and `tr0ub4dor3horsebattery` are long, mixed, letters AND
         # digits, with no separator doing the work; `the-name-of-my-secret` has four hyphens and
         # `/etc/keys/prod.pem` has a slash. Replacing them with this clause instead of adding to it
         # cost seven checks in the gate — the two the exemption is FOR kept working and the three it
@@ -1574,7 +1574,7 @@ def _names_a_mechanism(key, value=None):
 
     🐛 It read the key and nothing else, so ~50 ordinary tails — `name`, `id`, `type`, `field`,
     `path` — exempted the value whatever it was. Reproduced end to end through
-    `bin/chamnan-peek --find`: `api_secret_id = "AKIA_FIXTURE_ID1234"` and
+    `bin/chamnan-peek --find`: `api_secret_id = "AKIA…EXAMPLE1234"` and
     `db_password_type = "tr0ub4dor3horsebattery"` printed in full (R12 agent 2, 2026-09-07).
     
     The exemption is still right and still needed — `secret_name = "the-name-of-my-secret"` and
