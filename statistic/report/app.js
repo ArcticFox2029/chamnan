@@ -146,7 +146,7 @@ function setRates(next) { setPref("rates", JSON.stringify(next || {})); }
 function counterfactual() {
   const d = Number((S.hero || {}).counterfactual);
   const base = Number.isFinite(d) ? d : 0.25;
-  /* 🐛 [2026-09-23] `Number("")` is 0, and 0 passes every bound below — so an UNSET preference
+  /* 🐛 [2026-09-23] (self-measured) `Number("")` is 0, and 0 passes every bound below — so an UNSET preference
      read as "none of it would have been read anyway" and the headline showed 0% for every reader
      who had never opened page 4. An absent value has to be distinguished from a zero one. */
   const raw = pref("cf", null);

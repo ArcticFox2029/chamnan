@@ -259,7 +259,7 @@ M.append(panel("the block this plugin injects", "บล็อกที่ปล�
       stat(short(bl.tok || 0), "tokens", "โทเค็น"),
       stat(String((bl.sections || []).length), "sections", "หัวข้อ")),
     stackbar((bl.sections || []).map((s) => ({ label: s.title, value: s.bytes }))),
-    /* 🐛 [2026-09-23] Sliced BEFORE ranking, so "the six biggest sections" was really the six
+    /* 🐛 [2026-09-23] (self-measured) Sliced BEFORE ranking, so "the six biggest sections" was really the six
        the block happens to assemble first, re-sorted among themselves. Rank, then take six. */
     hbars((bl.sections || []).slice()
       .sort((a, b) => (b.bytes || 0) - (a.bytes || 0)).slice(0, 6).map((s, i) => ({
