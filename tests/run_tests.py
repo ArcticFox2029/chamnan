@@ -41727,6 +41727,56 @@ try:
           and "--resume 1111" not in _err_f.split("would run:")[-1], saw=_err_f)
 finally:
     _sh251.rmtree(_base251, ignore_errors=True)
+# ---- 252_the_dashboard_belongs_to_the_repository_it_reports_on.py
+# ------------------ the dashboard belongs to the repository it reports on, never to the plugin
+# 🐛 [2026-09-24] (owner) "chamnan คือต้นฉบับที่คนอื่นจะไปใช้ ดังนั้น dashboard ต้องคลีน เป็นของ repo
+# นั้นๆ". `build_statistic.py` found its repository as `PLUGIN.parent.parent` — true only on the
+# machine it was built on — and wrote every build's data INTO the plugin directory, which every
+# repository using the plugin shares and which is the tree that gets published. Driven for real:
+# build against a throwaway repository and look at where the bytes landed.
+import os as _os252, subprocess as _sp252, sys as _sys252, tempfile as _tf252   # noqa: E402
+import shutil as _sh252, pathlib as _pl252                                     # noqa: E402
+import workspace as _ws252                                                     # noqa: E402
+
+_BUILD252 = ROOT / "statistic" / "build_statistic.py"
+_repo252 = _pl252.Path(_tf252.mkdtemp(prefix="chamnan-dash-")) / "r"
+try:
+    (_repo252 / ".chamnan").mkdir(parents=True)
+    _sp252.run(["git", "init", "-q", str(_repo252)], capture_output=True)
+    _before252 = sorted(p.relative_to(ROOT) for p in (ROOT / "statistic").rglob("*")
+                        if "__pycache__" not in p.parts)
+    _out252 = _sp252.run([_sys252.executable, str(_BUILD252), "--root", str(_repo252)],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _after252 = sorted(p.relative_to(ROOT) for p in (ROOT / "statistic").rglob("*")
+                       if "__pycache__" not in p.parts)
+    _rep252 = _repo252 / ".chamnan" / "statistic" / "report"
+    check("A BUILD WRITES ITS DATA AND PAGES UNDER THE REPOSITORY'S OWN .chamnan/statistic/",
+          _out252.returncode == 0 and (_rep252 / "data.js").is_file()
+          and (_rep252 / "index.html").is_file()
+          and (_repo252 / ".chamnan" / "statistic" / "data" / "statistic.json").is_file(),
+          saw=_out252.stdout + _out252.stderr)
+    check("...AND WRITES NOTHING INTO THE PLUGIN'S OWN DIRECTORY",
+          _before252 == _after252
+          and not (ROOT / "statistic" / "data").exists()
+          and not (ROOT / "statistic" / "report" / "data.js").exists(),
+          saw=sorted(set(map(str, _after252)) - set(map(str, _before252))))
+    # The pages now sit inside the workspace, so the NEXT index must not describe them as source
+    # (found the first session after 1.31.1 was installed).
+    import mapper as _mapper252                                                # noqa: E402
+    _indexed252 = [str(f.get("path", "")) for f in _mapper252.scan(_repo252)]
+    check("...AND THE INDEX DOES NOT DESCRIBE THE DASHBOARD AS THE REPOSITORY'S SOURCE",
+          not any(".chamnan/statistic/" in _p for _p in _indexed252),
+          saw=[_p for _p in _indexed252 if "statistic" in _p])
+finally:
+    _sh252.rmtree(_repo252.parent, ignore_errors=True)
+
+check("the workspace's .gitignore keeps the dashboard out of every commit",
+      "statistic/" in _ws252.IGNORE_LINES)
+_src252 = _BUILD252.read_text(encoding="utf-8")
+# Built at runtime so this check does not match the text it forbids in its own source.
+_old252 = "PLUGIN.parent" + ".parent"
+check("the builder no longer guesses the repository from where the plugin is installed",
+      _old252 + "\n" not in _src252 and ("= " + _old252) not in _src252)
 # ---- 25_the_block_log_answers_what_it_records.py
 # ------------------------------------------- five fixes to blocklog, and no test behind any of them
 # 🐛 [2026-09-09] `check_coverage_audit.py` was written to answer the owner's "go back and find what
