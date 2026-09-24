@@ -240,6 +240,7 @@ def newest_session(repo, config_dir=None):
 HANDOFF_NAME = "handoff.md"
 HANDOFF_MESSAGES = 5
 HANDOFF_MESSAGE_CHARS = 600
+HANDOFF_CHANGED_SHOWN = 8   # files named when the repository moved; the rest is a count
 
 # English on purpose and stated as a task, so the first turn of the new session does the reading
 # instead of waiting for someone to ask. The chat language is the repository's CLAUDE.md's business.
@@ -299,8 +300,14 @@ def last_user_messages(transcript, limit=HANDOFF_MESSAGES):
     return list(reversed(found))
 
 
-def handoff_text(session_id, transcript, last_at, why):
-    """The note a fresh session reads first. Every quoted message passes the redactor."""
+def handoff_text(session_id, transcript, last_at, why, changed=None):
+    """The note a fresh session reads first. Every quoted message passes the redactor.
+
+    `changed` is [(at, path)] for files committed after `last_at` — work the old conversation never
+    saw. 🎯 [2026-09-24] (owner) Tested from a research finding (R12, SyncMind): an agent that does
+    not know the repository moved since it last looked recovered in 0.33-3.33% of cases. The
+    handoff is exactly that moment, so it says what moved.
+    """
     import redact
     lines = ["# Handoff from the previous session", "",
              "Written by `chamnan-open` when it started a new conversation instead of resuming: "
@@ -309,6 +316,14 @@ def handoff_text(session_id, transcript, last_at, why):
              % (session_id, session_id)]
     if last_at is not None:
         lines.append("- its last response: %s" % last_at.astimezone().strftime("%Y-%m-%d %H:%M"))
+    if changed:
+        import redact
+        paths = sorted({p for _at, p in changed})
+        shown = ", ".join("`%s`" % redact.for_a_terminal(redact.scrub(p)) for p in paths[:HANDOFF_CHANGED_SHOWN])
+        more = len(paths) - HANDOFF_CHANGED_SHOWN
+        lines.append("- **committed since then, by another session or by hand** — %d file(s): %s%s. "
+                     "Read these before trusting anything below about them."
+                     % (len(paths), shown, " and %d more" % more if more > 0 else ""))
     lines += ["- what is in flight: `.chamnan/STATE.md`", "",
               "## What the person asked last, oldest first", ""]
     asked = last_user_messages(transcript)
@@ -330,5 +345,13 @@ def write_handoff(repo, session_id, transcript, last_at, why):
         dest.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         return None
-    ok = ws.atomic_write_text(dest, handoff_text(session_id, transcript, last_at, why))
+    changed = []
+    if last_at is not None:
+        try:
+            import time
+            import coedit
+            changed = coedit._git_edits(repo, time.time(), last_at.timestamp())
+        except Exception:          # noqa: BLE001 — a handoff without this line is still a handoff
+            changed = []
+    ok = ws.atomic_write_text(dest, handoff_text(session_id, transcript, last_at, why, changed))
     return dest if ok else None
