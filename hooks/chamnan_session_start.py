@@ -195,8 +195,8 @@ def describe(path):
             continue
         # Redact BEFORE the markdown cleanup, not after. `_LEADING_MARKUP` strips a run of
         # `-` from the front of the line, which is exactly what the private-key pattern keys
-        # on: `-----BEGIN OPENSSH PRIVATE KEY-----` came out of the cleanup as
-        # `BEGIN OPENSSH PRIVATE KEY-----`, and the section's own scrub downstream then had
+        # on: an OpenSSH private-key header, five dashes either side of its BEGIN line, came out
+        # of the cleanup with its leading dashes gone, and the section's own scrub downstream then had
         # nothing left to match. Cleaning first destroys the evidence the redactor needs.
         stripped = redact.scrub(stripped)
         cleaned = _MD_MARKUP.sub("", _LEADING_MARKUP.sub("", stripped, count=1))

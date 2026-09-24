@@ -49178,45 +49178,55 @@ _rmtree(_br_dir.parent, ignore_errors=True)
 # about 147 hand-written cases and this package's own limitations say so. `tests/corpus/redaction/`
 # is where that grows — and the checks below are what keep the file from becoming the most
 # dangerous one in the tree.
-_cp_path = ROOT / "tests" / "corpus" / "redaction" / "cases.jsonl"
-_cp_rows = []
-for _l in _cp_path.read_text(encoding="utf-8").splitlines():
-    _l = _l.strip()
-    if _l and not _l.startswith("#"):
-        _cp_rows.append(json.loads(_l))
-check("the corpus parses, one case per line", len(_cp_rows) >= 4, saw=len(_cp_rows))
-check("...every case carries the fields a reader and a tool both need",
-      all({"id", "text", "source", "why"} <= set(_r) for _r in _cp_rows),
-      saw=[_r.get("id") for _r in _cp_rows if not {"id", "text", "source", "why"} <= set(_r)])
-check("...ids are unique, because findings quote them",
-      len({_r["id"] for _r in _cp_rows}) == len(_cp_rows))
-check("...and every source is one of the three the README defines",
-      all(_r["source"] in ("synthetic", "sanitized", "fuzz") for _r in _cp_rows),
-      saw=sorted({_r["source"] for _r in _cp_rows}))
-# A corpus with no benign cases measures recall and cannot measure precision, which is how a
-# detector that destroys everything scores perfectly. The README states this; here it is enforced.
-check("IT CARRIES BENIGN NEIGHBOURS, OR PRECISION CANNOT BE MEASURED AT ALL",
-      any("secret" not in _r for _r in _cp_rows),
-      saw=sum(1 for _r in _cp_rows if "secret" not in _r))
-check("...and every `near` names a case that is actually here",
-      all(_r["near"] in {_x["id"] for _x in _cp_rows} for _r in _cp_rows if _r.get("near")),
-      saw=[_r.get("near") for _r in _cp_rows if _r.get("near")
-           and _r["near"] not in {_x["id"] for _x in _cp_rows}])
-# 🔴 The rule the whole directory stands on. A `secret` must be present in its own `text`, or the
-# case asserts nothing; and the corpus must not become a place a live credential can sit.
-check("every declared secret actually appears in the text it is declared for",
-      all(_r["secret"] in _r["text"] for _r in _cp_rows if _r.get("secret")),
-      saw=[_r["id"] for _r in _cp_rows if _r.get("secret") and _r["secret"] not in _r["text"]])
-# The loader is what the measurement reads, so a corpus the tool cannot see is a corpus that does
-# not exist. Asserted through the tool rather than by re-reading the file.
-import importlib.util as _cp_ilu  # noqa: E402
-_cp_spec = _cp_ilu.spec_from_file_location("_cp_rr", str(ROOT / "tools" / "redactor_recall.py"))
-_cp_mod = _cp_ilu.module_from_spec(_cp_spec)
-_cp_spec.loader.exec_module(_cp_mod)
-check("...and the recall tool loads every one of them",
-      len(_cp_mod.corpus_cases()) == len(_cp_rows), saw=len(_cp_mod.corpus_cases()))
-check("...a benign case reaching the tool with no secret, not with an empty one",
-      any(_c[2] is None for _c in _cp_mod.corpus_cases()))
+# 🐛 [2026-09-24] (owner) Key-shaped test data does not live in this repository. The corpus moved to
+# `chamnan-corpus/redaction/`, found through CHAMNAN_CORPUS or beside this checkout; CI clones it.
+# Without it these checks say so and skip -- the release gate runs with it present.
+import os as _cp_os  # noqa: E402
+_cp_root = _cp_os.environ.get("CHAMNAN_CORPUS") or str(ROOT.parent / "chamnan-corpus")
+_cp_path = Path(_cp_root) / "redaction" / "cases.jsonl"
+if not _cp_path.is_file():
+    skip(f"  [SKIP] the redaction corpus — no {_cp_path} (set CHAMNAN_CORPUS, or clone chamnan-corpus beside this checkout)")
+else:
+    _cp_rows = []
+    for _l in _cp_path.read_text(encoding="utf-8").splitlines():
+        _l = _l.strip()
+        if _l and not _l.startswith("#"):
+            # Key-shaped values are stored as lists of parts; a case is the joined string.
+            _cp_rows.append({_k: ("".join(_v) if isinstance(_v, list) else _v)
+                             for _k, _v in json.loads(_l).items()})
+    check("the corpus parses, one case per line", len(_cp_rows) >= 4, saw=len(_cp_rows))
+    check("...every case carries the fields a reader and a tool both need",
+          all({"id", "text", "source", "why"} <= set(_r) for _r in _cp_rows),
+          saw=[_r.get("id") for _r in _cp_rows if not {"id", "text", "source", "why"} <= set(_r)])
+    check("...ids are unique, because findings quote them",
+          len({_r["id"] for _r in _cp_rows}) == len(_cp_rows))
+    check("...and every source is one of the three the README defines",
+          all(_r["source"] in ("synthetic", "sanitized", "fuzz") for _r in _cp_rows),
+          saw=sorted({_r["source"] for _r in _cp_rows}))
+    # A corpus with no benign cases measures recall and cannot measure precision, which is how a
+    # detector that destroys everything scores perfectly. The README states this; here it is enforced.
+    check("IT CARRIES BENIGN NEIGHBOURS, OR PRECISION CANNOT BE MEASURED AT ALL",
+          any("secret" not in _r for _r in _cp_rows),
+          saw=sum(1 for _r in _cp_rows if "secret" not in _r))
+    check("...and every `near` names a case that is actually here",
+          all(_r["near"] in {_x["id"] for _x in _cp_rows} for _r in _cp_rows if _r.get("near")),
+          saw=[_r.get("near") for _r in _cp_rows if _r.get("near")
+               and _r["near"] not in {_x["id"] for _x in _cp_rows}])
+    # 🔴 The rule the whole directory stands on. A `secret` must be present in its own `text`, or the
+    # case asserts nothing; and the corpus must not become a place a live credential can sit.
+    check("every declared secret actually appears in the text it is declared for",
+          all(_r["secret"] in _r["text"] for _r in _cp_rows if _r.get("secret")),
+          saw=[_r["id"] for _r in _cp_rows if _r.get("secret") and _r["secret"] not in _r["text"]])
+    # The loader is what the measurement reads, so a corpus the tool cannot see is a corpus that does
+    # not exist. Asserted through the tool rather than by re-reading the file.
+    import importlib.util as _cp_ilu  # noqa: E402
+    _cp_spec = _cp_ilu.spec_from_file_location("_cp_rr", str(ROOT / "tools" / "redactor_recall.py"))
+    _cp_mod = _cp_ilu.module_from_spec(_cp_spec)
+    _cp_spec.loader.exec_module(_cp_mod)
+    check("...and the recall tool loads every one of them",
+          len(_cp_mod.corpus_cases()) == len(_cp_rows), saw=len(_cp_mod.corpus_cases()))
+    check("...a benign case reaching the tool with no secret, not with an empty one",
+          any(_c[2] is None for _c in _cp_mod.corpus_cases()))
 
 
 # ------------------------------- which test covers this file, when the import graph cannot say

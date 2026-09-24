@@ -20,6 +20,7 @@ was not IN the published repository -- it lived only in the workspace chamnan is
 numbers a reader is asked to trust, credited to a tool they cannot run. It ships here now, and it
 locates `lib/` from its own position so it works from a clean clone with nothing installed.
 """
+import os
 import re
 import json
 import sys
@@ -355,10 +356,13 @@ def boundary_leaks():
     return out
 
 
-# Spelled as one path rather than joined segment by segment: a bare `cases.jsonl` literal reads
-# as a log under `logs/` to the sweep that accounts for every jsonl this package writes, and
-# that convention is correct — this file simply is not one, and the literal has to say so.
-CORPUS = Path(__file__).resolve().parent.parent / "tests/corpus/redaction/cases.jsonl"
+# 🐛 [2026-09-24] (owner) Key-shaped test data does not ship in this package. The corpus lives in
+# `chamnan-corpus/redaction/`, found through CHAMNAN_CORPUS or beside this checkout — the same
+# rule the suite uses — and CI clones it. Spelled as one path: a bare `cases.jsonl` literal reads
+# as a log under `logs/` to the sweep that accounts for every jsonl this package writes.
+CORPUS = Path(os.environ.get("CHAMNAN_CORPUS")
+              or Path(__file__).resolve().parent.parent.parent / "chamnan-corpus") \
+    / "redaction/cases.jsonl"
 
 
 def corpus_cases():
@@ -372,7 +376,7 @@ def corpus_cases():
 
     Reported per SOURCE and never blended into the inline figure. A synthetic case and a case taken
     from a real repository are different claims, and averaging them lets the easy set flatter the
-    hard one. `tests/corpus/redaction/README.md` carries the contract, including the rule that
+    hard one. `chamnan-corpus/redaction/README.md` carries the contract, including the rule that
     nothing in there is ever a live credential.
     """
     out = []
@@ -390,6 +394,9 @@ def corpus_cases():
             continue          # one torn line is one lost case, not a broken measurement
         if not isinstance(row, dict) or not row.get("id") or row.get("text") is None:
             continue
+        # A key-shaped value is stored as a list of parts so no scanner sees it whole; the case
+        # is the joined string. See chamnan-corpus/redaction/README.md.
+        row = {k: ("".join(v) if isinstance(v, list) else v) for k, v in row.items()}
         out.append((row["id"], row["text"], row.get("secret"), row.get("source", "unknown")))
     return out
 
