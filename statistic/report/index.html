@@ -40,6 +40,7 @@ const CF = counterfactual();
 const readTok = Math.round((row.local_chars || 0) / cpt);
 const avoidedTok = Math.round(readTok * CF);
 const withPlugin = weighted(row, R);
+const rawTotal = RATE_KEYS.reduce((a, k) => a + (row[k] || 0), 0);
 const avoidedWeight = avoidedTok * (H.avoided_weight ?? R.t_write);
 const without = withPlugin + avoidedWeight;
 const saved = pct(avoidedWeight, without || 1);
@@ -67,6 +68,13 @@ M.append(hero(
       `ถ้าไม่มีปลั๊กอิน จะมีแค่ ${(CF * 100).toFixed(0)}% ของเท่านั้นที่ถูกอ่านจริง จึงนับเฉพาะส่วนนั้น`),
     T(`Weighted the way a cache write is weighted, that is ${n(avoidedWeight)} tokens saved.`,
       `ถ่วงน้ำหนักแบบ cache write แล้ว เท่ากับประหยัดได้ ${n(avoidedWeight)} โทเค็น`),
+    /* 🐛 [2026-09-24, owner] "135,445,944 กับค่าข้อมูล เหมือนไม่สัมพันธ์กัน" — the bars are WEIGHTED
+       totals and nothing on the page said so, while the panels below printed raw and lifetime
+       counts. This sentence is the bridge from one to the other. */
+    T(`The bars are weighted: ${row[key] || "—"} carried ${n(rawTotal)} tokens, and weighting each `
+      + `kind (a cached read 0.1x, a cache write 1.25x, output 5x) makes that ${n(withPlugin)}.`,
+      `แท่งด้านล่างคิดแบบถ่วงน้ำหนัก · ${row[key] || "—"} ใช้ไปจริง ${n(rawTotal)} โทเค็น `
+      + `ถ่วงตามชนิด (cached read 0.1 เท่า, cache write 1.25 เท่า, output 5 เท่า) ได้ ${n(withPlugin)}`),
   ],
   /* 🎯 [owner, 2026-09-23] "สลับ เอา มีไว้ข้างบน และ ไม่มีไว้ข้างล่าง มันจะทำให้เทียบง่าย" — the
      row the page is about goes first, and the baseline sits under it to be measured against. */
@@ -83,12 +91,17 @@ M.append(hero(
    and a bar chart of the same four kinds' weights — which listed the same four labels twice and,
    because each chart coloured its rows in its own order, gave the same kind two different colours
    on one screen. One panel now: one colour per kind, share and weight in the same row. */
-const tk = S.token_kinds || { kinds: [] };
+/* 🐛 [2026-09-24, owner] The donut showed every session ever (8.8B) beside a hero for one month,
+   so the two could not be read against each other. It draws the chosen period now. */
+const tk = { requests: row.requests || 0,
+  kinds: [["cache_read", "t_read"], ["cache_write", "t_write"], ["output", "t_out"],
+          ["new_input", "t_new"]].map(([kind, f]) => ({ kind, tokens: row[f] || 0 }))
+    .sort((a, b) => b.tokens - a.tokens) };
 const KINDOF = { "cache read": "t_read", "cache write": "t_write", "output": "t_out",
                  "new input": "t_new" };
-M.append(panel("what kind of tokens, and what each one weighs",
-  "โทเค็นแต่ละชนิด และถูกถ่วงน้ำหนักเท่าไร",
-  `this account's interactive sessions · ${n(tk.requests)} request(s) · hero.rates`
+M.append(panel(`what kind of tokens ${row[key] || "—"} carried, and what each one weighs`,
+  `โทเค็นแต่ละชนิดในช่วง ${row[key] || "—"} และถูกถ่วงน้ำหนักเท่าไร`,
+  `this account's interactive sessions · ${row[key] || "—"} · ${n(tk.requests)} request(s) · hero.rates`
   + (ratesAreCustom() ? " · tuned on this machine" : ""),
   [
     donut((tk.kinds || []).map((k) => {
@@ -156,7 +169,13 @@ M.append(panel(`where the tokens went in ${row[key] || "—"} — the top five`,
       .concat(rest ? [{ label: "everything else", th: "ที่เหลือทั้งหมด", value: rest,
         text: `${short(rest)} · ${pct(rest, spentTotal).toFixed(0)}%`, dim: true }] : []),
       { sort: false }),
-    el("p", { class: "src", style: "margin:10px 0 0" },
+    el("p", { class: "note", style: "margin:10px 0 0" },
+      T(`${n(spentTotal)} tokens entered the context in ${row[key] || "—"}. Every later turn sends `
+        + `the whole context again, and that is where the ${n(row.t_read || 0)} cached reads above `
+        + `come from — so shrinking any row here shrinks those too.`,
+        `ในช่วง ${row[key] || "—"} มีโทเค็นเข้า context ${n(spentTotal)} · ทุกเทิร์นถัดไปส่ง context ทั้งหมดซ้ำ `
+        + `นั่นคือที่มาของ cached read ${n(row.t_read || 0)} ข้างบน · ลดแถวไหนในนี้ได้ ยอดนั้นก็ลดตาม`)),
+    el("p", { class: "src", style: "margin:8px 0 0" },
       T("each thing is counted once, when it entered the context. A long session re-reads all of it "
         + "on every later turn, which is why the cache-read total above is far larger — this ranks "
         + "what the context was filled with, the part you can change.",
