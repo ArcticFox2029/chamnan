@@ -167,7 +167,7 @@ and a check derives it.
 | [`/chamnan:remember`](#commands) | a decision, a lesson or a rule, with the reason it exists |
 | [`/chamnan:milestone`](#commands) | a change that reshaped the repository |
 | [`chamnan-timeline`](#commands) | a line of work followed across the sessions it took |
-| [`chamnan-open`](#commands) | resume the last conversation only when resuming is cheaper than starting fresh |
+| [`chamnan-open`](#commands) | resume the last conversation only when resuming is cheaper than starting fresh; a fresh start (or `--fresh`) hands the new session `.chamnan/logs/handoff.md`, the earlier session's last typed messages, redacted |
 
 **Reuse what is already solved** — instead of writing it a second time.
 
@@ -204,6 +204,7 @@ and a check derives it.
 | [`chamnan-report`](#commands) · [`/chamnan:report`](#commands) | the knowledge inventory, usage, and weekly context-per-turn |
 | [`chamnan-context`](#one-file-only-what-applies-and-a-ceiling) | what the budget is actually spent on |
 | [`chamnan-explain-context`](#one-file-only-what-applies-and-a-ceiling) | why the session did not know something: which sections arrived as names only, and how often |
+| [the dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) | four pages in `.chamnan/statistic/`, rebuilt as each session ends: tokens saved, what each kind of token weighs, what the plugin did that would not have happened otherwise — screenshots in that section |
 
 **Keep the install honest** — the failures that are silent by nature.
 
@@ -2330,8 +2331,8 @@ this README.
 Every corpus figure above — in **Evidence**, and every token count in **The chaos test** —
 came from one synthetic corpus, and that corpus is published, so none of it has to be taken on
 trust:
-**[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — 804 files,
-72 extensions, **23 programming languages**, comments in eight writing systems, three SQL dialects,
+**[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — a platform of 804 files
+(2,727 with the edge cases planted since), 72 extensions, **23 programming languages**, comments in eight writing systems, three SQL dialects,
 and one corner of deliberately careless code with no comments at all. It publishes no results of its
 own, on purpose: a fixture that ships its own numbers invites you to read them instead of running
 the thing.
@@ -2626,7 +2627,7 @@ in 1.3 — which took the suite from 87 checks to over 1,800.
 
 ## More documentation
 
-- **[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic codebase the Evidence and chaos-test figures were measured on: 804 files, 72 extensions, 23 programming languages, comments in eight writing systems. It publishes no figures of its own; these are ours, measured against it, and `check_spec.py` in that repository says whether its own answer key still resolves. Download it and reproduce them rather than take them on trust; steps are under [Try it on the test corpus](#try-it-on-the-test-corpus) above.
+- **[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic codebase the Evidence and chaos-test figures were measured on: 804 files in the platform itself (2,727 with the edge cases planted since), 72 extensions, 23 programming languages, comments in eight writing systems. It publishes no figures of its own; these are ours, measured against it, and `check_spec.py` in that repository says whether its own answer key still resolves. Download it and reproduce them rather than take them on trust; steps are under [Try it on the test corpus](#try-it-on-the-test-corpus) above.
 
 | | |
 |---|---|
