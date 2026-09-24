@@ -620,7 +620,7 @@ own numbers.
 
 | | |
 |---|---|
-| <img src="docs/dashboard/2-token-kinds.png" width="100%"> | **What each kind of token weighs.** A cached read is not an input token and pretending otherwise is how every published ratio in this space gets inflated |
+| <img src="docs/dashboard/2-token-kinds.png" width="100%"> | **What each kind of token weighs, and where the tokens went.** A cached read is not an input token and pretending otherwise is how every published ratio in this space gets inflated. Below it, the top five things that filled the context in the chosen period — including the cache rewrites a transcript never shows — adding up to what was actually written |
 | <img src="docs/dashboard/3-features-firing.png" width="100%"> | **Which features actually fire**, counted, with the zeros left in. A feature that has never fired on your repository is the most useful row on the page |
 | <img src="docs/dashboard/4-gate-finds.png" width="100%"> | **What the gate finds**, over time |
 | <img src="docs/dashboard/5-file-types.png" width="100%"> | **What is in the tree**, by type — the long tail is where a reader quietly drops files |
