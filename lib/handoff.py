@@ -224,3 +224,111 @@ def newest_session(repo, config_dir=None):
     if best is None:
         return None
     return best[1].stem, best[1], last_response_at(best[1])
+
+
+# ------------------------------------------------------------------ the handoff a fresh session gets
+# 🎯 [owner 2026-09-24] "เริ่มใหม่เองได้ โดยดึงค่า idle + ข้ามวัน มาวาง handoff แล้วเริ่มใหม่" — and
+# a fresh command that really starts a new session, not a /clear. Before this, `chamnan-open`
+# decided FRESH correctly and then launched a session that knew nothing of the one it replaced: the
+# workspace block carries STATE.md and git's view, and neither says what the person last ASKED.
+# That is the one thing only the old transcript holds, and the reason this reads it — the tail
+# only, the person's own turns only, each scrubbed before it touches disk.
+#
+# Written under `.chamnan/logs/`, which is gitignored on purpose and swept by retention: a handoff
+# is a note from one sitting to the next, not a record, and a prompt must never reach a commit.
+
+HANDOFF_NAME = "handoff.md"
+HANDOFF_MESSAGES = 5
+HANDOFF_MESSAGE_CHARS = 600
+
+# English on purpose and stated as a task, so the first turn of the new session does the reading
+# instead of waiting for someone to ask. The chat language is the repository's CLAUDE.md's business.
+HANDOFF_PROMPT = ("Read .chamnan/logs/handoff.md and .chamnan/STATE.md, then carry on with the "
+                  "work that was in flight.")
+
+# Harness and slash-command wrappers that arrive as `user` turns but were never typed by anybody.
+_NOT_TYPED = ("<command-name>", "<command-message>", "<local-command", "<system-reminder>",
+              "<task-notification>", "Caveat: The messages below", "[Request interrupted")
+
+
+def _typed_text(entry):
+    """The text a person typed in one transcript entry, or ""."""
+    if not isinstance(entry, dict) or entry.get("type") != "user" or entry.get("isMeta") \
+            or entry.get("isSidechain"):
+        return ""
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        parts = [content]
+    elif isinstance(content, list):
+        # A list holding a tool_result is the harness answering a tool call, not a person.
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return ""
+        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    else:
+        return ""
+    text = "\n".join(p for p in parts if p).strip()
+    if not text or text.startswith(_NOT_TYPED):
+        return ""
+    return text
+
+
+def last_user_messages(transcript, limit=HANDOFF_MESSAGES):
+    """The person's last `limit` typed messages, oldest first. Reads the tail only."""
+    try:
+        path = Path(transcript)
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > _TAIL_BYTES * 4:
+                fh.seek(size - _TAIL_BYTES * 4)
+                fh.readline()
+            tail = fh.read().decode("utf-8", errors="replace")
+    except (OSError, ValueError):
+        return []
+    found = []
+    for line in reversed(tail.splitlines()):
+        if not line.startswith("{"):
+            continue
+        try:
+            text = _typed_text(json.loads(line))
+        except (ValueError, RecursionError):
+            continue
+        if text:
+            found.append(text)
+            if len(found) >= limit:
+                break
+    return list(reversed(found))
+
+
+def handoff_text(session_id, transcript, last_at, why):
+    """The note a fresh session reads first. Every quoted message passes the redactor."""
+    import redact
+    lines = ["# Handoff from the previous session", "",
+             "Written by `chamnan-open` when it started a new conversation instead of resuming: "
+             + why + ".", "",
+             "- previous session: `%s` — kept, not deleted; `claude --resume %s` reopens it"
+             % (session_id, session_id)]
+    if last_at is not None:
+        lines.append("- its last response: %s" % last_at.astimezone().strftime("%Y-%m-%d %H:%M"))
+    lines += ["- what is in flight: `.chamnan/STATE.md`", "",
+              "## What the person asked last, oldest first", ""]
+    asked = last_user_messages(transcript)
+    if not asked:
+        lines.append("_Nothing readable — start from STATE.md._")
+    for text in asked:
+        one = redact.for_a_terminal(redact.scrub(" ".join(text.split())))
+        if len(one) > HANDOFF_MESSAGE_CHARS:
+            one = one[:HANDOFF_MESSAGE_CHARS].rstrip() + " …"
+        lines.append("- " + one)
+    return "\n".join(lines) + "\n"
+
+
+def write_handoff(repo, session_id, transcript, last_at, why):
+    """Write the handoff into `repo`'s workspace logs; its path, or None when it could not be."""
+    import workspace as ws
+    dest = ws.workspace(repo) / "logs" / HANDOFF_NAME
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    ok = ws.atomic_write_text(dest, handoff_text(session_id, transcript, last_at, why))
+    return dest if ok else None

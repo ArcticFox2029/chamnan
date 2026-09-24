@@ -21,7 +21,20 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-_Nothing yet._
+- **A new conversation starts where the old one stopped.** When `chamnan-open` starts fresh while
+  an earlier conversation exists — a new date and a night's gap, or `--fresh` — it writes
+  `.chamnan/logs/handoff.md` from the earlier transcript's last typed messages (redacted, harness
+  turns left out) and opens the new session with one instruction: read that and `STATE.md`, then
+  carry on. The old transcript is kept and named, so it can still be resumed.
+- **`chamnan-open --fresh` now does what it says.** The flag was parsed and never read, so it
+  resumed the old conversation whenever the rule said to.
+- **A filter a repository names in its own config no longer runs.** `.gitattributes` can name a
+  clean/process filter whose program sits in the repository's `.git/config`; `git status` ran it
+  whenever a file's stat info changed, which is every session start in a repository somebody is
+  working in. Drivers set in a repository scope are stood down; your own global ones (git-lfs) are
+  left alone.
+- **`chamnan-doctor` no longer runs scripts from the repository it is pointed at.** It ran two
+  workspace tools that do not ship with chamnan from whatever checkout it was asked about.
 
 ---
 

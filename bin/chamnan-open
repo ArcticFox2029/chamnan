@@ -4,6 +4,11 @@
     chamnan-open [<repo>] [-- <extra claude args>]
     chamnan-open --dry-run        # say what it would do, launch nothing
     chamnan-open --fresh          # start a new conversation whatever the last one was
+
+Whenever it starts a new conversation while an earlier one exists — by the rule below or by
+`--fresh` — it first writes `.chamnan/logs/handoff.md` (the earlier session's id and its last typed
+messages, redacted) and opens the new session with one instruction: read that and STATE.md, then
+carry on. That is a new session, not a /clear: a new id, and the old transcript untouched.
     chamnan-open -h, --help       # this text
     chamnan-open -v, --version    # the version this build is
 
@@ -69,21 +74,44 @@ def main(argv):
     repo = Path(argv[0]).resolve() if argv else Path.cwd()
 
     got = handoff.newest_session(repo)
+    path = last = None
     if got is None:
         verdict, why, sid = handoff.FRESH, "no previous conversation in this repository", None
     else:
         sid, path, last = got
         verdict, why = handoff.decide(last)
+    # 🐛 [2026-09-24] (owner) `--fresh` was parsed and never read: the verdict above decided alone,
+    # so the one word documented as "start a new conversation whatever the last one was" resumed
+    # the old one whenever the clock said to. It overrides the rule now, and it is the only thing
+    # that does.
+    if fresh and verdict != handoff.FRESH:
+        verdict, why = handoff.FRESH, "asked for with --fresh"
 
     # One line, always, whichever way it went. A launcher that silently picks a different
     # conversation than the one somebody expected is worse than one that costs money: the person
     # cannot tell a deliberate choice from their session having gone missing.
     print(f"chamnan-open: {verdict} — {why}", file=sys.stderr)
+    prompt = []
     if verdict == handoff.FRESH and sid:
         print(f"  the earlier conversation is kept, not deleted: {sid}", file=sys.stderr)
         print(f"  resume it anyway with: claude --resume {sid}", file=sys.stderr)
+        # 🎯 [owner 2026-09-24] A new conversation starts from where the old one stopped: the
+        # handoff is written from the old transcript's last typed messages, and the new session's
+        # first turn is told to read it. Nothing is written on a dry run. The prompt goes LAST, after
+        # anything passed after `--`: those are options for `claude`, and guessing which of them is
+        # a message would misread `--model opus` as one.
+        if dry:
+            print(f"  would write the handoff to .chamnan/logs/{handoff.HANDOFF_NAME}",
+                  file=sys.stderr)
+        else:
+            written = handoff.write_handoff(repo, sid, path, last, why)
+            print(f"  handoff: {written}" if written else
+                  "  handoff: could not be written — the new session starts from STATE.md alone",
+                  file=sys.stderr)
+        prompt = [handoff.HANDOFF_PROMPT]
 
-    cmd = ["claude"] + (["--resume", sid] if verdict == handoff.RESUME and sid else []) + extra
+    cmd = ["claude"] + (["--resume", sid] if verdict == handoff.RESUME and sid else []) + extra \
+        + prompt
     if dry:
         print("  would run: " + " ".join(cmd), file=sys.stderr)
         return 0
