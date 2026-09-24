@@ -44401,9 +44401,20 @@ else:
         _t_src57 = [f for f in ("miki-hybridge-ai/src/memory_manager.py",
                                 "src/memory_manager.py")
                     if (ROOT.parent.parent / f).is_file()][:1]
+        # 🐛 [2026-09-24] (self-measured) This moved the REAL maps' mtimes into the future and back,
+        # and the release skill runs the gate twice at the same time: the other run read them in
+        # between, and one run or both failed this block while it passed alone every time. The gate
+        # is now pointed at copies (copy2 keeps each mtime), so nothing shared is touched.
+        import shutil as _sh57, tempfile as _tf57
+        _t_scratch57 = _tf57.mkdtemp(prefix="chamnan-maps57-")
+        _t_orig57 = {n: getattr(_t_mod57, n, None) for n in ("ARCH_MAP", "COVERAGE_MAP")}
+        for _n57, _p57 in _t_orig57.items():
+            if _p57 is not None and _p57.is_file():
+                setattr(_t_mod57, _n57, Path(_sh57.copy2(str(_p57), _t_scratch57)))
         _t_maps57 = [getattr(_t_mod57, n) for n in ("ARCH_MAP", "COVERAGE_MAP")
                      if getattr(_t_mod57, n, None) is not None
-                     and getattr(_t_mod57, n).is_file()]
+                     and getattr(_t_mod57, n).is_file()
+                     and str(getattr(_t_mod57, n)).startswith(_t_scratch57)]
         if not _t_src57 or not _t_maps57:
             skip("  · this workspace has no generated maps or no source fixture — skipped, not passed")
         else:
@@ -44434,6 +44445,9 @@ else:
             check("...and a restored timestamp goes back to the ordinary answer, so this is not a "
                   "gate that now refuses everything",
                   _t_after57 == _t_before57, saw="%r -> %r" % (_t_before57, _t_after57))
+        for _n57, _p57 in _t_orig57.items():
+            setattr(_t_mod57, _n57, _p57)
+        _sh57.rmtree(_t_scratch57, ignore_errors=True)
 # ---- 58_a_subagent_that_ignores_its_own_model_pin_is_recorded.py
 # ----------------- the field two rounds recommended reading is not on the event they named
 # 🐛 [2026-09-10] claude-code#89723 (open): a subagent shipped inside a PLUGIN does not honour the
