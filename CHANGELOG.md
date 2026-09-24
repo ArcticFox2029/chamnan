@@ -25,6 +25,9 @@ already reports the last released number while running newer code.
   file whose lines never mention the name. Measured on a 1,194-file repository: 3.74 s to 3.13 s
   (median of five runs each side). The answers are unchanged: the old and new code gave identical
   results on all 15,772 symbol-and-file pairs tried.
+- **Secrets written with a full-width `：` or `＝` are now redacted.** Japanese and Chinese input
+  methods type these, and `db_password：value` had been passing through while the same line with `:`
+  was caught. No other output changed on 1,391 real files, and the corpus benchmark is unchanged.
 
 ---
 

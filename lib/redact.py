@@ -886,7 +886,11 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
 # Deliberately NOT applied to the language-bound separators. Ruby's `=>` and a YAML block
 # scalar's bare `:` are different separators, not variants of this one, and forcing them
 # through a shared name would break both to satisfy a rule about neither.
-_KV_SEP = r"[:=]"
+# 🐛 [2026-09-25] (R69 acc4, 2026-09-24) A Japanese or Chinese input method types the full-width
+# colon and equals sign (U+FF1A, U+FF1D), and `db_password：value` passed through untouched while
+# the same line with `:` was caught. R69 asked for code-switched text to be measured as its own
+# slice; that slice was 7 of 8 before this line, and the one it missed was this.
+_KV_SEP = r"[:=\uFF1A\uFF1D]"
 
 _BETWEEN_NAME_AND_VALUE = (
     r"(?:"
