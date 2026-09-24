@@ -952,8 +952,22 @@ _BETWEEN_NAME_AND_VALUE_SPACED = (
 # `var apiPassword string = ...`, which has no separator for the rules to find -- was wired into the
 # QUOTED rule and nowhere else, so the identical line with the quotes left off passed through whole.
 # The disease this repository keeps producing, in the one module where it leaks credentials.
+#
+# 🐛 [2026-09-24] (self-measured) The `\s*` after `_KV_SEP` here crossed a newline into a SECOND,
+# unrelated assignment on the next line, and `_BETWEEN_NAME_AND_VALUE_SPACED`'s type-annotation
+# branch (`identifier[...] = `) then read that assignment's OWN target as this key's "type", handing
+# its value to the placeholder. Real case: `proactive.py`'s
+# `if state.get("gap_ping_anchor") != last_user_key:` ends a line in a key-shaped word followed by
+# `:` -- a Python `if`, not a config key -- and the next line, `state["gap_ping_anchor"] =
+# last_user_key`, is ordinary code. `last_user_key` came back `<REDACTED>`, and a second scrub then
+# also redacted the dict key, so the rule was not even idempotent on its own output.
+# `ASSIGNED_SECRET` (the quoted rule) keeps `\s*` here on purpose -- `_swallow_trailing_credential_runs`
+# never runs without a closing quote to backstop a wrong guess -- but `_KV_SEP` for BARE gets no
+# such backstop at all: its value class is `\S{6,}` with nothing to validate a wrong landing spot.
+# Restricted to `[ \t]*` -- same line only -- so a key that ends its own line in `:` with nothing
+# after it stops there instead of reading into whatever the next line happens to contain.
 ASSIGNED_SECRET_BARE = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE_SPACED
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"[ \t]*" + _BETWEEN_NAME_AND_VALUE_SPACED
     + r"|" + _TYPE_BEFORE_ASSIGN + r"))"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside

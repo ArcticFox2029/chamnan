@@ -320,6 +320,19 @@ BENIGN = [
 for label, text in BENIGN:
     check(f"redact leaves {label} alone", redact.scrub(text) == text)
 
+# 🐛 [2026-09-24] (self-measured) A key-shaped word ending its own line in `:` with nothing after
+# it -- the tail of a Python `if ... != last_user_key:`, not a config key -- was pairing with an
+# unrelated assignment on the NEXT line: `ASSIGNED_SECRET_BARE`'s separator crossed the newline,
+# and its type-annotation branch read `state["gap_ping_anchor"] = ` as though IT were this key's
+# type, then handed the placeholder the wrong line's value. A second scrub then also redacted the
+# dict key, so the rule was not even idempotent on its own output. Real source:
+# miki-hybridge-ai/src/proactive.py, `gap_ping_anchor`.
+_NEXT_LINE_ASSIGNMENT = 'r_key:\n        state["gap_ping_anchor"] = last_user_key\n'
+check("redact leaves an unrelated assignment on the next line after a bare `key:` alone",
+      redact.scrub(_NEXT_LINE_ASSIGNMENT) == _NEXT_LINE_ASSIGNMENT)
+check("...and scrub is idempotent on it",
+      redact.scrub(redact.scrub(_NEXT_LINE_ASSIGNMENT)) == redact.scrub(_NEXT_LINE_ASSIGNMENT))
+
 # ---------------------------------------------------------------- blocked files
 for name in ("server.pem", "app.key", "id_rsa", "id_ed25519.pub", "cert.crt",
              "local.sqlite3", "backup.dump", ".netrc"):
