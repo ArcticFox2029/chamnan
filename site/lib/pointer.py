@@ -53,6 +53,7 @@ SOURCES = (
     ("threads", "thread"),
 )
 
+_CLOSED_THREAD = re.compile(r"^\*\*Status:\*\*\s*closed\b", re.M | re.I)
 MAX_HITS = 4          # per file; past this the pointer is a wall of text and stops being read
 MAX_BYTES = 60_000    # per entry; a knowledge file larger than this is not a knowledge file
 SEEN_DIR = "logs"
@@ -224,6 +225,15 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
                     continue
                 text = f.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
+                continue
+            # 🐛 [2026-09-24] (owner) A thread marked closed was still named every time a file it
+            # lists was opened: on Lumin-App the most-named entry in 24 days, 56 times, was a thread
+            # closed since the 1.6.0 batch, and in 35 of those it was the ONLY thing named — so the
+            # pointer's whole message was "read this finished work". Found by testing a research
+            # finding (knowledge should fade by use and by what replaced it). Demoting it would not
+            # have helped when it is the sole hit; a closed thread is history, not a thing to read
+            # before editing, so it is not named at all.
+            if label == "thread" and _CLOSED_THREAD.search(text):
                 continue
             for tier, needle in enumerate(wanted):
                 # 🐛 A raw substring count, so `memory.py` matched inside `vector_memory.py`. The
