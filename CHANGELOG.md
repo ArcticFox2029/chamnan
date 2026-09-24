@@ -21,7 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-_Nothing yet._
+- **`chamnan-where` is about 16% faster on a large repository.** It no longer walks the parts of a
+  file whose lines never mention the name. Measured on a 1,194-file repository: 3.74 s to 3.13 s
+  (median of five runs each side). The answers are unchanged: the old and new code gave identical
+  results on all 15,772 symbol-and-file pairs tried.
 
 ---
 
