@@ -2,7 +2,7 @@
   "name": "chamnan",
   "displayName": "Chamnan",
   "description": "Preserves repository architecture, decisions, work state, and reusable engineering context across coding-agent sessions.",
-  "version": "1.31.1",
+  "version": "1.31.2",
   "author": {
     "name": "ArcticFox2029"
   },

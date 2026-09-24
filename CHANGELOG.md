@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1311), and every one of these is on the
+[README](README.md#whats-new-in-1312), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -21,6 +21,16 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+_Nothing yet._
+
+---
+
+## What's new in 1.31.2
+
+_A patch on 1.31.1: the dashboard counts honestly, and outside research earned four fixes._
+
+### Fixed and improved
+
 - **A config value of the wrong type is kept, and named — no longer replaced by the default.** Writing `"log_retention_days": "30"` (a quoted number) used to be overwritten with 7 on the next session, silently, which began deleting logs the user meant to keep. The file is now left as written, the session says which setting is being ignored and what it wants, and a config that does not parse says the line and column.
 - **The dashboard's notes are held to a readable line length.** On a wide panel a note ran to about 130 characters; measured comprehension peaks near 55 and long lines read slower. Notes stop at 78 characters and source lines at 90, as the headline's sentences already did.
 - **`/chamnan:review` checks the size of a change first.** Above about 400 changed lines it says so and reviews in parts: measured defect detection falls from 87% on 1-100 lines to 28% above 1,000, and a review of a large change finds less while reading as complete. A change that mixes a rename or move with a behaviour change is named too, and the behaviour reviewed on its own.
@@ -29,6 +39,12 @@ already reports the last released number while running newer code.
 - **A closed thread is no longer named when you open a file it lists.** The pointer treated a finished thread like live knowledge: on the repository it was built on, the most-named entry in 24 days was a thread closed weeks earlier, and in 35 of its 56 appearances it was the only thing named. Threads whose status is closed are skipped; on that repository's 136 plugin files the only change is that thread disappearing.
 - **The dashboard counts the sessions you worked, and shows what filled them.** Its totals now come from one account's interactive sessions — including sessions started in a subdirectory, which it used to miss — and leave out sessions a script started with `claude -p`, which on the repository it was built on were a third of September. A new panel ranks the top five things that went into the context in the chosen period: the model's own output, each tool's results, hook and reminder context, the host's prompt, and what you typed.
 - **The dashboard counts each response once.** Claude Code writes one transcript record per content block — a thinking block, a text block and each tool call of one response are separate lines, each repeating the response's usage — and the dashboard counted every line. On the repository it was built on that was 35,356 requests counted against 17,569 real ones, so every token total was about double. A record repeating the previous response's request id is now skipped, including across an incremental read, and the scan cache is re-read once under a new key. `chamnan-report` already kept one record per request and was not affected.
+
+- **The plugin carries no key-shaped test data.** The checks that need a credential's shape, and the recall benchmark with its tables, moved to chamnan-corpus; the checks kept here use plain values.
+
+### Verification
+
+_Filled in from the release gate's own totals line._
 
 ---
 

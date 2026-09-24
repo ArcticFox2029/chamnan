@@ -122,7 +122,7 @@ fails when it and the code disagree.</sub>
 **Start here** — [Features, by what you are trying to do](#features-by-what-you-are-trying-to-do) ·
 [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.31.1](#whats-new-in-1311) ·
+[What's new in 1.31.2](#whats-new-in-1312) ·
 [The dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
@@ -630,40 +630,34 @@ own numbers.
 No money and no model names appear on any page, because the plugin does not know which model you
 run and a price printed against the wrong one is worse than no price at all.
 
-## What's new in 1.31.1
+## What's new in 1.31.2
 
-_1.31.0 was never published: this is its first release, with the fixes found on the way out — the full list is in [CHANGELOG.md](CHANGELOG.md)._
+_Fixes and measured improvements on top of 1.31.1 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
 
-**This release is about the difference between a tool that works and a tool that can show you it
-worked.**
+**This release is about counting honestly, and about research that had to earn its way into the
+code.**
 
-Four pages of **your own numbers**, built at the end of every session into your repository's own
-gitignored `.chamnan/statistic/` out of your workspace's own logs — what the plugin changed about a period's token weight, which features fire and how
-often, what the redactor caught and what no pattern can, and an editor for the weights. A fresh
-clone opens to greyed panels naming the file each one reads: nothing is sampled, nothing is
-estimated, and no sample dataset ships to make the pages look full. The top line shows its working
-because it is the one worth arguing with — the bars start at the common floor rather than at zero
-and say so, and the 25% that turns characters read into tokens saved is named as **a judgement,
-not a measurement**, beside the page that replaces it.
+**The dashboard was counting every token about twice.** Claude Code writes one transcript record
+per content block, each repeating the response's usage, and the page added them all. It now counts
+each response once, reads only the sessions a person worked on the account in use — including
+sessions started in a subdirectory, which it used to miss, and leaving out sessions a script
+started — and every panel on the first page describes the same period in the same unit. A new
+panel ranks the five things that filled the context, and it adds up, to the token, to what was
+actually written: on the repository it was built on, the largest row turned out to be context
+rewritten after the cache expired, which no transcript shows.
 
-`chamnan-doctor` answers whether this install is doing anything at all, and **found a dead feature
-on its first run**: the failure recorder had been registered on an event that fires when a tool
-CALL fails, which is not what a command exiting 1 is, so its log had never been written.
-`chamnan-explain-context` answers why the session did not know something — which sections of the
-block arrived as names only and how often — from the shape log and nothing else, so no prompt and
-no file content is stored anywhere to answer it.
+**Every finding from outside research now leaves with a verdict — test it, already there, or not
+worth it — and the tests found real defects.** A property test (scrubbing twice must equal
+scrubbing once) found the redactor damaging an ordinary line of code that followed a line ending
+in `..._key:`. The pointer was naming a thread closed weeks earlier — the most-named entry in its
+log, and in 35 of 56 appearances the only thing named. A config value of the wrong type was
+silently replaced by the default on the next session, which could start deleting logs. A new
+session now hears which files were committed after the old one stopped, and `/chamnan:review`
+names a change too large, or too tangled, to review whole.
 
-**A corpus of a hundred ways a context tool can cost the person who installed it**, and six
-defects it found. A credential a formatter had split across two string literals was reaching
-`MAP.md` whole. Four session-wide warnings were being deleted on their way out of the block while
-the drop accounting reported nothing. Session records — handoffs somebody wrote — were deleted on
-the retention window with no notice, in a workspace this plugin tells you to commit. Three
-per-machine state files were in every teammate's diff, one of them a per-person notice counter, so
-the first teammate to see a notice silenced it for the whole team. And the first step of the
-release gate could not run at all.
-
-Sixty-seven of the hundred are planted, twelve were already there, and **the twenty-one no corpus
-can hold are listed with the reason** rather than quietly dropped.
+**The plugin carries no key-shaped test data.** The checks that need a credential's shape, and the
+recall benchmark with its tables, moved to [chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus),
+where key-shaped data belongs; the checks that stay here use plain values.
 
 ## Bootstrap does not rewrite your code
 
