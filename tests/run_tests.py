@@ -320,7 +320,7 @@ BENIGN = [
 for label, text in BENIGN:
     check(f"redact leaves {label} alone", redact.scrub(text) == text)
 
-# 🐛 [2026-09-24] (self-measured) A key-shaped word ending its own line in `:` with nothing after
+# 🐛 [2026-09-24] (R14 acc5, 2026-09-24) A key-shaped word ending its own line in `:` with nothing after
 # it -- the tail of a Python `if ... != last_user_key:`, not a config key -- was pairing with an
 # unrelated assignment on the NEXT line: `ASSIGNED_SECRET_BARE`'s separator crossed the newline,
 # and its type-annotation branch read `state["gap_ping_anchor"] = ` as though IT were this key's

@@ -304,7 +304,7 @@ def handoff_text(session_id, transcript, last_at, why, changed=None):
     """The note a fresh session reads first. Every quoted message passes the redactor.
 
     `changed` is [(at, path)] for files committed after `last_at` — work the old conversation never
-    saw. 🎯 [2026-09-24] (owner) Tested from a research finding (R12, SyncMind): an agent that does
+    saw. 🎯 [2026-09-24] (R12 acc5, 2026-09-24) Tested from a research finding (SyncMind): an agent that does
     not know the repository moved since it last looked recovered in 0.33-3.33% of cases. The
     handoff is exactly that moment, so it says what moved.
     """

@@ -953,7 +953,7 @@ _BETWEEN_NAME_AND_VALUE_SPACED = (
 # QUOTED rule and nowhere else, so the identical line with the quotes left off passed through whole.
 # The disease this repository keeps producing, in the one module where it leaks credentials.
 #
-# 🐛 [2026-09-24] (self-measured) The `\s*` after `_KV_SEP` here crossed a newline into a SECOND,
+# 🐛 [2026-09-24] (R14 acc5, 2026-09-24) The `\s*` after `_KV_SEP` here crossed a newline into a SECOND,
 # unrelated assignment on the next line, and `_BETWEEN_NAME_AND_VALUE_SPACED`'s type-annotation
 # branch (`identifier[...] = `) then read that assignment's OWN target as this key's "type", handing
 # its value to the placeholder. Real case: `proactive.py`'s
