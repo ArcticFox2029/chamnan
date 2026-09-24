@@ -266,6 +266,12 @@ AKIA_FIXTURE = fake("AKIA", "IOSFODNN7EXAMPLE")
 # what those checks prove is that a literal inside `NAME = f("...")` goes, whatever it encodes, and
 # key-shaped data lives in chamnan-corpus (2026-09-24).
 CALL_B64 = __import__("base64").b64encode(b"not-a-key-just-bytes").decode()
+# Plain secrets for the checks that are about a RULE or a SURFACE rather than a key shape
+# (2026-09-24: key-shaped data lives in chamnan-corpus). PLAIN_TOKEN has no shape, so only a column,
+# assignment or flag rule can catch it; PLUMB_URL is caught anywhere, by the credentialed-URL rule.
+PLAIN_TOKEN = "zQ8mR4tW7pX2kV9nL3sB"
+PLUMB_SECRET = "Tr0ub4dorHorse9"
+PLUMB_URL = f"postgres://deploy:{PLUMB_SECRET}@db.internal/main"
 AKIA_ALL_Z = fake("AKIA", "Z" * 16)
 
 PASSED = 0
@@ -3375,10 +3381,10 @@ def _bash(command, session_id):
 # reader and an unguarded one sitting two hooks apart.
 envs.upsert(aw_root, "leaky",
             envs.render_entry("leaky", "somewhere",
-                              "", [f"deploy key {AKIA_FIXTURE} is required"], "2026-08-27"))
+                              "", [f"deploy key {PLUMB_URL} is required"], "2026-08-27"))
 _leaky = run_scratch_watch(_bash("kubectl --context leaky get pods", "awleak"), aw_root)
 check("THE ENVIRONMENT NOTICE REDACTS A SECRET IN A DECLARED CONSTRAINT",
-      AKIA_FIXTURE not in _leaky and "REDACTED" in _leaky)
+      PLUMB_SECRET not in _leaky and "REDACTED" in _leaky)
 check("...and still says which environment it is about", "`leaky`" in _leaky)
 
 first = run_scratch_watch(_bash("kubectl --context production get pods", "aw1"), aw_root)
@@ -5226,7 +5232,7 @@ _pk = Path(tempfile.mkdtemp()) / "repo"
 ws.ensure(_pk)
 (_pk / ".chamnan" / "memory" / "lessons").mkdir(parents=True, exist_ok=True)
 (_pk / ".chamnan" / "memory" / "lessons" / "deploy.md").write_text(
-    f"# Rotate {AKIA_FIXTURE} before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
+    f"# Rotate {PLUMB_URL} before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
 (_pk / "src").mkdir(exist_ok=True)
 (_pk / "src" / "deploy.py").write_text("x = 1\n", encoding="utf-8")
 _ptr = subprocess.run(
@@ -5236,7 +5242,7 @@ _ptr = subprocess.run(
                       "cwd": str(_pk)}),
     capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_pk)).stdout
 check("THE FILE POINTER REDACTS A SECRET IN A STORED TITLE",
-      AKIA_FIXTURE not in _ptr and "REDACTED" in _ptr)
+      PLUMB_SECRET not in _ptr and "REDACTED" in _ptr)
 check("...and still points at the file that records it",
       "memory/lessons/deploy.md" in _ptr)
 _rmtree(_pk.parent, ignore_errors=True)
@@ -6248,12 +6254,12 @@ check("a malformed entry does not take the section with it",
 # an agent runs, so its stdout reaches a session's context exactly like the injected block does.
 (_tw / ".chamnan" / "tools" / "leaky.py").write_text("# a real tool\n", encoding="utf-8")
 _idx = json.loads((_tw / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))
-_idx.append({"name": "leaky.py", "desc": f"deploys with {AKIA_FIXTURE} embedded", "runs": 0})
+_idx.append({"name": "leaky.py", "desc": f"deploys with {PLUMB_URL} embedded", "runs": 0})
 (_tw / ".chamnan" / "tools" / "index.json").write_text(json.dumps(_idx), encoding="utf-8")
 _list = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_tw)).stdout
 check("--list REDACTS A SECRET IN A TOOL DESCRIPTION, like the hook already does",
-      AKIA_FIXTURE not in _list and "REDACTED" in _list)
+      PLUMB_SECRET not in _list and "REDACTED" in _list)
 check("...and never prints a path-shaped name as if it were a filename",
       "escape.sh" not in _list and "unusable name" in _list)
 check("...but still SHOWS the broken rows, because this is the command that cleans them up",
@@ -13587,7 +13593,7 @@ check("...and the refusal says what a tool name is", "plain filename" in _dem.st
 _rmtree(_demd.parent, ignore_errors=True)
 
 check("redact.emit scrubs a string argument",
-      "AKIA" not in redact.scrub(f"k {AKIA_FIXTURE}"))
+      PLUMB_SECRET not in redact.scrub(f"k {PLUMB_URL}"))
 check("...and leaves a non-string alone — a caller printing an int means it",
       redact.emit.__doc__ is not None and "Non-string" in redact.emit.__doc__)
 
@@ -19392,7 +19398,7 @@ for _rd_text, _rd_should, _rd_why in (
     # cases below them; what changed is that a credential-shaped VALUE now overrides a reassuring
     # name. Both halves are in this table because fixing one direction alone is how this rule has
     # gone wrong every previous time.
-    (f'api_secret_id = "{AKIA_FIXTURE}1234"', True, "an `_id` tail does not make it a name"),
+    (f'api_secret_id = "{PLAIN_TOKEN}1234"', True, "an `_id` tail does not make it a name"),
     ('db_password_type = "tr0ub4dor3horsebattery"', True, "nor a `_type` tail"),
     ('oauth_client_secret_name = "sk-live-9f2a8b7c6d5e4f3a"', True, "nor a `_name` tail"),
     ('secret_name = "the-name-of-my-secret"', False, "but a name really is a name"),
@@ -22642,7 +22648,7 @@ for _dc_label, _dc_text, _dc_secret in (
         ("comma", "username,password\nadmin,Hunter2Password!\n", "Hunter2Password!"),
         ("quoted comma", 'user,password\n"admin","Hunter2Password!"\n', "Hunter2Password!"),
         ("semicolon", "user;password;role\nadmin;Hunter2Password!;root\n", "Hunter2Password!"),
-        ("tab", f"user\tapi_key\nadmin\t{AKIA_FIXTURE}\n", AKIA_FIXTURE),
+        ("tab", f"user\tapi_key\nadmin\t{PLAIN_TOKEN}\n", PLAIN_TOKEN),
         ("a markdown table", "| user | password |\n| admin | Hunter2Password! |\n",
          "Hunter2Password!"),
         ("every row, not only the first", "user,password\na,pw1\nb,pw2\nc,pw3\n", "pw3")):
@@ -30913,9 +30919,9 @@ check(f"every named exception is still live and still needed ({len(_t_PATH_ONLY1
 # model's own context is scrubbed, not merely intended to be.
 import importlib as _importlib145
 _t_redact145 = _importlib145.import_module("redact")
-_t_probe145 = "see config: aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+_t_probe145 = f"see config: aws_secret_access_key = {PLAIN_TOKEN}"
 check("the scrub those hooks call does remove a credential from context-bound text",
-      "wJalrXUtnFEMI" not in _t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)),
+      PLAIN_TOKEN not in _t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)),
       saw=_t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)))
 # ---- 146_a_dropped_section_leaves_its_names_not_its_title.py
 # ------------------ a dropped section leaves its NAMES, and not only the one that got restored
@@ -31786,7 +31792,7 @@ _V153 = "Ab3$x9!q7Zm2"
 # The AWS documentation key, base64-encoded, assembled here rather than written out: GitHub
 # push protection decodes base64 before it scans, so the literal blocked every push of this file.
 import base64 as _b64153                                                     # noqa: E402
-_AKIA_B64_153 = _b64153.b64encode(("AKIA" + "IOSFODNN7EXAMPLE").encode()).decode()
+_AKIA_B64_153 = _b64153.b64encode(b"not-a-key-just-bytes").decode()
 
 _CASES153 = (
     # --- the shapes that leaked, and their neighbours
@@ -48485,7 +48491,7 @@ try:
 except (OSError, NotImplementedError, AttributeError):
     _t_can_link95 = False          # Windows without developer mode; the property still holds there
 (_t_ws95 / "memory" / "rules" / "inline.md").write_text(
-    f"# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY={AKIA_ALL_Z}\n",
+    f"# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY={PLAIN_TOKEN}\n",
     encoding="utf-8")
 (_t_ws95 / "skills" / "README.md").write_text(
     "# Skills\n\nThis folder is an index OF the skills, not a skill.\n", encoding="utf-8")
@@ -48505,7 +48511,7 @@ else:
 # the written form is a question the index can never answer yes to — which is how the first version
 # of this check passed with the scrub deleted.
 check("...and a credential written INSIDE a store is scrubbed before the index is persisted",
-      AKIA_ALL_Z.lower() not in _t_blob95.lower() and "REDACTED" in _t_blob95,
+      PLAIN_TOKEN.lower() not in _t_blob95.lower() and "REDACTED" in _t_blob95,
       saw="the index is a file on disk and `mapper.py` scrubs for `MAP.md` on the same grounds")
 
 _t_readmes95 = [e for e in _t_five95["entries"] if e["path"].endswith("README.md")]
@@ -49487,10 +49493,10 @@ check(f"A README PLACEHOLDER SURVIVES EVERY ASSIGNMENT CARRIER — {len(_ph_carr
 # that it passed group(2) — the QUOTE CHARACTER — to the helper as the value, so every question
 # that helper asks about a value was being asked about `'`.
 _ph_real = {
-    "bare": "API_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYzz",
+    "bare": f"API_KEY={PLAIN_TOKEN}zz",
     "quoted": 'password = "tr0ub4dor-0123456789abcdefghij"',
-    "rocket": "'api_key' => 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLE'",
-    "flag": f"--api-key {AKIA_FIXTURE}1234",
+    "rocket": f"'api_key' => '{PLAIN_TOKEN}'",
+    "flag": f"--api-key {PLAIN_TOKEN}1234",
 }
 _ph_missed = [k for k, v in _ph_real.items() if _ph.PLACEHOLDER not in _ph.scrub(v)]
 check("...and a real value in the same carrier is still redacted", _ph_missed == [],
