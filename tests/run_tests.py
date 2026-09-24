@@ -50054,7 +50054,9 @@ check("...and saying nothing to the session, which can already see the failure",
 # would be the worst file this package writes — the same trap the context-snapshot direction is
 # parked for, reached by a different road.
 _fl_fire(tool_name="Bash", error="Exit code 22", tool_input={
-    "command": "curl -H 'Authorization: Bearer sk-ant-FIXTURE' https://x.invalid"})
+    # Assembled: a whole key shape in this file is what push protection refuses (2026-09-24).
+    "command": "curl -H 'Authorization: Bearer " + fake("sk-ant-", "api03-" + "A" * 24)
+               + "' https://x.invalid"})
 _fl_secret = _fl_rows()[-1]["subj"]
 check("A CREDENTIAL ON THE FAILING COMMAND LINE IS SCRUBBED BEFORE IT REACHES DISK",
       "sk-ant-api03" not in _fl_secret and "curl" in _fl_secret, saw=_fl_secret)
