@@ -26386,7 +26386,7 @@ try:
           _ss.rebuild_hook_installed(_d_09) is (ws.git_hook_state(_d_09, _tmpl) == "installed"))
 finally:
     shutil.rmtree(_d_09, ignore_errors=True)
-# ---- 100_every_store_has_a_reader_and_every_reader_a_store.py
+# ---- 247_every_store_has_a_reader_and_every_reader_a_store.py
 # ------------- the closed loop: producer -> consumer -> a reachable path, asserted both ways
 # 🎯 [1.31, Alpha's verdict 2026-09-23] Three findings in one day were one class: 25 of 29 skills
 # unreachable, 2 of 243 guards with a mutation proof, 3,114 lessons with no reader. Each looks
@@ -26539,7 +26539,7 @@ check("...and a report cannot invent its own status adjective",
       _t_bad_status100 == "refused", saw=_t_bad_status100)
 
 shutil.rmtree(_t_root100, ignore_errors=True)
-# ---- 101_only_chamnans_own_scratch_is_ever_swept.py
+# ---- 248_only_chamnans_own_scratch_is_ever_swept.py
 # ------------- a closed stage is removed; a directory the user put there never is
 # 🎯 [owner, 2026-09-23] "เราไม่แตะพื้นที่นอก repo chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ"
 # — the scope is the workspace, and the second half of it had no sweeper. `prune_orphaned_temps`
@@ -26691,7 +26691,7 @@ check("A FRESH CLONE GETS THE COMMITTED COPY, NOT EITHER CURRENT UNCOMMITTED COP
 
 shutil.rmtree(_t_root101, ignore_errors=True)
 shutil.rmtree(_t_clone_parent101, ignore_errors=True)
-# ---- 102_a_candidate_is_a_procedure_not_a_repeated_command.py
+# ---- 249_a_candidate_is_a_procedure_not_a_repeated_command.py
 # ------------- a proposed workflow has to carry more information than the commonest command
 # 🐛 [2026-09-23] (self-measured) Nine candidates were queued in this repository and seven were the same shape:
 # `python3 → python3 → python3 → python3 → python3 → git add → git commit`, seen on three separate
@@ -26996,7 +26996,7 @@ check("WITHOUT THE SWITCH, RECORD STILL APPENDS ONE ORDINARY COMMAND AND RETURNS
           (_ordinary_before103, _ordinary_after103, _ordinary_history103))
 
 _shutil103.rmtree(_root103, ignore_errors=True)
-# ---- 103_the_commit_guard_has_something_that_calls_it.py
+# ---- 250_the_commit_guard_has_something_that_calls_it.py
 # ------------- a guard nothing invokes is not a guard
 # 🐛 [2026-09-23] (self-measured) `chamnan-guard` scans a staged diff for anything shaped like a secret. It worked:
 # fed a staged AWS key it names the file and the line and prints none of the matched text, because
