@@ -134,7 +134,9 @@ def main():
         pathlib.Path(__file__).resolve().parent.parent / "statistic" / "build_statistic.py")
     if _stat.is_file() and ws.load_config(root).get("dashboard", True):
         try:
-            subprocess.Popen([sys.executable, str(_stat)], cwd=str(root),
+            # `--root`, not only the cwd: the build writes under THIS repository's workspace, and
+            # an argument cannot be lost the way an inherited directory can.
+            subprocess.Popen([sys.executable, str(_stat), "--root", str(root)], cwd=str(root),
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
         except Exception:                    # noqa: BLE001

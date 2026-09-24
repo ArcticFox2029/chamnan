@@ -603,7 +603,10 @@ nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 **New in 1.31.** Every figure on these pages is read out of your own workspace's logs. Nothing is
 sampled, nothing is estimated, and a page with no data says so rather than filling itself in — a
 fresh clone opens to greyed panels that name the file each one reads, which is the honest first
-view. Build it with `python3 statistic/build_statistic.py` and open `statistic/report/index.html`.
+view. It rebuilds itself at the end of every session, into your repository's own
+`.chamnan/statistic/` (gitignored — it is your activity, not your team's); open
+`.chamnan/statistic/report/index.html`. To build it by hand, run `statistic/build_statistic.py
+--root <your repository>` from the plugin.
 
 <img src="docs/dashboard/1-impact-hero.png" alt="The impact page: tokens saved by having the plugin, what kind of token each one was, what the repository puts in front of a session, and what the plugin did that would not have happened otherwise." width="100%">
 

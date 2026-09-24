@@ -33,13 +33,33 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 PLUGIN = HERE.parent
-ROOT = PLUGIN.parent.parent
-WS = ROOT / ".chamnan"
-LOGS = WS / "logs"
-DATA = HERE / "data"
-REPORT = HERE / "report"
+# The page templates ship with the plugin; nothing a build produces is ever written beside them.
+TEMPLATES = HERE / "report"
+TEMPLATE_FILES = ("index.html", "features.html", "usage.html", "rates.html", "app.js", "app.css")
 
 sys.path.insert(0, str(PLUGIN / "lib"))
+
+# 🐛 [2026-09-24] (owner) "chamnan คือต้นฉบับที่คนอื่นจะไปใช้ ดังนั้น dashboard ต้องคลีน เป็นของ repo
+# นั้นๆ". The repository used to be found by walking two directories up from the plugin and the
+# data written beside this file: that assumed the plugin sits two directories inside it — true of the one machine it was
+# built on, false for every install from the marketplace — and every build wrote that repository's
+# activity INTO the plugin's own directory, which is shared by every repository that uses it and is
+# the tree that gets published. Now the repository is an argument (default: the one the command runs
+# in), and the data and the rendered pages go under that repository's own `.chamnan/statistic/`.
+ROOT = WS = LOGS = OUT = DATA = REPORT = SCAN_CACHE = None
+
+
+def bind(root):
+    """Point every path at `root`'s workspace. Called once, before anything reads a log."""
+    global ROOT, WS, LOGS, OUT, DATA, REPORT, SCAN_CACHE
+    import workspace as _ws
+    ROOT = _ws.find_root(root)
+    WS = ROOT / ".chamnan"
+    LOGS = WS / "logs"
+    OUT = WS / "statistic"
+    DATA = OUT / "data"
+    REPORT = OUT / "report"
+    SCAN_CACHE = WS / "state" / "statistic_scan_cache.json"
 try:
     import tokens as _tok
 except Exception:                       # noqa: BLE001 — the estimator is a nicety, not a need
@@ -113,9 +133,6 @@ def transcripts():
 # cache: a file whose size or mtime moved is re-read in full, and a cache that cannot be read is
 # simply absent rather than trusted — the one thing worse than a slow figure is a stale one that
 # looks fresh.
-SCAN_CACHE = WS / "state" / "statistic_scan_cache.json"
-
-
 def _cached_scan(paths, reader, tag):
     """{path: summary} for every path, reading only what is new since the last build.
 
@@ -948,7 +965,13 @@ def build():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", action="store_true", help="write data/ and stop")
+    ap.add_argument("--root", default=None,
+                    help="the repository to report on (default: the one this runs in)")
     a = ap.parse_args()
+    bind(a.root or os.getcwd())
+    if not WS.is_dir():
+        print(f"  no .chamnan/ workspace at {ROOT} — nothing to report on", file=sys.stderr)
+        return 1
     data = build()
     DATA.mkdir(parents=True, exist_ok=True)
     (DATA / "statistic.json").write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n",
@@ -962,9 +985,21 @@ def main():
     REPORT.mkdir(parents=True, exist_ok=True)
     (REPORT / "data.js").write_text(blob, encoding="utf-8")
     print(f"  report/data.js       {len(blob):,} bytes")
-    for page in ("index.html", "features.html", "usage.html", "rates.html"):
-        if not (REPORT / page).is_file():
-            print(f"  {page} is missing — the page is not generated, only its data")
+    # The pages are copied beside their data rather than pointed at: `data.js` is loaded by a
+    # relative <script>, and a page opened from the plugin's install directory would read nobody's
+    # numbers. Copied only when the shipped template differs, so a rebuild touches nothing it need not.
+    for name in TEMPLATE_FILES:
+        src, dest = TEMPLATES / name, REPORT / name
+        if not src.is_file():
+            print(f"  {name} is missing from the plugin — only its data was written")
+            continue
+        try:
+            body = src.read_bytes()
+            if not dest.is_file() or dest.read_bytes() != body:
+                dest.write_bytes(body)
+        except OSError as exc:
+            print(f"  {name} could not be copied: {exc}")
+    print(f"  open {REPORT / 'index.html'}")
     return 0
 
 
