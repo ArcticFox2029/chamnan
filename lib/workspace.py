@@ -132,6 +132,9 @@ os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 #
 # Appended to whatever the user already has rather than assigned, so an existing `GIT_CONFIG_COUNT`
 # keeps its entries and ours are added after it.
+_REFUSE_COMMAND = "chamnan-refuses-repository-supplied-command"
+
+
 def _harden_git_config():
     """Refuse the repository-controlled config keys that turn a read into an execution."""
     # 🐛 [2026-09-19] (self-measured) Five of these were `""`, and on Windows assigning an empty
@@ -152,7 +155,7 @@ def _harden_git_config():
     #
     # `diff.external` is the one with a caller: both `git diff` sites in this package now pass
     # `--no-ext-diff`, so the refusal is stated on the command line and never reaches this value.
-    _REFUSE = "chamnan-refuses-repository-supplied-command"
+    _REFUSE = _REFUSE_COMMAND
     forced = (
         ("core.fsmonitor", "false"),
         ("core.pager", "cat"),
@@ -184,6 +187,92 @@ def _harden_git_config():
 _FORCED_AT = {}
 
 _harden_git_config()
+
+
+# 🐛 [2026-09-24] (self-measured) The eleven keys above are FIXED names, and an attribute driver is
+# not: `.gitattributes` says `*.txt filter=anything`, and the program lives in config under
+# `filter.anything.clean` (or `.smudge`, `.process`), `diff.anything.textconv` (or `.command`),
+# `merge.anything.driver` — a name the repository chooses, so no list written here can reach it.
+# Measured on git 2.55: a `filter.<name>.clean` or `.process` set in a repository's own config ran
+# on `git status --porcelain`, `git diff --quiet` and `git diff` alike, whenever a file's stat info
+# had changed — which is every session in a repository somebody is working in. `textconv` ran only
+# for a patch, and every patch-producing call here already passes `--no-textconv`.
+#
+# So the names are read from the repository itself, once per repository, and each one found in a
+# REPOSITORY scope (`local`, `worktree`, or a file those include — git reports an included file under
+# the scope of the file that included it) gets the same environment override the fixed keys get.
+# `global` and `system` are left alone: those are the user's own choices — `git lfs install` writes
+# `filter.lfs.*` there — and overriding them would make every LFS file read as modified. The cost of
+# the override inside a repository scope is the same, and accepted: a git-crypt or `lfs install
+# --local` checkout may list a touched-but-unchanged file as modified, which is a wrong line in a
+# notice rather than a stranger's program running as the user.
+#
+# `required` is forced false beside every filter, because measured: a refused `process` with
+# `filter.<name>.required = true` makes `git status` exit 128, and every caller here reads a failed
+# status as "git cannot answer".
+#
+# The spawn is paid only when the repository's config could name a driver at all. SessionStart is
+# held to a process ceiling, and the plain-text test below is exact for the common layout: a `.git`
+# DIRECTORY whose `config` has no `[filter`, `[diff` or `[merge` section and no `include`, and no
+# `config.worktree`. Anything else — a `.git` file, `GIT_DIR` set, an unreadable config — asks git.
+_DRIVER_CONFIG = r"^(filter|diff|merge)\..+\.(clean|smudge|process|textconv|command|driver)$"
+_DRIVER_SECTION = re.compile(r"^\s*\[\s*(filter|diff|merge)\b|include", re.I | re.M)
+_TRUSTED_SCOPES = ("global", "system", "command")
+_DRIVERS_STOOD_DOWN = set()
+
+
+def _config_could_name_a_driver(toplevel):
+    """False only when a plain read proves the repository's config names no driver."""
+    if not toplevel or os.environ.get("GIT_DIR") or os.environ.get("GIT_COMMON_DIR"):
+        return True
+    git_dir = Path(toplevel) / ".git"
+    if not git_dir.is_dir() or (git_dir / "config.worktree").exists():
+        return True
+    try:
+        text = (git_dir / "config").read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return bool(_DRIVER_SECTION.search(text))
+
+
+def _stand_down_repository_drivers(root, toplevel):
+    """Override every attribute driver the repository's own config names. Once per repository."""
+    key = str(Path(toplevel or root).resolve())
+    if key in _DRIVERS_STOOD_DOWN:
+        return
+    _DRIVERS_STOOD_DOWN.add(key)
+    if not _config_could_name_a_driver(toplevel):
+        return
+    try:
+        out = _subprocess().run(
+            ["git", "-C", str(root), "config", "--show-scope", "-z", "--get-regexp", _DRIVER_CONFIG],
+            stdin=_subprocess().DEVNULL, capture_output=True, timeout=5)
+    except git_cannot_answer():
+        return
+    fields = out.stdout.split(b"\0")
+    forced = []
+    for scope, entry in zip(fields[0::2], fields[1::2]):
+        scope = scope.decode("utf-8", "replace")
+        name = entry.decode("utf-8", "replace").split("\n", 1)[0]
+        if scope in _TRUSTED_SCOPES or name.count(".") < 2:
+            continue
+        section, rest = name.split(".", 1)
+        driver, variable = rest.rsplit(".", 1)
+        forced.append((name, "cat" if variable in ("clean", "smudge", "textconv") else _REFUSE_COMMAND))
+        if section == "filter":
+            forced.append(("filter.%s.required" % driver, "false"))
+    if not forced:
+        return
+    try:
+        start = max(int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0), 0)
+    except ValueError:
+        start = 0
+    for offset, (name, value) in enumerate(forced):
+        os.environ["GIT_CONFIG_KEY_%d" % (start + offset)] = name
+        os.environ["GIT_CONFIG_VALUE_%d" % (start + offset)] = value
+    os.environ["GIT_CONFIG_COUNT"] = str(start + len(forced))
 
 
 # 🐛 [2026-09-19] (self-measured), from the full gate run of this date. `core.hooksPath` is forced to `/dev/null` above so a repository's hooks cannot
@@ -3691,8 +3780,13 @@ def git_can_speak_for(root):
             global _GIT_TOO_OLD
             _GIT_TOO_OLD = True
         answer = out.returncode == 0 and bool(out.stdout.strip())
+        toplevel = out.stdout.strip() if answer else None
         if not answer:
             answer = git_owns(root)          # a bare repository, which has no working tree
+        # Every `git -C` in the package asks this first, so this is the one place that sees each
+        # repository before git reads its config. See `_stand_down_repository_drivers`.
+        if answer:
+            _stand_down_repository_drivers(root, toplevel)
     _GIT_SPEAKS[key] = answer
     return answer
 
