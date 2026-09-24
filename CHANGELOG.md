@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1310), and every one of these is on the
+[README](README.md#whats-new-in-1311), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -21,6 +21,21 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+_Nothing yet._
+
+---
+
+## What's new in 1.31.1
+
+_1.31.0 was never published: this is its first release, with what was found on the way out._
+
+**This release is about the difference between a tool that works and a tool that can show you it
+worked.** Four pages of your own numbers, a doctor that says whether the install is actually wired
+up, and a corpus of a hundred ways a context tool can cost the person who installed it — which is
+how five of the six fixes below were found; the sixth was reported by somebody using it.
+
+### Found and fixed on the way out
+
 - **A new conversation starts where the old one stopped.** When `chamnan-open` starts fresh while
   an earlier conversation exists — a new date and a night's gap, or `--fresh` — it writes
   `.chamnan/logs/handoff.md` from the earlier transcript's last typed messages (redacted, harness
@@ -39,19 +54,20 @@ already reports the last released number while running newer code.
   and it looked for your repository in the wrong place on any install but the developer's.
 - **`chamnan-doctor` no longer runs scripts from the repository it is pointed at.** It ran two
   workspace tools that do not ship with chamnan from whatever checkout it was asked about.
-
----
-
-## What's new in 1.31.0
-
-**This release is about the difference between a tool that works and a tool that can show you it
-worked.** Four pages of your own numbers, a doctor that says whether the install is actually wired
-up, and a corpus of a hundred ways a context tool can cost the person who installed it — which is
-how five of the six fixes below were found; the sixth was reported by somebody using it.
+- **Two guards were silent on Windows.** The warning about writing outside the repository skipped
+  every `~/…` path there (`expanduser` ran before the shape test), and the notice about reading one
+  file slice by slice never counted a Windows path (POSIX `shlex` ate the backslashes). Both found
+  by the Windows CI legs on the way to this release.
+- **The index no longer describes your dashboard as source.** With the dashboard built into
+  `.chamnan/statistic/`, the next `chamnan-map` indexed its pages; that directory is now skipped by
+  path, and only under `.chamnan/`.
+- **The plugin carries no fake credentials.** Its redaction test cases moved to
+  [chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus) 1.1.1 (`redaction/`), where
+  key-shaped test data belongs; the suite no longer depends on another repository.
 
 ### You can now see what it cost, on your own numbers
 
-`statistic/build_statistic.py` builds four pages out of your workspace's own logs: what the plugin
+Four pages are built out of your workspace's own logs, into your repository's own gitignored `.chamnan/statistic/` at the end of every session: what the plugin
 changed about a period's token weight, which features fire and how often, what the redactor caught
 and what no pattern can, and an editor for the weights. **A fresh clone opens to greyed panels
 that name the file each one reads** — nothing is sampled, nothing is estimated, and no sample
