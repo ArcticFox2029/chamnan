@@ -1396,16 +1396,6 @@ def _looks_like_a_credential_name(key, value=None):
 _LONG_MIXED_VALUE = re.compile(r"^[A-Za-z0-9+/=_\-.]{16,}$")
 
 
-# A value that names a mechanism rather than holding one: a lowercase identifier, short, with no
-# case mixing and no punctuation beyond `_`. `bcrypt`, `argon2id`, `oauth2`, `access_token`,
-# `email_address`, `absolute` all match; every credential shape below does not.
-# The key's own word, built from the SAME `SECRET_WORDS` every assignment rule uses, so a word
-# added there is covered here without anyone remembering. This asks "does the name say
-# credential", which is a different question from `_looks_like_a_credential_name` ("does the
-# name's tail say it is something else") — using that one here was a mistake caught by this
-# check failing on four of five cases while the fifth passed.
-_KEY_SAYS_CREDENTIAL = re.compile(r"(?:" + SECRET_WORDS + r")", re.I)
-
 # A character no filename, URL, slug or identifier is built from. Paths and URLs use letters,
 # digits and `. _ - / : ~`; everything else on the keyboard is a password reaching for it.
 # A key whose tail says it holds a PATTERN, not a value. `SECRET_RE = r"[a-z]+"` is a regex and
@@ -1998,7 +1988,10 @@ def _prose_gap(gap):
     return ":" not in gap or bool(_GAP_IS_PROSE.search(gap.split(":", 1)[0]))
 
 
-_SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
+# 🎯 [2026-09-25] (R80 claudeaccount2, 2026-09-24) Compiled on first use, not at import: 13 ms, and every
+# hook imports this module whether or not it scrubs anything. The same import used to compile a
+# second copy of this pattern, `_KEY_SAYS_CREDENTIAL`, which nothing had ever used; it is gone.
+_SECRET_WORD_ANYWHERE = _lazy(lambda: re.compile(SECRET_WORDS, re.I))
 
 
 def _branch_cover(seq, sp):
