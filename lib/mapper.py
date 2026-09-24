@@ -131,6 +131,8 @@ SKIPPED_UNPARSEABLE = []
 # and is never rescued: a committed `vendor/` or `node_modules/` is still noise.
 AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp",
                             "logs", "deps"})
+# Workspace directories chamnan writes generated output into. Skipped only under `.chamnan/`.
+WORKSPACE_OUTPUT_DIRS = frozenset({"statistic"})
 # Directories skipped under one of those names. Reported by chamnan-map, because the silence was
 # the half of this defect that could not be argued about -- and note SKIPPED_TOO_LARGE and
 # SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
@@ -1790,6 +1792,13 @@ def indexable(root, nested=None, with_text=False, sniff=True):
         if _gen and _is_generated("/".join(rel_parts), _gen,
                                   lambda: tree.git_folds_case(root)):
             SKIPPED_GENERATED.add("/".join(rel_parts))
+            continue
+        # 🐛 [2026-09-24] (self-measured) Found the first session after 1.31.1 was installed: the
+        # dashboard is now built INTO the workspace, and the next index described its pages as the
+        # repository's source. A path rule rather than a name in SKIP_DIRS, because `statistic/` is
+        # an ordinary directory name in somebody's code; only the one under `.chamnan/` is output.
+        if any(part == ".chamnan" and nxt in WORKSPACE_OUTPUT_DIRS
+               for part, nxt in zip(rel_parts, rel_parts[1:-1])):
             continue
         tracked = _tracked_ambiguous(root)
         dropped = None
