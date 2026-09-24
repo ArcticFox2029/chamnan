@@ -169,7 +169,7 @@ def _cached_scan(paths, reader, tag):
                 continue
             if at and at < st.st_size:          # grew: read the tail only
                 start, base = at, hit["value"]
-        got, at = reader(p, start)
+        got, at = reader(p, start, base)
         if base is not None:
             got = _merge_usage(base, got)
         out[str(p)] = got
@@ -190,13 +190,22 @@ def _merge_usage(a, b):
     for d, c in (b.get("days") or {}).items():
         days.setdefault(d, collections.Counter()).update(c)
     return {"n": int(a.get("n") or 0) + int(b.get("n") or 0),
-            "tot": dict(tot), "days": {d: dict(c) for d, c in days.items()}}
+            "tot": dict(tot), "days": {d: dict(c) for d, c in days.items()},
+            "last": b.get("last") or a.get("last")}
 
 
 # ---------------------------------------------------------------- the panels
 
-def _usage_of(path, start=0):
+def _usage_of(path, start=0, prev=None):
     """One transcript, summarised: totals by kind, and the same totals per calendar day.
+
+    🐛 [2026-09-24] (owner) Every record carrying a usage block was counted, and Claude Code
+    writes ONE RECORD PER CONTENT BLOCK — a thinking block, a text block and each tool call of a
+    single response are separate lines, every one repeating that response's usage. On Lumin-App
+    that was 35,356 counted against 17,569 real requests, so every token total on the dashboard
+    was about double. The blocks of one response are written consecutively, so a record whose
+    (requestId, message id) matches the previous one is skipped; `prev` carries the last key
+    across an incremental read, so a response split by the read boundary is not counted twice.
 
     🔴 Both scans that used to walk every transcript now share this one reader, so a file is
     parsed once per build instead of twice — which is half the saving before the cache is even
@@ -205,6 +214,7 @@ def _usage_of(path, start=0):
     tot = collections.Counter()
     per_day = collections.defaultdict(collections.Counter)
     n, at = 0, start
+    last = (prev or {}).get("last")
     try:
         with path.open(encoding="utf-8", errors="replace") as fh:
             if start:
@@ -219,6 +229,11 @@ def _usage_of(path, start=0):
                 u = (rec.get("message") or {}).get("usage")
                 if not isinstance(u, dict):
                     continue
+                key = [rec.get("requestId"), (rec.get("message") or {}).get("id")]
+                if key != [None, None]:
+                    if key == last:
+                        continue
+                    last = key
                 n += 1
                 day = str(rec.get("timestamp") or "")[:10]
                 for key, field in (("cache_read", "cache_read_input_tokens"),
@@ -233,8 +248,9 @@ def _usage_of(path, start=0):
                     per_day[day]["requests"] += 1
             at = fh.tell()
     except OSError:
-        return {"n": 0, "tot": {}, "days": {}}, start
-    return ({"n": n, "tot": dict(tot), "days": {d: dict(c) for d, c in per_day.items()}}, at)
+        return {"n": 0, "tot": {}, "days": {}, "last": last}, start
+    return ({"n": n, "tot": dict(tot), "days": {d: dict(c) for d, c in per_day.items()},
+             "last": last}, at)
 
 
 def token_kinds():
@@ -247,7 +263,7 @@ def token_kinds():
     is the cheapest kind of token on every host that has caching at all, and the share is the
     number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
     """
-    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage")
+    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v2")
     tot = collections.Counter()
     n = 0
     for row in scanned.values():
@@ -450,7 +466,7 @@ def series():
     # PER DAY now, so the picker drives a comparison over one window instead of two.
     # \U0001F534 The same cached scan `token_kinds` uses, so the two panels cannot disagree about a
     # transcript: one reader, one cache, two views of the result.
-    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage")
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v2")
     for row in scanned.values():
         if not isinstance(row, dict):
             continue

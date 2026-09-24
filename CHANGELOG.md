@@ -21,7 +21,7 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-_Nothing yet._
+- **The dashboard counts each response once.** Claude Code writes one transcript record per content block — a thinking block, a text block and each tool call of one response are separate lines, each repeating the response's usage — and the dashboard counted every line. On the repository it was built on that was 35,356 requests counted against 17,569 real ones, so every token total was about double. A record repeating the previous response's request id is now skipped, including across an incremental read, and the scan cache is re-read once under a new key. `chamnan-report` already kept one record per request and was not affected.
 
 ---
 
