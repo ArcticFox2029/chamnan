@@ -160,6 +160,21 @@ reason rather than dropped.
   `{whole, rank}` where it had written a plain size, and the reader was never taught; any
   workspace with two shortened sections crashed it, which is every recent firing here.
 
+### Verification
+
+```
+6138/6138 checks passed, 3 block(s) skipped on this platform
+```
+
+Quoted from the run on the tagged code, not remembered. The public CI matrix — Ubuntu, macOS and
+Windows on Python 3.8 and 3.13 — is green: `5768/5768` on Ubuntu 3.13, `5766/5766` on macOS,
+`5674/5674` on Windows 3.13. Before the gate, every commit this release pushes was scanned the way
+GitHub push protection scans (added lines, as written and base64-decoded), and chamnan was run over
+[chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus) 1.1.1: 595 source files, 97.1%
+described, seven writing systems, no planted credential in the index, all twenty redaction cases
+loaded.
+
+
 ## What's new in 1.30.0
 
 **Five new questions you can ask the repository, and the answers arrive faster than the last release
