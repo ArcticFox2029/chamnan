@@ -36,6 +36,7 @@ the highest-value tokens in a file for a reader trying to understand intent, and
 index is built out of them. Saving tokens by deleting them would be sawing off the branch.
 """
 import json
+import os
 import shlex
 import re
 import sys
@@ -312,6 +313,16 @@ def _file_a_shell_slice_reads(command):
     if len(parts) < 2 or parts[0].rsplit("/", 1)[-1] not in _SLICERS:
         return ""
     candidates = [a for a in parts[1:] if not a.startswith("-")]
+    # 🐛 [2026-09-24] (self-measured) Found by the Windows CI legs on the 1.31.1 check branch. POSIX
+    # `shlex.split` reads `\` as an escape, so `C:\Users\...\big.md` came back as `C:Users...big.md`,
+    # which is no file, and a run of slices was never counted on Windows. There the split is done
+    # again the platform's way -- backslashes kept, quotes stripped -- before giving up.
+    if os.name == "nt":
+        try:
+            candidates += [a.strip("'\"") for a in shlex.split(text, posix=False)[1:]
+                           if not a.startswith("-")]
+        except ValueError:
+            pass
     # The last bare argument, and only when it names a file that exists — `grep foo` with no path
     # reads stdin, and a pattern is not a path.
     for cand in reversed(candidates):

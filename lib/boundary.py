@@ -116,8 +116,16 @@ def _outside_targets(command, root):
         if raw:
             candidates.append(raw[0].strip("'\""))
     for raw in candidates:
-        p = os.path.expanduser(raw.strip().strip("'\""))
-        if not p.startswith(("/", "~")) or len(p) < 2 or p in seen:
+        # 🐛 [2026-09-24] (self-measured) Found by the Windows CI legs on the 1.31.1 check branch.
+        # The shape test ran AFTER `expanduser`, and on Windows `~/.zshrc` expands to
+        # `C:\Users\...\.zshrc`, which starts with neither `/` nor `~` -- so every write to a home
+        # dotfile was skipped as "not a path" and the guard was silent on the platform. The shape
+        # is judged on what was typed; only then is it expanded.
+        raw = raw.strip().strip("'\"")
+        if not raw.startswith(("/", "~")) or len(raw) < 2:
+            continue
+        p = os.path.expanduser(raw)
+        if p in seen:
             continue
         seen.add(p)
         if not ours(p, root):
