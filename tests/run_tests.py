@@ -41469,6 +41469,173 @@ _src252 = _BUILD252.read_text(encoding="utf-8")
 _old252 = "PLUGIN.parent" + ".parent"
 check("the builder no longer guesses the repository from where the plugin is installed",
       _old252 + "\n" not in _src252 and ("= " + _old252) not in _src252)
+# ---- 253_one_response_is_counted_once_however_many_blocks_it_has.py
+# ------------------ one response is counted once, however many content blocks it was written as
+# 🐛 [2026-09-24] (owner) Claude Code writes one transcript record per content block — thinking,
+# text, each tool call — and every one repeats the response's usage. The dashboard counted each
+# record, so Lumin-App showed 35,356 requests against 17,569 real ones and every token total
+# about double. Driven through the real reader, including a response split by an incremental read.
+import importlib.util as _iu253, json as _js253, pathlib as _pl253, tempfile as _tf253   # noqa: E402
+import shutil as _sh253                                                                # noqa: E402
+
+_spec253 = _iu253.spec_from_file_location("_bs253", ROOT / "statistic" / "build_statistic.py")
+_bs253 = _iu253.module_from_spec(_spec253)
+_spec253.loader.exec_module(_bs253)
+
+
+def _rec253(req, mid, block, out):
+    return _js253.dumps({"type": "assistant", "requestId": req, "timestamp": "2026-09-24T10:00:00Z",
+                         "message": {"id": mid, "content": [{"type": block}],
+                                     "usage": {"input_tokens": 2, "output_tokens": out,
+                                               "cache_read_input_tokens": 1000,
+                                               "cache_creation_input_tokens": 50}}}) + "\n"
+
+
+_dir253 = _pl253.Path(_tf253.mkdtemp(prefix="chamnan-usage-"))
+try:
+    _f253 = _dir253 / "t.jsonl"
+    _first253 = _rec253("r1", "m1", "thinking", 40) + _rec253("r1", "m1", "tool_use", 40)
+    _rest253 = _rec253("r1", "m1", "tool_use", 40) + _rec253("r2", "m2", "text", 7)
+    _f253.write_text(_first253 + _rest253, encoding="utf-8")
+    _whole253, _ = _bs253._usage_of(_f253)
+    check("A RESPONSE WRITTEN AS THREE BLOCKS IS COUNTED AS ONE REQUEST",
+          _whole253["n"] == 2 and _whole253["tot"].get("cache_read") == 2000
+          and _whole253["tot"].get("output") == 47,
+          saw=_whole253)
+    # The same file read in two parts, the boundary falling inside the first response.
+    _cut253 = len(_first253.encode("utf-8"))
+    _f253.write_text(_first253, encoding="utf-8")
+    _a253, _at253 = _bs253._usage_of(_f253, 0)
+    _f253.write_text(_first253 + _rest253, encoding="utf-8")
+    _b253, _ = _bs253._usage_of(_f253, _at253, _a253)
+    _m253 = _bs253._merge_usage(_a253, _b253)
+    check("...AND STILL ONE WHEN AN INCREMENTAL READ SPLITS IT",
+          _at253 == _cut253 and _m253["n"] == 2 and _m253["tot"].get("cache_read") == 2000,
+          saw=(_at253, _cut253, _m253))
+finally:
+    _sh253.rmtree(_dir253, ignore_errors=True)
+# ---- 254_the_dashboard_counts_one_persons_sessions_and_ranks_what_filled_them.py
+# ------------------ the dashboard counts the sessions a person worked, and ranks what filled them
+# 🎯 [2026-09-24] (owner) "คนปกติใช้บัญชีเดียวในการทำงาน" and "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร".
+# The denominator counted script-started sessions (a third of one account's September) and missed
+# every session started in a subdirectory. Driven through a fake config directory: a root session,
+# a subdirectory session, a `claude -p` session, and a sibling repository whose name only starts
+# the same way.
+import importlib.util as _iu254, json as _js254, os as _os254, pathlib as _pl254   # noqa: E402
+import shutil as _sh254, tempfile as _tf254                                     # noqa: E402
+
+_spec254 = _iu254.spec_from_file_location("_bs254", ROOT / "statistic" / "build_statistic.py")
+_bs254 = _iu254.module_from_spec(_spec254)
+_spec254.loader.exec_module(_bs254)
+
+_tmp254 = _pl254.Path(_tf254.mkdtemp(prefix="chamnan-spend-"))
+_env254 = _os254.environ.get("CLAUDE_CONFIG_DIR")
+try:
+    _repo254 = _tmp254 / "proj"
+    (_repo254 / ".chamnan").mkdir(parents=True)
+    (_repo254 / "sub").mkdir()
+    (_tmp254 / "proj-other").mkdir()
+    _bs254.bind(_repo254)
+    _home254 = _tmp254 / "home"
+    _key254 = str(_bs254.ROOT.resolve()).replace("/", "-")
+
+    def _session254(dirname, cwd, entry, lines):
+        d = _home254 / "projects" / dirname
+        d.mkdir(parents=True, exist_ok=True)
+        head = {"type": "user", "cwd": cwd, "entrypoint": entry, "timestamp": "2026-09-24T10:00:00Z",
+                "message": {"content": "fix the parser"}}
+        (d / f"{dirname[-6:]}-{entry}.jsonl").write_text(
+            "\n".join(_js254.dumps(x) for x in [head] + lines) + "\n", encoding="utf-8")
+
+    _ts254 = "2026-09-24T10:00:01Z"
+    _use254 = {"type": "assistant", "requestId": "q1", "timestamp": _ts254,
+               "message": {"id": "a1", "content": [{"type": "tool_use", "id": "t1", "name": "Read"}],
+                           "usage": {"output_tokens": 10, "input_tokens": 1,
+                                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}
+    _res254 = {"type": "user", "timestamp": _ts254,
+               "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "x" * 3800}]}}
+    _root_r = str(_bs254.ROOT.resolve())
+    _session254(_key254, _root_r, "cli", [_use254, _res254])
+    _session254(_key254 + "-sub", _root_r + "/sub", "cli", [])
+    _session254(_key254, _root_r, "sdk-cli", [])
+    _session254(_key254 + "-other", str((_tmp254 / "proj-other").resolve()), "cli", [])
+    _os254.environ["CLAUDE_CONFIG_DIR"] = str(_home254)
+    _got254 = [p.parent.name[len(_key254):] + "/" + p.name.split("-")[-1] for p in _bs254.transcripts()]
+    check("THE DASHBOARD READS INTERACTIVE SESSIONS IN THE REPOSITORY AND ITS SUBDIRECTORIES ONLY",
+          sorted(_got254) == ["-sub/cli.jsonl", "/cli.jsonl"], saw=_got254)
+    _sum254, _ = _bs254._usage_of(next(p for p in _bs254.transcripts() if p.parent.name == _key254))
+    _sp254 = (_sum254.get("spent") or {}).get("2026-09-24", {})
+    check("...AND RANKS A TOOL'S RESULT UNDER THAT TOOL, AND WHAT THE PERSON TYPED APART FROM IT",
+          _sp254.get("Read — file contents") == 3800 and _sp254.get("what you typed") == 14
+          and _sp254.get("the model's own output") == 10 * _bs254.CHARS_PER_TOKEN,
+          saw=_sp254)
+finally:
+    if _env254 is None:
+        _os254.environ.pop("CLAUDE_CONFIG_DIR", None)
+    else:
+        _os254.environ["CLAUDE_CONFIG_DIR"] = _env254
+    _sh254.rmtree(_tmp254, ignore_errors=True)
+# ---- 255_a_closed_thread_is_not_named_when_its_file_opens.py
+# ------------------ a closed thread is history, and the pointer does not name it
+# 🐛 [2026-09-24] (R21 acc5, 2026-09-24) On Lumin-App the most-named entry in 24 days — 56 times, 35 of them as the
+# only thing named — was a thread whose status had been closed since the 1.6.0 batch. Driven through
+# the real `pointer.related` with one open and one closed thread naming the same file.
+import pathlib as _pl255, shutil as _sh255, tempfile as _tf255   # noqa: E402
+import pointer as _pt255                                          # noqa: E402
+
+_ws255 = _pl255.Path(_tf255.mkdtemp(prefix="chamnan-thread-")) / ".chamnan"
+try:
+    (_ws255 / "threads").mkdir(parents=True)
+    (_ws255 / "threads" / "open-one.md").write_text(
+        "# Work on the parser\n\n**Started:** 2026-09-20\n**Status:** open\n\n"
+        "**Files:** `lib/parser.py`\n", encoding="utf-8")
+    (_ws255 / "threads" / "closed-one.md").write_text(
+        "# An old batch\n\n**Started:** 2026-08-28\n**Status:** closed\n\n"
+        "**Files:** `lib/parser.py`, `lib/parser.py`, `lib/parser.py`\n", encoding="utf-8")
+    _hits255 = [p for _l, p, _t in _pt255.related(_ws255, "lib/parser.py")]
+    check("A THREAD MARKED CLOSED IS NOT NAMED WHEN A FILE IT LISTS IS OPENED",
+          _hits255 == ["threads/open-one.md"], saw=_hits255)
+finally:
+    _sh255.rmtree(_ws255.parent, ignore_errors=True)
+# ---- 256_a_handoff_names_what_was_committed_after_the_old_session_stopped.py
+# ------------------ a handoff names what was committed after the old session stopped
+# 🎯 [2026-09-24] (R12 acc5, 2026-09-24) Tested from a research finding (SyncMind: an agent that does not know
+# the repository moved recovered in 0.33-3.33% of cases). A fresh session starts from the handoff,
+# so the handoff has to say what changed after the old conversation's last response — and say
+# nothing when nothing did. Driven through the real `handoff.write_handoff` on a throwaway repo.
+import datetime as _dt256, os as _os256, pathlib as _pl256, shutil as _sh256   # noqa: E402
+import subprocess as _sp256, tempfile as _tf256                               # noqa: E402
+import handoff as _ho256                                                      # noqa: E402
+
+_repo256 = _pl256.Path(_tf256.mkdtemp(prefix="chamnan-handoff-")) / "r"
+try:
+    (_repo256 / ".chamnan").mkdir(parents=True)
+    _env256 = dict(_os256.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+
+    def _git256(*a, when=None):
+        e = dict(_env256)
+        if when:
+            e["GIT_AUTHOR_DATE"] = e["GIT_COMMITTER_DATE"] = when
+        _sp256.run(["git", "-C", str(_repo256)] + list(a), capture_output=True, env=e)
+
+    _git256("init", "-q")
+    (_repo256 / "old.py").write_text("x = 1\n", encoding="utf-8")
+    _git256("add", "old.py"); _git256("commit", "-qm", "before", when="2026-09-20T10:00:00+00:00")
+    _stop256 = _dt256.datetime(2026, 9, 21, 10, 0, tzinfo=_dt256.timezone.utc)
+    _none256 = _ho256.write_handoff(_repo256, "s1", _repo256 / "missing.jsonl", _stop256, "a test")
+    _quiet256 = _none256.read_text(encoding="utf-8") if _none256 else ""
+    (_repo256 / "moved.py").write_text("y = 2\n", encoding="utf-8")
+    _git256("add", "moved.py"); _git256("commit", "-qm", "after", when="2026-09-22T10:00:00+00:00")
+    _done256 = _ho256.write_handoff(_repo256, "s1", _repo256 / "missing.jsonl", _stop256, "a test")
+    _moved256 = _done256.read_text(encoding="utf-8") if _done256 else ""
+    check("A HANDOFF NAMES A FILE COMMITTED AFTER THE OLD SESSION STOPPED",
+          "committed since then" in _moved256 and "`moved.py`" in _moved256
+          and "`old.py`" not in _moved256, saw=_moved256)
+    check("...AND SAYS NOTHING OF THE KIND WHEN NOTHING WAS COMMITTED SINCE",
+          bool(_quiet256) and "committed since then" not in _quiet256, saw=_quiet256)
+finally:
+    _sh256.rmtree(_repo256.parent, ignore_errors=True)
 # ---- 25_the_block_log_answers_what_it_records.py
 # ------------------------------------------- five fixes to blocklog, and no test behind any of them
 # 🐛 [2026-09-09] `check_coverage_audit.py` was written to answer the owner's "go back and find what
