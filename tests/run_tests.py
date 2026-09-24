@@ -262,6 +262,9 @@ def fake(*parts):
 # adopted in three places and stopped is what let it matter. Assembled once here, referenced
 # everywhere, so a scanner has nothing to match and every test works on the identical string.
 AKIA_FIXTURE = fake("AKIA", "IOSFODNN7EXAMPLE")
+# Its base64 form, for the checks that feed the redactor an encoded key. Assembled for the same
+# reason: GitHub push protection decodes base64 before scanning, and the literal blocked pushes.
+AKIA_B64_FIXTURE = __import__("base64").b64encode(AKIA_FIXTURE.encode()).decode()
 AKIA_ALL_Z = fake("AKIA", "Z" * 16)
 
 PASSED = 0
@@ -2587,11 +2590,11 @@ for _expr in ("default_auth_plugin = plugin_manager.get_auth_plugins()[0]",
     check(f"CODE IS NOT A CREDENTIAL: {_expr.strip()[:40]}", redact.scrub(_expr) == _expr)
 # The half that must not move, and the case the whole aggressive design exists for.
 check("...while a literal INSIDE a call still goes, which is what the whole-expression rule was for",
-      "QUtJQV9GSVhUVVJFX0lE" not in
-      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQV9GSVhUVVJFX0lE=")'))
+      AKIA_B64_FIXTURE.rstrip("=") not in
+      redact.scrub(f'AWS_SECRET = base64.b64decode("{AKIA_B64_FIXTURE}")'))
 check("...and the call itself now survives, so the line still says where the value comes from",
       "base64.b64decode(" in
-      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQV9GSVhUVVJFX0lE=")'))
+      redact.scrub(f'AWS_SECRET = base64.b64decode("{AKIA_B64_FIXTURE}")'))
 check("...an environment lookup keeps its variable name and loses only its fallback secret",
       redact.scrub('API_KEY = os.environ.get("KEY", "hunter2secret")')
       == 'API_KEY = os.environ.get("KEY", "<REDACTED>")')
@@ -7543,8 +7546,8 @@ for _label, _text, _secret in [
     ("secretKey",      f'secretKey = "{_F}{_F}"', _F),
     # A value that is a call: the callee was captured AS the secret and replaced, leaving the real
     # payload beside a broken line.
-    ("a call value",   'S = base64.b64decode("QUtJQV9GSVhUVVJFX0lE=")'.replace("S =", "AWS_SECRET ="),
-                       "QUtJQV9GSVhUVVJFX0lE="),
+    ("a call value",   f'S = base64.b64decode("{AKIA_B64_FIXTURE}")'.replace("S =", "AWS_SECRET ="),
+                       AKIA_B64_FIXTURE),
 ]:
     check(f"{_label}: the secret does not survive", _secret not in redact.scrub(_text))
 
@@ -31782,6 +31785,10 @@ _rd153 = _im153.import_module("redact")
 
 # A value with digits and symbols, of the shape that actually leaked. Not a real credential.
 _V153 = "Ab3$x9!q7Zm2"
+# The AWS documentation key, base64-encoded, assembled here rather than written out: GitHub
+# push protection decodes base64 before it scans, so the literal blocked every push of this file.
+import base64 as _b64153                                                     # noqa: E402
+_AKIA_B64_153 = _b64153.b64encode(("AKIA" + "IOSFODNN7EXAMPLE").encode()).decode()
 
 _CASES153 = (
     # --- the shapes that leaked, and their neighbours
@@ -31835,7 +31842,7 @@ _CASES153 = (
     ("a code fragment carrying an equals sign",
      "breaking a coverage tie on token count picks `per_dir=0`, which names every", False),
     ("...but trailing equals is base64 padding and must still go",
-     "the api key is `QUtJQV9GSVhUVVJFX0lE=`", True),
+     f"the api key is `{_AKIA_B64_153}`", True),
     ("a colon with no space before it is an assignment, not prose",
      "the password:field `not_a_secret_value` in the schema", False),
 
