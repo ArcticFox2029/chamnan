@@ -142,7 +142,7 @@ def last_response_at(transcript):
             continue
         try:
             stamp = json.loads(line).get("timestamp")
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if not stamp:
             continue
@@ -177,6 +177,26 @@ def project_dir(repo, config_dir=None):
     return candidate if candidate.is_dir() else None
 
 
+def has_a_message(transcript):
+    """True when a transcript holds at least one user or assistant turn.
+
+    🐛 [2026-09-24] (self-measured) Hit for real by the owner. A transcript can survive with
+    its metadata and no conversation — nine lines of title, mode and cost state, not one message.
+    `claude --resume` on that id answers "No conversation found with session ID", so resuming the
+    newest FILE sent the person straight into an error. Streamed and stopped at the first hit: a
+    real transcript has a message within its first few lines, and one here reached 826 MB.
+    """
+    try:
+        with Path(transcript).open("rb") as fh:
+            for raw in fh:
+                if b'"type":"user"' in raw or b'"type":"assistant"' in raw \
+                        or b'"type": "user"' in raw or b'"type": "assistant"' in raw:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def newest_session(repo, config_dir=None):
     """(session_id, path, last_response_at) for the most recently written transcript, or None.
 
@@ -187,14 +207,20 @@ def newest_session(repo, config_dir=None):
     d = project_dir(repo, config_dir)
     if d is None:
         return None
-    best = None
+    # Newest first, and the first one that is actually a conversation wins. An empty one is
+    # skipped rather than reported: it cannot be resumed, and naming it as "the earlier
+    # conversation" would hand the person an id that fails the moment they try it.
+    dated = []
     for f in d.glob("*.jsonl"):
         try:
-            mtime = f.stat().st_mtime
+            dated.append((f.stat().st_mtime, f))
         except OSError:
             continue
-        if best is None or mtime > best[0]:
+    best = None
+    for mtime, f in sorted(dated, key=lambda mf: mf[0], reverse=True):
+        if has_a_message(f):
             best = (mtime, f)
+            break
     if best is None:
         return None
     return best[1].stem, best[1], last_response_at(best[1])

@@ -47,10 +47,14 @@ chamnan is delivered as a Claude Code plugin and as a plain command-line tool. T
 - `chamnan-age`: which stored knowledge names a version no environment declares any more
 - `chamnan-candidates`: review what the workflow detector has found, quickly
 - `chamnan-context`: this repository's context block on stdout, for any tool on any OS
+- `chamnan-doctor`: is any of this actually running? One command, read-only, allowed to say "cannot tell"
 - `chamnan-env`: the constraints nobody writes down and everybody re-learns
+- `chamnan-explain-context`: why the session did not know something, from what the block carried
+- `chamnan-gotcha`: write the lesson where the next session will hit it
 - `chamnan-guard`: does anything staged for commit look like a secret or new MCP capability?
 - `chamnan-impact`: what breaks if I change this file, and what happened last time it changed
 - `chamnan-map`: build .chamnan/MAP.md from the repository's source, and report what it cost
+- `chamnan-open`: open this repository in Claude Code, resuming only when resuming is cheaper
 - `chamnan-peek`: read the shape of one file instead of the whole thing
 - `chamnan-promote`: turn a one-off script into a tool the repo keeps
 - `chamnan-recall`: what do the stores already say about this, before you start from scratch

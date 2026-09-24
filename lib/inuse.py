@@ -20,19 +20,25 @@ import os
 import pathlib
 import subprocess
 
+import workspace as ws
+
 # 🐛 [2026-09-23] (self-measured) This was `("inuse", "grep", "ps ")` — a substring test against the whole command
 # line — and the check written for it created its fixture in a temp directory called
 # `chamnan-inuse-XXXX`. The running script's own path therefore contained "inuse" and every real
 # hit was filtered out; the standalone probe passed only because ITS temp directory did not. A
 # filter that matches anywhere in a path is the same shape as the blanket-replace lesson.
 _SKIP_EXACT = ("inuse.py",)          # this module, when something runs it directly
-_SKIP_HEAD = ("ps ", "/bin/ps", "grep ", "/usr/bin/grep")
+# 🐛 [2026-09-24] (self-measured) Written as command-line PREFIXES, `/usr/bin/grep` included, and
+# tested with `head.endswith("ps")` — so any program whose name merely ends in "ps" (`apps`,
+# `gps`) was skipped as though it were the question, and an absolute path sat in a runtime file
+# that has to work where `grep` lives somewhere else. The program's own NAME is what identifies it.
+_SKIP_PROGRAMS = ("ps", "grep")
 
 
 def _is_the_question_itself(cmd):
     """True for the processes that are ASKING, rather than ones that are running the file."""
     head = cmd.split(" ", 1)[0]
-    return (any(cmd.startswith(h) or head.endswith(h.strip("/ ")) for h in _SKIP_HEAD)
+    return (head.rsplit("/", 1)[-1] in _SKIP_PROGRAMS
             or any(cmd.endswith(x) or f"{x} " in cmd for x in _SKIP_EXACT))
 
 
@@ -42,9 +48,9 @@ def users_of(path):
         name = pathlib.Path(path).name
         if not name:
             return []
-        out = subprocess.run(["ps", "-Ao", "pid=,command="],
-                             capture_output=True, text=True, timeout=3).stdout
-    except (OSError, subprocess.SubprocessError):
+        out = subprocess.run(["ps", "-Ao", "pid=,command="], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=3).stdout
+    except ws.git_cannot_answer():       # every way running a program fails, WASM included
         return []
     skip = {str(os.getpid()), str(os.getppid())}
     hits = []

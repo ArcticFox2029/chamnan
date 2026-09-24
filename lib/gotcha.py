@@ -99,7 +99,7 @@ def repeats(wsdir, minimum=REPEATS):
     for line in rows:
         try:
             row = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         k = key(row)
         if not k:

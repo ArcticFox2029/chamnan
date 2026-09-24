@@ -490,8 +490,27 @@ def rules_text(root, refuse_conflicts=False):
                                -mtime_or_zero(pb[0]), pb[0].name))
     rule_paths = [path for path, _b in _read]
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
+    # 🐛 [2026-09-24] (self-measured) Found running the corpus; claude-code#29971 reports the
+    # host itself does no deduplication of injected content. Every file was rendered, so a store
+    # holding one title in many files spent the budget on repeats — 35 titles delivered, 7 distinct,
+    # one of them 22 times — and cut rules that were different to make room. The first file with a
+    # title carries the body; the others are NAMED on it, so nothing becomes unreachable, and a
+    # reader who needs the variants knows exactly which files to open.
+    _first_by_title, _also = {}, {}
     for path, body in _read:
         body = body.strip()
+        if not body or path in collision_of or unresolved_conflict(body):
+            continue
+        _key = mdblock.one_line(title_of(path, body)).strip().casefold()
+        if _key in _first_by_title:
+            _also.setdefault(_first_by_title[_key], []).append(path)
+        else:
+            _first_by_title[_key] = path
+    _repeats = {p for group in _also.values() for p in group}
+    for path, body in _read:
+        body = body.strip()
+        if path in _repeats:
+            continue
         # 🐛 [2026-09-06] `title_of(path)` was called with no body, at five sites in this loop, so
         # every rule file was read a further FOUR times to recover a heading the caller already had
         # in `body`. Measured by instrumenting the real hook sequence: 1,500 `read_text` calls for
@@ -524,7 +543,12 @@ def rules_text(root, refuse_conflicts=False):
             # section-level close stops the damage escaping the section, and leaves the
             # rules after the broken one swallowed exactly as before. Balancing here also
             # means both cuts below operate on text whose fences already match.
-            out.append(mdblock.close_dangling_fence(_flatten(body)))
+            _text = mdblock.close_dangling_fence(_flatten(body))
+            if path in _also:
+                _text += ("\n\n_The same title is also in "
+                          + ", ".join(f"`{mdblock.as_quoted(o.name)}`" for o in _also[path])
+                          + " — not repeated here._")
+            out.append(_text)
             titles.append((title, path.name))
     if not out:
         return ""

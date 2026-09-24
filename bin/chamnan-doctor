@@ -2,7 +2,9 @@
 """chamnan-doctor — is any of this actually running? One command, read-only, allowed to say "cannot tell".
 
   chamnan-doctor                 everything, worst first
-  chamnan-doctor --quiet         only what is wrong
+  chamnan-doctor --quiet, -q     only what is wrong
+  -h, --help                     this text
+  -v, --version                  the version this build is
 
 🎯 [1.31, a second reader's #2 after the 2026-09-23 round] The number of machines in this package
 keeps growing — hooks, routers, guards, coverage instruments — and nothing said which of them is
@@ -18,6 +20,7 @@ anywhere — it reads files that already exist and says what they say.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -47,11 +50,15 @@ def _age_days(path):
 
 
 def _git(root, *args):
+    # Asked first, like every other `git -C <root>` caller: without it, a directory that is not
+    # itself a checkout gets answers about whatever repository happens to sit above it.
+    if not ws.git_can_speak_for(root):
+        return ""
     try:
         out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                             timeout=10)
+                             encoding="utf-8", errors="replace", timeout=10)
         return out.stdout.strip() if out.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         return ""
 
 
@@ -69,7 +76,7 @@ def which_plugin(lines):
         seen += 1
         try:
             data = json.loads(settings.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             lines.append((UNKNOWN, f"{settings} exists but does not parse — cannot say which "
                                    f"plugin this host loads"))
             continue
@@ -86,7 +93,7 @@ def which_hooks(root, wsdir, lines):
     reg = HERE.parent / "hooks" / "hooks.json"
     try:
         data = json.loads(reg.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         lines.append((BAD, "hooks/hooks.json is missing or unreadable — nothing is registered"))
         return
     names = set()
@@ -96,7 +103,17 @@ def which_hooks(root, wsdir, lines):
         for entry in entries:
             for hook in entry.get("hooks", []):
                 cmd = hook.get("command", "")
-                names.add(Path(cmd.strip('"').split()[-1]).name)
+                # 🐛 [2026-09-24] (self-measured) `split()[-1]` took the LAST word, and a
+                # registration gained an argument in d09f277 — so `--post` was reported as a hook
+                # file "MISSING ON DISK" on every run, the same misreading the suite's own two
+                # readers of this file were fixed for that night. The program is the FIRST word,
+                # read the way a shell reads it, quotes and all.
+                try:
+                    words = shlex.split(cmd)
+                except ValueError:
+                    words = cmd.strip('"').split()
+                if words:
+                    names.add(Path(words[0]).name)
     missing = [n for n in sorted(names)
                if n and not (HERE.parent / "hooks" / n).is_file()]
     lines.append((BAD if missing else OK,
@@ -121,8 +138,8 @@ def which_silence(root, lines):
         return
     try:
         out = subprocess.run([sys.executable, str(tool), "--quiet"], capture_output=True,
-                             text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError):
+                             text=True, encoding="utf-8", errors="replace", timeout=120)
+    except ws.git_cannot_answer():
         lines.append((UNKNOWN, "silence.py exists but would not run"))
         return
     tail = [l.strip() for l in out.stdout.splitlines() if l.strip()]
@@ -223,8 +240,8 @@ def which_loops(root, lines):
         return
     try:
         out = subprocess.run([sys.executable, str(tool), "--quiet"], capture_output=True,
-                             text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError):
+                             text=True, encoding="utf-8", errors="replace", timeout=120)
+    except ws.git_cannot_answer():
         lines.append((UNKNOWN, "invariant_map.py exists but would not run"))
         return
     tail = [l.strip() for l in out.stdout.splitlines() if l.strip()]
@@ -232,7 +249,9 @@ def which_loops(root, lines):
                   tail[-1][:120] if tail else "invariant_map said nothing"))
 
 
-KNOWN_FLAGS = ("--quiet", "-q", "--count", "-C", "-h", "--help", "-v", "--version")
+# `--count` and `-C` were listed here and read nowhere, so they were accepted and did nothing — a
+# flag that is silently ignored is the misspelling this list exists to refuse, wearing a real name.
+KNOWN_FLAGS = ("--quiet", "-q", "-h", "--help", "-v", "--version")
 
 
 def main(argv):
@@ -258,7 +277,11 @@ def main(argv):
     root = ws.find_root() or Path(os.getcwd())
     wsdir = ws.workspace(root)
     if not wsdir.is_dir():
-        print(f"chamnan-doctor: no workspace under {root} — run chamnan-map once to create one")
+        # The sentence every sibling prints, word for word, so the next step reads the same
+        # whichever command a person happened to try first.
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
         return 2
 
     lines = []

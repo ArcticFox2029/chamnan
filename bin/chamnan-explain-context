@@ -3,6 +3,8 @@
 
   chamnan-explain-context              the last session start, and the trend behind it
   chamnan-explain-context --all        every section, including the ones that arrived whole
+  -h, --help                           this text
+  -v, --version                        the version this build is
 
 When an agent misses something this repository has written down, there are two explanations and
 they need opposite fixes: the knowledge is not recorded, or it is recorded and did not fit. Only
@@ -42,7 +44,7 @@ def _rows(wsdir):
             for line in fh:
                 try:
                     rec = json.loads(line)
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue              # a torn append is one lost firing, not a broken answer
                 if isinstance(rec, dict) and rec.get("sec"):
                     out.append(rec)

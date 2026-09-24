@@ -21,13 +21,14 @@ for anybody who wants the harder version in a pre-commit hook they installed the
 """
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import canonical  # noqa: E402
 import redact  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -46,13 +47,15 @@ print = redact.emit_prescrubbed  # noqa: A001
 # the fix, in a comment dated the same day: a name is an invocation only in COMMAND POSITION, the
 # first word of a segment or straight after an interpreter. Reused rather than rewritten, because
 # a fourth copy of this idea is how the copies drift apart.
+# 🐛 [2026-09-24] (self-measured) "Reused rather than rewritten" above, and then the segment
+# pattern was copied in verbatim; the gate's one-question-one-pattern sweep named the pair. The cut
+# now comes from `canonical.segments`, so the two cannot disagree about where a command ends.
 _INTERPRETERS = {"nohup", "caffeinate", "exec", "command", "time", "env", "xargs", "sudo"}
-_SEGMENT = re.compile(r"\s*(?:\|\||&&|[;|&\n])\s*")
 
 
 def _is_commit(command):
     """True when this command line actually RUNS `git commit`, not merely contains the words."""
-    for segment in _SEGMENT.split(command):
+    for segment in canonical.segments(command):
         try:
             words = shlex.split(segment)
         except ValueError:            # unbalanced quotes — fall back to whitespace
@@ -81,7 +84,7 @@ def main():
     try:
         payload = json.load(sys.stdin)
         payload = payload if isinstance(payload, dict) else {}
-    except (ValueError, OSError):
+    except (ValueError, RecursionError, OSError):
         return 0
     if (payload.get("tool_name") or "") != "Bash":
         return 0
@@ -104,7 +107,8 @@ def main():
         # shown. A false success made while wiring up the fix for false successes. Both streams
         # are read, because which one a warning uses is the guard's choice, not this hook's.
         _r = subprocess.run([sys.executable, str(guard)], cwd=str(root), capture_output=True,
-                            text=True, timeout=20, env=dict(os.environ))
+                            text=True, encoding="utf-8", errors="replace", timeout=20,
+                            env=dict(os.environ))
         out = ((_r.stdout or "") + (_r.stderr or "")).strip()
     except Exception:                                             # noqa: BLE001
         return 0
@@ -112,7 +116,11 @@ def main():
         print(out, file=sys.stderr)
         try:
             ws.append_jsonl(root, "logs/commit_guard.jsonl",
-                            {"at": ws.now_iso() if hasattr(ws, "now_iso") else "",
+                            # 🐛 [2026-09-24] (self-measured) This asked for `ws.now_iso`, which
+                            # does not exist, behind a `hasattr` that hid it — so every row was
+                            # written with an empty `at` and nothing could say WHEN a key was
+                            # caught. The stamp every sibling hook writes, spelled out here.
+                            {"at": datetime.now().astimezone().isoformat(timespec="seconds"),
                              "flagged": True}, 500)
         except Exception:                                         # noqa: BLE001
             pass

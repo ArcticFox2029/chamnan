@@ -86,7 +86,11 @@ _DISCARD = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/")
 
 def ours(path, root):
     """True when writing `path` is ordinary work: inside the checkout, scratch, or discarded."""
-    if str(path).startswith(_DISCARD):
+    # 🐛 [2026-09-24] (R1 session 2026-09-24; the unzipper prefix-check CVEs) `startswith` with no
+    # separator boundary, so `/dev/null-anything` and `/dev/ttys001` — another person's terminal —
+    # counted as discarded output. A device is matched whole; only `/dev/fd/` names a directory.
+    _p = str(path)
+    if any(_p == d or (d.endswith("/") and _p.startswith(d)) for d in _DISCARD):
         return True
     if root and _inside(path, root):
         return True

@@ -71,6 +71,16 @@ _INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "dash", "ksh", 
 _SEGMENT = re.compile(r"\s*(?:\|\||&&|[;|&\n])\s*")
 
 
+def segments(command):
+    """`command` cut into the pieces a shell runs separately — at `;`, `&&`, `||`, `|`, `&`, newline.
+
+    Public because a second reader needs exactly this cut: `hooks/chamnan_commit_guard.py` asks
+    whether a segment's command position is `git commit`. It carried its own copy of the pattern,
+    and two copies of one question drift apart the first time either is fixed.
+    """
+    return _SEGMENT.split(command)
+
+
 def _scripts_in(command):
     """Every token of `command` that is a script being INVOKED, not merely named."""
     found = []

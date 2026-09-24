@@ -148,7 +148,7 @@ def _within_age(lines, now=None):
     for i, line in enumerate(lines):
         try:
             at = json.loads(line).get("at")
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RecursionError):
             return list(lines[i:])
         if not isinstance(at, (int, float)) or at >= cutoff:
             return list(lines[i:])

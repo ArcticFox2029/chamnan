@@ -3,6 +3,9 @@
 
     chamnan-open [<repo>] [-- <extra claude args>]
     chamnan-open --dry-run        # say what it would do, launch nothing
+    chamnan-open --fresh          # start a new conversation whatever the last one was
+    chamnan-open -h, --help       # this text
+    chamnan-open -v, --version    # the version this build is
 
 **Why this is a launcher and not a hook.** By the time a SessionStart hook runs, Claude Code has
 already loaded the transcript and the first request will re-send it; a hook can report the cost but
@@ -30,10 +33,7 @@ import workspace as ws  # noqa: E402
 print = redact.emit  # noqa: A001
 
 
-KNOWN_FLAGS = ("--dry-run", "-h", "--help", "-v", "--version")
-
-
-KNOWN_FLAGS = ("--dry-run", "-h", "--help", "-v", "--version")
+KNOWN_FLAGS = ("--dry-run", "--fresh", "-h", "--help", "-v", "--version")
 
 
 def main(argv):
@@ -48,7 +48,11 @@ def main(argv):
         print(__doc__.strip())
         return 0
     dry = "--dry-run" in argv
-    argv = [a for a in argv if a != "--dry-run"]
+    # 🎯 [owner 2026-09-24] The way out has to exist without editing anything on disk. When a
+    # conversation cannot be continued — whatever the reason — the person needs one word that
+    # starts clean, and the earlier transcript is kept exactly as it is.
+    fresh = "--fresh" in argv
+    argv = [a for a in argv if a not in ("--dry-run", "--fresh")]
     extra = []
     if "--" in argv:
         cut = argv.index("--")

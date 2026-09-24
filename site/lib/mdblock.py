@@ -83,9 +83,12 @@ def fenced_lines(text):
 # always said this function does.
 _WHITESPACE = "\t\n\v\f\r"
 _CONTROLS = str.maketrans(
-    {**{c: " " for c in _WHITESPACE},
+    {**{c: " " for c in _WHITESPACE + "\x85"},
      **{c: None for c in
         [chr(i) for i in range(0x20) if chr(i) not in _WHITESPACE] + [chr(0x7F)]
+        # 🐛 [2026-09-24] (self-measured) C1 as well as C0 — the gap `redact._TERMINAL_SAFE` had,
+        # found in the same sweep. U+0085 (NEL) is a line break, so it is folded with the rest.
+        + [chr(i) for i in range(0x80, 0xA0) if chr(i) != "\x85"]
         + [chr(i) for i in range(0x202A, 0x202F)]
         + [chr(i) for i in range(0x2066, 0x206A)]
         + ["\u200b", "\ufeff"]}})

@@ -3133,6 +3133,11 @@ _CHAT_TEMPLATE_SENTINEL = re.compile(r"<\|([^\s<>|]+)\|>")
 _TERMINAL_SAFE = str.maketrans({
     **{chr(i): None for i in range(0x20) if chr(i) not in "\n\t"},
     chr(0x7F): None,
+    # 🐛 [2026-09-24] (R1 session 2026-09-24; Trail of Bits 2025-04 on ANSI escapes in tool
+    # output) C0 and DEL were here and C1 was not — U+0080..U+009F, where U+009B is a one-character
+    # CSI that some terminals honour exactly like ESC [. Measured: `for_a_terminal("b\x9b31mc")`
+    # came back with the control intact. The same set as the line above, one block further up.
+    **{chr(i): None for i in range(0x80, 0xA0)},
     **{chr(i): None for i in range(0x202A, 0x202F)},
     # 🐛 [2026-09-07] Extended from 0x206A to 0x2070, and the four before it added, after deriving
     # the full set: 66 format code points survived this table. Most of them stay, deliberately.

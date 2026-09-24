@@ -9163,6 +9163,10 @@ _de_silent = {
     # about a file this command never opens — and it is most useful in a repository chamnan has
     # never indexed, where the question "resume or not" is the same question.
     "chamnan-open": "reads the host's transcripts and needs no workspace at all",
+    # Verified by reading it through before exempting, as the list's own comment asks: it writes
+    # one comment above one line of the file it is handed and never opens `.chamnan/`, so the
+    # create-a-workspace sentence would be advice about a directory it does not use.
+    "chamnan-gotcha": "writes one comment into one named file and needs no workspace at all",
 }
 _de_missing = []
 for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
@@ -10408,14 +10412,18 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # from "old". `coedit._git_edits` asks `git log --name-only` what the last sitting touched, a
 # TWENTIETH: the churn ranking answers which files change often, this answers which ones YOU were
 # in last, and the two disagree on exactly the file somebody came back to finish.
+# Raised 2026-09-24 from 28 to 29 — found by the gate a day late, the same way as the last raise.
+# `deps._run` asks `git log --follow` and `git show <commit>:<manifest>` what a dependency manifest
+# listed before and after, a TWENTY-FIRST purpose: no other site reads a manifest's history, and
+# "this repository once used that library and stopped" is only in those commits.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 28, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 29, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-eight call sites serve twenty read-only paths"
+      and "Twenty-nine call sites serve twenty-one read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -14004,7 +14012,11 @@ check("a file that is ONLY the Xcode header is left undescribed rather than wron
 # no claim. Every directory holding Python is walked now, and bench/ is the one place `claude` is
 # permitted — it is a maintainer harness that measures the plugin's real cost by running the real
 # CLI, and the plugin itself never invokes it.
-_exec_allowed, _exec_found, _exec_bad = {"git"}, [], []
+# 🎯 [owner, 2026-09-24] `ps` joined the set with `lib/inuse.py` — the guard that warns before an
+# edit to a file a live process is running, after one such edit cost five dispatched jobs. The
+# README's subprocess row names it in the same sentence as `git`; the sibling sweep further down
+# (`_T_ALLOWED_CONST96`) carries the identical set, and the two move together or not at all.
+_exec_allowed, _exec_found, _exec_bad = {"git", "ps"}, [], []
 _exec_dirs = ("lib", "hooks", "bin", "bench", "install")
 _exec_files = []
 for _d in _exec_dirs:
@@ -14032,8 +14044,8 @@ for _pyf in sorted(_exec_files):
         # by hand below, because a test that silently skips what it cannot read is the vacuous kind.
         if isinstance(_argv, (_pa.List, _pa.Tuple)) and _argv.elts:
             _first = _argv.elts[0]
-            if isinstance(_first, _pa.Constant) and _first.value == "git":
-                _exec_found.append((_where, "git"))
+            if isinstance(_first, _pa.Constant) and _first.value in _exec_allowed:
+                _exec_found.append((_where, _first.value))
             elif (isinstance(_first, _pa.Attribute) and _first.attr == "executable"):
                 _exec_found.append((_where, "sys.executable"))
             elif (isinstance(_first, _pa.Constant) and _first.value == "claude"
@@ -14047,6 +14059,10 @@ for _pyf in sorted(_exec_files):
             _prev = "\n".join(_src[max(0, _node.lineno - 12):_node.lineno])
             if f"{_argv.id} = [sys.executable" in _prev:
                 _exec_found.append((_where, "sys.executable"))
+            # `lib/deps.py` builds `argv = ["git", ...]` and then `.extend()`s it, so the sweep
+            # that reads argv heads can see the head; this branch is the reader half of that.
+            elif f'{_argv.id} = ["git"' in _prev:
+                _exec_found.append((_where, "git"))
             elif f'{_argv.id} = [\n        "claude"' in _prev and _pyf.parent.name == "bench":
                 _exec_found.append((_where, "claude (bench only)"))
             elif f'{_argv.id} = ["claude"' in _prev and _pyf.parent.name == "bench":
@@ -21517,6 +21533,18 @@ if _CAN_DENY_WRITE:
         # Read-only, like the other `None` entries: it parses source and prints, and the argv it
         # needs is a symbol name rather than anything that could write.
         "chamnan-where": None,
+        # 🐛 [2026-09-24] (self-measured) The four commands 1.31 added were never put in this table,
+        # so the sweep had been failing on its own completeness check since they shipped. Each one
+        # was read through before being classified, rather than defaulted to `None`:
+        #   doctor / explain-context read logs and the registry and print; they write nothing.
+        #   open replaces itself with `claude` — running it here would launch a session, so it is
+        #        classified by reading, not by running: it writes nothing before the exec.
+        #   gotcha is a writer, of a SOURCE file the caller names rather than the workspace, so it
+        #        runs, and its "recorded at" line must name a file that exists.
+        "chamnan-doctor": None,
+        "chamnan-explain-context": None,
+        "chamnan-open": None,
+        "chamnan-gotcha": ["src/a.py", "return 1", "a lesson about this line"],
     }
     _nw_commands = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*") if p.suffix != ".cmd")
     check("the write-honesty sweep knows about every command that ships",
@@ -37881,7 +37909,7 @@ if _t_ws213 is not None:
             _sp213.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                        cwd=str(_t_fix213), capture_output=True)
 
-            _t_order213 = [g["hooks"][0]["command"].rsplit("/", 1)[-1].rstrip('"')
+            _t_order213 = [Path(shlex.split(g["hooks"][0]["command"])[0]).name
                            for g in _js213.loads(
                                (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
                            )["hooks"]["PreToolUse"]]
@@ -48237,7 +48265,7 @@ _T_SPAWN96 = {"run", "Popen", "call", "check_call", "check_output"}
 # The module, however it was imported. A call on anything else named `run` is not a process.
 _T_MODULES96 = {"subprocess", "sp", "_sp", "_sp89"}
 # What an argv head may be, and why. `sys.executable` is this interpreter; a name is resolved below.
-_T_ALLOWED_CONST96 = {"git"}
+_T_ALLOWED_CONST96 = {"git", "ps"}      # same set as `_exec_allowed`, and the README row
 
 _t_spawns96, _t_unknown96 = [], []
 for _t_f96 in _t_files96:
@@ -48327,7 +48355,7 @@ _t_other96 = sorted({b for _w, b in _t_spawns96
                      if not b.startswith("<") and b not in _T_ALLOWED_CONST96})
 check("THE ONLY BINARY THIS PACKAGE NAMES OUTRIGHT IS THE ONE THE README SAYS IT RUNS",
       not _t_other96,
-      saw="%s — the README tells an auditor this package runs `git` and this interpreter, and that "
+      saw="%s — the README tells an auditor this package runs `git`, `ps` and this interpreter, and that "
           "sentence is what becomes false" % ", ".join(_t_other96))
 
 # --- 2. Nothing is handed to a shell to parse.
@@ -49430,35 +49458,40 @@ check("...and the two readings are distinct, so the field can separate them",
 # and this is the other half: a script is read from disk AS it runs.
 import inuse as _iu  # noqa: E402
 
-_iu_dir = Path(tempfile.mkdtemp(prefix="chamnan-inuse-"))
-_iu_script = _iu_dir / "sleeper.sh"
-_iu_script.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
-_iu_script.chmod(0o755)
-_iu_doc = _iu_dir / "notes.md"
-_iu_doc.write_text("about sleeper.sh\n", encoding="utf-8")
-_iu_proc = subprocess.Popen(["/bin/sh", str(_iu_script)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-try:
-    time.sleep(0.4)               # let the process appear in the table
-    _iu_said = _iu.advice("Edit", {"file_path": str(_iu_script)})
-    check("EDITING A SCRIPT THAT IS RUNNING RIGHT NOW IS SAID BEFORE THE EDIT",
-          "running right now" in _iu_said and "sleeper.sh" in _iu_said, saw=_iu_said[:180])
-    check("...and it names the process, so it can be checked rather than believed",
-          str(_iu_proc.pid) in _iu_said or "pid" in _iu_said, saw=_iu_said[:120])
-    check("...and nothing is blocked", "Nothing is blocked" in _iu_said)
-    # 🔴 A document is not a program. Editing a .md that merely NAMES a running script is ordinary
-    # work, and a guard that fires on it is one people switch off.
-    check("...while a DOCUMENT is not a program, whatever it mentions",
-          _iu.advice("Edit", {"file_path": str(_iu_doc)}) == "",
-          saw=_iu.advice("Edit", {"file_path": str(_iu_doc)}))
-finally:
-    _iu_proc.terminate()
-    _iu_proc.wait(timeout=5)
-time.sleep(0.3)
-check("...and once it has stopped, the same edit is not interrupted",
-      _iu.advice("Edit", {"file_path": str(_iu_script)}) == "",
-      saw=_iu.advice("Edit", {"file_path": str(_iu_script)}))
-_rmtree(_iu_dir, ignore_errors=True)
+# `inuse` asks `ps`, which Windows does not have, and the fixture runs a POSIX shell script —
+# so the whole block is POSIX-only, and says so rather than failing where it cannot mean anything.
+if _POSIX:
+    _iu_dir = Path(tempfile.mkdtemp(prefix="chamnan-inuse-"))
+    _iu_script = _iu_dir / "sleeper.sh"
+    _iu_script.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    _iu_script.chmod(0o755)
+    _iu_doc = _iu_dir / "notes.md"
+    _iu_doc.write_text("about sleeper.sh\n", encoding="utf-8")
+    _iu_proc = subprocess.Popen(["/bin/sh", str(_iu_script)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(0.4)               # let the process appear in the table
+        _iu_said = _iu.advice("Edit", {"file_path": str(_iu_script)})
+        check("EDITING A SCRIPT THAT IS RUNNING RIGHT NOW IS SAID BEFORE THE EDIT",
+              "running right now" in _iu_said and "sleeper.sh" in _iu_said, saw=_iu_said[:180])
+        check("...and it names the process, so it can be checked rather than believed",
+              str(_iu_proc.pid) in _iu_said or "pid" in _iu_said, saw=_iu_said[:120])
+        check("...and nothing is blocked", "Nothing is blocked" in _iu_said)
+        # 🔴 A document is not a program. Editing a .md that merely NAMES a running script is ordinary
+        # work, and a guard that fires on it is one people switch off.
+        check("...while a DOCUMENT is not a program, whatever it mentions",
+              _iu.advice("Edit", {"file_path": str(_iu_doc)}) == "",
+              saw=_iu.advice("Edit", {"file_path": str(_iu_doc)}))
+    finally:
+        _iu_proc.terminate()
+        _iu_proc.wait(timeout=5)
+    time.sleep(0.3)
+    check("...and once it has stopped, the same edit is not interrupted",
+          _iu.advice("Edit", {"file_path": str(_iu_script)}) == "",
+          saw=_iu.advice("Edit", {"file_path": str(_iu_script)}))
+    _rmtree(_iu_dir, ignore_errors=True)
+else:
+    skip("  [SKIP] running-script edit guard — it asks `ps`, which this platform does not have")
 
 # ---------------------------------- 4,144 lessons nobody could reach
 # ENFORCES: memory/rules/a-bad-result-earns-a-gotcha.md

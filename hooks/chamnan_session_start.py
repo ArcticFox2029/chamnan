@@ -1748,6 +1748,16 @@ def main():
                            f"own workspace up to date by itself the next time it is opened.\n")
 
         newer = ws.reconcile_version(root, ws.plugin_version(HERE.parent))
+        # 🐛 [2026-09-24] (self-measured) Found running the corpus. An unreadable `.version`
+        # took the downgrade branch below, so the banner said "set up by an unreadable version. An
+        # older build is live … restart … `claude plugin update`" — sending somebody to reinstall
+        # for a defect in a repository file, which `reconcile_version` had already rewritten by the
+        # time the sentence was printed. Nothing is behind; say what happened, once.
+        if newer == ws.UNREADABLE_VERSION:
+            out.append(f"\n_`.chamnan/.version` did not hold a version number, so it was rewritten "
+                       f"to {ws.plugin_version(HERE.parent)}. Nothing needs installing or "
+                       f"restarting; if the file is committed, commit the repaired one._\n")
+            newer = ""
         if newer:
             out.append(f"\n**⚠ This session is running chamnan {ws.plugin_version(HERE.parent)}, but "
                        f"this repository has already been set up by {newer}.** An older build is live "

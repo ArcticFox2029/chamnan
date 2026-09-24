@@ -1945,6 +1945,12 @@ def _as_tuple(version):
     return tuple(out[:3]) + (pre,)
 
 
+# What `reconcile_version` returns when `.version` held something that is not a version at all. A
+# name rather than a literal at both ends, because the caller must tell it apart from a real
+# version string: the two mean different things and call for different sentences.
+UNREADABLE_VERSION = "an unreadable version"
+
+
 def reconcile_version(root, running):
     """Record the newest version that has touched this workspace; report a DOWNGRADE.
 
@@ -1996,7 +2002,7 @@ def reconcile_version(root, running):
         # instead of every session forever. What is given up is knowing which version was recorded,
         # and that was already unknowable: the string could not be parsed.
         atomic_write_text(path, running + "\n")
-        return "an unreadable version"
+        return UNREADABLE_VERSION
     if seen and _as_tuple(running) < _as_tuple(seen):
         return seen
     # \U0001f41b [2026-09-10] Both writes above and here were `Path.write_text`, which TRUNCATES on

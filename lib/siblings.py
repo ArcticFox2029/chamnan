@@ -94,7 +94,7 @@ def advice(tool, tool_input, root):
     hits = also_in(needle, target, root)
     if not hits:
         return ""
-    names = [str(p.relative_to(pathlib.Path(root).resolve())) for p in hits[:NAME_LIMIT]]
+    names = [p.relative_to(pathlib.Path(root).resolve()).as_posix() for p in hits[:NAME_LIMIT]]
     more = len(hits) - len(names)
     return ("chamnan: this exact text is also in %s%s. The most-recorded failure here is a fix "
             "landing on one member of a set and being forgotten in the identical ones beside it — "

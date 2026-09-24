@@ -133,7 +133,7 @@ def main():
     try:
         payload = json.load(sys.stdin)
         payload = payload if isinstance(payload, dict) else {}
-    except (ValueError, OSError):
+    except (ValueError, RecursionError, OSError):
         return 0
     record(payload)
     # Nothing is printed. A failure the session can already see does not need chamnan to repeat it,

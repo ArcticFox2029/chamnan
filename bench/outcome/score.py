@@ -62,8 +62,16 @@ def _behaviour(workdir, task):
 
 def _regression(workdir, task):
     spec = task["regression"]
+    # 🐛 [2026-09-24] (self-measured) This ran `spec["cmd"]` as written, so the harness executed
+    # whatever program a task file named — the one call site in the tree the executed-binaries
+    # sweep could not read, against a README that says what runs. Every task's command is a Python
+    # test, so it runs under THIS interpreter (the one the harness was started with, rather than
+    # whichever `python3` is first on PATH), and a task naming anything else is not scored.
+    cmd = list(spec.get("cmd") or [])
+    if not cmd or pathlib.Path(str(cmd[0])).name not in ("python", "python3"):
+        return UNKNOWN
     try:
-        rc = subprocess.run(spec["cmd"], cwd=str(workdir), capture_output=True,
+        rc = subprocess.run([sys.executable, *cmd[1:]], cwd=str(workdir), capture_output=True,
                             text=True, timeout=300).returncode
     except (OSError, subprocess.SubprocessError):
         return UNKNOWN
