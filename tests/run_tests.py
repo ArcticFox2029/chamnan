@@ -49837,7 +49837,7 @@ subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_tool_failed.py")],
                input=json.dumps({"cwd": str(_fl_bare), "hook_event_name": "PostToolUseFailure",
                                  "tool_name": "Bash", "tool_input": {"command": "x"},
                                  "error": "Exit code 1"}),
-               capture_output=True, text=True)
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("RECORDING NEVER SCAFFOLDS A WORKSPACE WHERE THERE IS NONE",
       not (_fl_bare / ".chamnan").exists(), saw=sorted(p.name for p in _fl_bare.iterdir()))
 

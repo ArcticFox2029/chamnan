@@ -150,8 +150,14 @@ def _scratch_hook_worker(fixture_root, hook_path, idx):
         "tool_input": {"file_path": f"/tmp/scratch_worker_{idx}.py", "content": content},
     })
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(fixture_root))
+    # 🐛 [2026-09-24] (self-measured) The Windows Python 3.8 leg of the 1.31.2 check branch counted 59 of
+    # 60 entries. Two things were wrong with the harness, not the lock: `text=True` with no encoding
+    # decoded the hook's output as cp1252 and the reader thread died on a UTF-8 byte (0x90), and a
+    # 30-second timeout is short for sixty interpreters starting at once on that runner — a hook
+    # killed before it writes is a missing entry that says nothing about the lock under test.
     subprocess.run([sys.executable, str(hook_path)], input=payload, text=True,
-                    capture_output=True, env=env, timeout=30)
+                    encoding="utf-8", errors="replace",
+                    capture_output=True, env=env, timeout=180)
 
 
 if __name__ == "__main__":
@@ -324,6 +330,7 @@ if __name__ == "__main__":
         proc = subprocess.Popen(
             [sys.executable, str(hook_path)], stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+            encoding="utf-8", errors="replace",
             env=dict(os.environ, CLAUDE_PROJECT_DIR=str(fixture)))
         proc.stdin.write(_hook_payload(idx))
         proc.stdin.close()
