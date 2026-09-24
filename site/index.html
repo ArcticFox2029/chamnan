@@ -982,12 +982,14 @@ function applyLang(code){
 const PRE = [
   // Measured 2026-09-07 through THIS page in a real browser, re-measured on each release with
   // `site/remeasure.py`, which takes the same listing, the same filters and the same modules
-  // without one. Last re-measured 2026-09-21 for 1.29.0, all fourteen: twelve came back identical
-  // to the byte, and two moved because the repositories moved — gin-gonic/gin 669 to 673 KB and
-  // rails/rails 1,550 to 1,551. Only gin's ratio moved with it, 103 to 104.
-  // The injected column did not move on any of the fourteen — and this was the release that
-  // changed how cut text is handled, so that column NOT moving on fourteen Latin-script
-  // repositories is the expected result rather than a missing measurement. Sorted by source size, because the
+  // without one. Last re-measured 2026-09-24 for 1.31.1, all fourteen (1.30.0 was deployed without
+  // a re-measure, so this covers both releases). Source moved on three because the repositories
+  // moved: rails/rails 1,551 to 1,552 KB, django/django 2,209 to 2,210, tokio-rs/tokio 3,482 to
+  // 3,484. The injected column moved on six, within 110 bytes either way — psf/requests 6,345 to
+  // 6,408, pallets/flask 6,391 to 6,394, sinatra/sinatra 6,570 to 6,537, gin-gonic/gin 6,636 to
+  // 6,563, yumiaura/myCat 6,409 to 6,455, rails/rails 6,537 to 6,438 — and four ratios moved with
+  // it by one to four. Nine of the fourteen via Homebrew's python3.14, the other seven via
+  // Python 3.9, because 3.14's CA bundle refused jsDelivr halfway through. Sorted by source size, because the
   // bound is the finding rather than any single ratio. torvalds/linux comes through the GitHub
   // fallback: jsDelivr refuses a repository that large.
   //
@@ -996,16 +998,16 @@ const PRE = [
   ["chalk/chalk","JavaScript",56,2449,24],
   ["fastapi/fastapi","Python",61,6454,10],
   ["facebook/react","JavaScript",256,6649,39],
-  ["psf/requests","Python",392,6345,63],
-  ["pallets/flask","Python",576,6391,92],
-  ["sinatra/sinatra","Ruby",663,6570,103],
-  ["gin-gonic/gin","Go",673,6636,104],
-  ["yumiaura/myCat","Mixed",719,6409,115],
+  ["psf/requests","Python",392,6408,63],
+  ["pallets/flask","Python",576,6394,92],
+  ["sinatra/sinatra","Ruby",663,6537,104],
+  ["gin-gonic/gin","Go",673,6563,105],
+  ["yumiaura/myCat","Mixed",719,6455,114],
   ["rust-lang/mdBook","Rust",1197,6470,190],
-  ["rails/rails","Ruby",1551,6537,243],
-  ["django/django","Python",2209,6245,362],
+  ["rails/rails","Ruby",1552,6438,247],
+  ["django/django","Python",2210,6245,362],
   ["torvalds/linux","C",3028,6603,470],
-  ["tokio-rs/tokio","Rust",3482,6441,554],
+  ["tokio-rs/tokio","Rust",3484,6441,554],
   ["vuejs/core","TypeScript",3799,6250,622],
 ];
 const kb = n => n >= 1024 ? (n/1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B";
