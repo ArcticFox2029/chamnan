@@ -400,8 +400,6 @@ def _repeat_notice(payload):
     """
     try:
         import gotcha
-        import mdblock
-        import redact
         root = ws.hook_root(payload)
         wsdir = ws.workspace(root) if root else None
         if wsdir is None or not wsdir.is_dir():
@@ -410,6 +408,10 @@ def _repeat_notice(payload):
         inp = payload.get("tool_input") or {}
         subj = (inp.get("command") or inp.get("file_path") or inp.get("path") or "") \
             if isinstance(inp, dict) else ""
+        if not gotcha.might_repeat(wsdir, tool, subj):
+            return ""
+        import mdblock
+        import redact
         hit = gotcha.about_to_repeat(wsdir, tool, redact.scrub(str(subj))[:300])
         if not hit:
             return ""

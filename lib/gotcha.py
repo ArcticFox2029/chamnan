@@ -109,6 +109,36 @@ def repeats(wsdir, minimum=REPEATS):
     return {k: v for k, v in seen.items() if v[0] >= minimum}
 
 
+# `redact.PLACEHOLDER`, spelled here so the check below costs no redactor import; pool check 258
+# fails if the two ever differ.
+_PLACEHOLDER = "<REDACTED>"
+
+
+def might_repeat(wsdir, tool, raw):
+    """False when no recorded repeat for `tool` could equal the scrubbed form of `raw`.
+
+    🎯 [2026-09-25] (R80 claudeaccount2, 2026-09-24) Scrubbing the command to compare it compiled
+    about 120 patterns in a fresh process: 166 ms of a 250 ms PreToolUse hook, on every Bash call,
+    to answer a question whose answer is "no" almost every time. Scrubbing only swaps spans for
+    `<REDACTED>`, so every piece of a stored subject between markers is text from the raw command;
+    when one is not in `raw`, the scrubbed form cannot match and the scrub is skipped. Measured on
+    1,395 real commands: none breaks that, once the half marker a 300-character cut can leave at the
+    end is dropped, which this does. A necessary condition only -- True still means "scrub and ask".
+    """
+    raw = str(raw or "")
+    for k, (_count, subj, _err, _when) in repeats(wsdir).items():
+        if k.split("\x00")[0] != str(tool):
+            continue
+        s = str(subj)
+        for cut in range(len(_PLACEHOLDER) - 1, 0, -1):
+            if s.endswith(_PLACEHOLDER[:cut]):
+                s = s[:-cut]
+                break
+        if all(piece in raw for piece in s.split(_PLACEHOLDER)):
+            return True
+    return False
+
+
 def about_to_repeat(wsdir, tool, subject):
     """(count, error, when) when this exact tool and subject has already failed `REPEATS` times.
 
