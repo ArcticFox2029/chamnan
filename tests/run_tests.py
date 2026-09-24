@@ -262,9 +262,10 @@ def fake(*parts):
 # adopted in three places and stopped is what let it matter. Assembled once here, referenced
 # everywhere, so a scanner has nothing to match and every test works on the identical string.
 AKIA_FIXTURE = fake("AKIA", "IOSFODNN7EXAMPLE")
-# Its base64 form, for the checks that feed the redactor an encoded key. Assembled for the same
-# reason: GitHub push protection decodes base64 before scanning, and the literal blocked pushes.
-AKIA_B64_FIXTURE = __import__("base64").b64encode(AKIA_FIXTURE.encode()).decode()
+# A base64 literal for the checks about the assignment-with-a-call rule. It decodes to plain text:
+# what those checks prove is that a literal inside `NAME = f("...")` goes, whatever it encodes, and
+# key-shaped data lives in chamnan-corpus (2026-09-24).
+CALL_B64 = __import__("base64").b64encode(b"not-a-key-just-bytes").decode()
 AKIA_ALL_Z = fake("AKIA", "Z" * 16)
 
 PASSED = 0
@@ -304,16 +305,6 @@ def tally():
 
 # ---------------------------------------------------------------- redaction: catches secrets
 SECRETS = [
-    ("stripe live key", 'STRIPE="' + fake("sk_", "live_", "51H8xKLMNOPQRSTUVWXYZabcdef") + '"', fake("sk_", "live_", "51H8x")),
-    ("openai key", "# rotate " + fake("sk-", "proj-", "AbCdEf1234567890XyZwVuTsRqPoNmLk"), fake("sk-", "proj-", "AbCdEf")),
-    ("github pat", "token: " + fake("ghp", "_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"), fake("ghp", "_", "ABCDEF")),
-    ("aws access key", "uses " + fake("AKIA", "IOSFODNN7EXAMPLE") + " for s3", fake("AKIA", "IOSFODNN7EXAMPLE")),
-    ("google api key", "key " + fake("AIza", "SyA1234567890abcdefghijklmnopqrstuvw") + " here", fake("AIza", "SyA123")),
-    ("slack token", fake("xox", "b-", "123456789012-abcdefghijklmnop"), fake("xox", "b-", "1234")),
-    ("gitlab pat", fake("glpat", "-", "ABCDEFGHIJKLMNOPQRST"), fake("glpat", "-", "ABCDEF")),
-    ("jwt", "Bearer " + fake("eyJ", "hbGciOiJIUzI1.", "eyJ", "zdWIiOiIxMjM.SflKxwRJSMeKKF2QT"), fake("eyJ", "hbGciOiJIUzI1")),
-    ("private key block", fake("-----BEGIN", " RSA PRIVATE KEY-----") + "\nMIIsecret\n"
-     + fake("-----END", " RSA PRIVATE KEY-----"), "MIIsecret"),
     ("credentialed url", "db at postgres://admin:Hunter2Pass@host:5432/main", "Hunter2Pass"),
     ("assigned password", 'password = "correcthorsebattery"', "correcthorsebattery"),
     ("assigned api_key", "api_key: 'zzzz1111yyyy2222'", "zzzz1111yyyy2222"),
@@ -645,10 +636,11 @@ fixture = Path(tempfile.mkdtemp(prefix="chamnan-test-")).resolve()
 (fixture / "migrations" / "001.sql").write_text(
     "-- Everyone who can sign in.\nCREATE TABLE users (\n  id BIGSERIAL PRIMARY KEY,\n"
     "  email VARCHAR(255)\n);\n", encoding="utf-8")
-(fixture / "secret.pem").write_text(
-    fake("-----BEGIN", " RSA PRIVATE KEY-----") + "\nMIIfixture\n"
-    + fake("-----END", " RSA PRIVATE KEY-----") + "\n", encoding="utf-8")
-env_secret = fake("sk_", "live_", "zzzzzzzzzzzzzzzzz")
+# What these two prove is file handling -- a `.pem` is blocked by its NAME, an `.env` value never
+# reaches the index -- so neither needs a key shape (key-shaped data lives in chamnan-corpus).
+(fixture / "secret.pem").write_text("blocked by name; the contents are never opened\n",
+                                    encoding="utf-8")
+env_secret = "zz-env-value-that-must-never-be-recorded-7f3a"
 (fixture / ".env").write_text(f"DATABASE_URL=postgres://u:p@h/d\nSTRIPE_KEY={env_secret}\n", encoding="utf-8")
 
 files = mapper.scan(fixture)
@@ -2152,12 +2144,7 @@ check("a missing file returns empty rather than raising",
 # The markdown cleanup runs a `^[>*\-\s]+` strip over the line, which eats the leading dashes
 # the private-key pattern keys on. Redaction has to happen before the cleanup, or the section's
 # own scrub downstream is handed a header it can no longer recognise.
-key_first = describe_dir / "key-first.md"
-key_first.write_text("# Title\n\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n", encoding="utf-8")
-_desc = session_start_mod.describe(key_first)
-check("a private-key header as the first body line is redacted, not de-dashed",
-      "PRIVATE KEY" not in _desc and "BEGIN OPENSSH" not in _desc)
-check("and what replaces it is the redaction marker", "<REDACTED>" in _desc)
+# The private-key-header-as-first-line case moved to chamnan-corpus (redaction/chamnan_checks/02).
 check("ordinary markdown still cleans up as before",
       session_start_mod.describe(no_frontmatter) != "" and
       "what this covers" in session_start_mod.describe(no_frontmatter))
@@ -2506,28 +2493,30 @@ _rmtree(att, ignore_errors=True)
 # Real credential files put the secret on line two.
 leak = Path(tempfile.mkdtemp(prefix="chamnan-leak-"))
 
+# File handling, not key shapes: a credentials file and a key file are refused by NAME, and an .env
+# loses every value. Key-shaped data lives in chamnan-corpus (2026-09-24), so the values here are
+# plain strings that must not come back out.
 (leak / "credentials.ini").write_text(
     "[default]\n"
-    f"aws_access_key_id = {fake('AKIA', 'J7Q2MMPL', 'R4XN8DZQ', '1')}\n"
-    f"stripe_key = {fake('sk_', 'live_', '51Nq8HbK2mPzR', '7YvXcW4tL9dQ')}\n", encoding="utf-8")
+    "aws_access_key_id = zz-ini-value-J7Q2MMPLR4XN8\n"
+    "stripe_key = zz-ini-value-51Nq8HbK2mPzR\n", encoding="utf-8")
 ini = peek_mod.peek(leak / "credentials.ini")
 check("A CREDENTIALS FILE IS REFUSED, NOT SUMMARISED", "Refused" in ini)
-check("the refusal names no key", "AKIA" not in ini)
+check("the refusal names no value", "zz-ini-value" not in ini)
 
-(leak / "server.key").write_text(
-    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow" + "A" * 400 + "\n-----END RSA PRIVATE KEY-----\n",
-    encoding="utf-8")
+(leak / "server.key").write_text("refused by name; the contents are never opened\n" * 10,
+                                 encoding="utf-8")
 check("A PRIVATE KEY IS REFUSED", "Refused" in peek_mod.peek(leak / "server.key"))
 
 # .env is the opposite case: which variables exist is exactly what an index should say, so it is
 # opened -- with the values gone and the names kept.
 (leak / "prod.env").write_text(
-    f"SLACK_BOT_TOKEN={fake('xoxb-', '2841003', '-4471902', '-9Lm2QpVt')}\n"
-    f"GITHUB_TOKEN={fake('ghp_', 'K2mPzR7YvXcW', '4tL9dQnH6sJ', '8bF3g')}\n"
+    "SLACK_BOT_TOKEN=zz-env-slack-2841003-9Lm2QpVt\n"
+    "GITHUB_TOKEN=zz-env-github-K2mPzR7YvXcW\n"
     "DATABASE_PASSWORD=tr0ub4dor&3-horse\n", encoding="utf-8")
 env = peek_mod.peek(leak / "prod.env")
-check("PEEK NEVER PRINTS A SLACK TOKEN", "xoxb-" not in env)
-check("PEEK NEVER PRINTS A GITHUB TOKEN", fake("ghp", "_") not in env)
+check("PEEK NEVER PRINTS THE SLACK TOKEN'S VALUE", "zz-env-slack" not in env)
+check("PEEK NEVER PRINTS THE GITHUB TOKEN'S VALUE", "zz-env-github" not in env)
 check("PEEK NEVER PRINTS AN UNQUOTED PASSWORD", "tr0ub4dor" not in env)
 check("but the variable names survive, which is the useful half", "SLACK_BOT_TOKEN" in env)
 
@@ -2590,11 +2579,11 @@ for _expr in ("default_auth_plugin = plugin_manager.get_auth_plugins()[0]",
     check(f"CODE IS NOT A CREDENTIAL: {_expr.strip()[:40]}", redact.scrub(_expr) == _expr)
 # The half that must not move, and the case the whole aggressive design exists for.
 check("...while a literal INSIDE a call still goes, which is what the whole-expression rule was for",
-      AKIA_B64_FIXTURE.rstrip("=") not in
-      redact.scrub(f'AWS_SECRET = base64.b64decode("{AKIA_B64_FIXTURE}")'))
+      CALL_B64.rstrip("=") not in
+      redact.scrub(f'AWS_SECRET = base64.b64decode("{CALL_B64}")'))
 check("...and the call itself now survives, so the line still says where the value comes from",
       "base64.b64decode(" in
-      redact.scrub(f'AWS_SECRET = base64.b64decode("{AKIA_B64_FIXTURE}")'))
+      redact.scrub(f'AWS_SECRET = base64.b64decode("{CALL_B64}")'))
 check("...an environment lookup keeps its variable name and loses only its fallback secret",
       redact.scrub('API_KEY = os.environ.get("KEY", "hunter2secret")')
       == 'API_KEY = os.environ.get("KEY", "<REDACTED>")')
@@ -7546,8 +7535,8 @@ for _label, _text, _secret in [
     ("secretKey",      f'secretKey = "{_F}{_F}"', _F),
     # A value that is a call: the callee was captured AS the secret and replaced, leaving the real
     # payload beside a broken line.
-    ("a call value",   f'S = base64.b64decode("{AKIA_B64_FIXTURE}")'.replace("S =", "AWS_SECRET ="),
-                       AKIA_B64_FIXTURE),
+    ("a call value",   f'S = base64.b64decode("{CALL_B64}")'.replace("S =", "AWS_SECRET ="),
+                       CALL_B64),
 ]:
     check(f"{_label}: the secret does not survive", _secret not in redact.scrub(_text))
 
