@@ -10627,6 +10627,19 @@ check("...and the session is told it is running on defaults", "does not parse" i
 # Refusing to start would be worse than the bug — a session with no block is what the rest of this
 # hook exists to prevent — so the run continues and the block is still built.
 check("...while the session still gets its block", "## chamnan" in _bcout)
+# 🐛 [2026-09-24] (R45 acc4, 2026-09-24) A known key of the wrong type or out of range was silently
+# REPLACED by the default on this same write -- not merely ignored at read time (`load_config`
+# already does that correctly) but destroyed on disk, the same harm the malformed-file bug above
+# was fixed for. Reproduced with a quoted number and a 1 used for a boolean.
+_bccfg.write_text('{\n  "log_retention_days": "30",\n  "recall": 1\n}\n', encoding="utf-8")
+_bcout2 = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                         input=json.dumps({"session_id": "t", "cwd": str(_bc)}),
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_bc)).stdout
+_bcafter = json.loads(_bccfg.read_text(encoding="utf-8"))
+check("A KNOWN KEY OF THE WRONG TYPE IS KEPT AS WRITTEN, NOT REPLACED BY THE DEFAULT",
+      _bcafter["log_retention_days"] == "30" and _bcafter["recall"] == 1)
+check("...and the session block names the ignored key",
+      "log_retention_days" in _bcout2 and "wants" in _bcout2)
 # Missing and empty are NOT malformed: both degrade correctly and always have.
 _bccfg.unlink()
 check("...a missing config is not reported as malformed", not ws.config_is_malformed(_bc))

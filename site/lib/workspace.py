@@ -668,6 +668,22 @@ def _in_range(key, value):
     return True
 
 
+# 🐛 [2026-09-24] (R45 acc4, 2026-09-24) Phrasing for the session-block notice about a KNOWN key
+# whose value `_merged` (below) is keeping on disk but the running config still ignores — named in
+# the reader's words rather than Python's, the same choice `_config_problem` already makes for
+# "array" over "list".
+_TYPE_WANTS = {bool: "true or false", int: "a number", str: "text", dict: "an object"}
+
+
+def _config_value_wants(key, value):
+    """What `key`'s value should look like, given one that failed `_in_range`/type checking."""
+    want_type = type(DEFAULT_CONFIG[key])
+    if not isinstance(value, want_type):
+        return _TYPE_WANTS.get(want_type, "a different value")
+    bound = upper_bound(key)
+    return f"a number from 0 to {bound}" if bound is not None else "a number in range"
+
+
 # Keyed on (path, digest of the bytes); see load_config. Bounded because a process could in principle
 # resolve several roots, and an unbounded memo in a library is a leak waiting to be found.
 _CONFIG_MEMO = {}
@@ -1696,6 +1712,13 @@ def refuse_to_write(stream=None):
 # a downgrade can be reported with what it would otherwise have destroyed.
 LAST_CONFIG_KEYS_KEPT = []
 
+# 🐛 [2026-09-24] (R45 acc4, 2026-09-24) Known keys `ensure()` kept on disk exactly as written
+# because the value has the wrong type or is out of range — `load_config` already ignores each of
+# these at read time, same as `LAST_CONFIG_KEYS_KEPT` above is read by the session-start hook, so
+# the reader learns which of their settings are silently doing nothing instead of finding out from
+# the behaviour they expected not happening. List of `(key, value, wants)` tuples.
+LAST_CONFIG_KEYS_IGNORED = []
+
 
 def _newer_version_has_been_here(root):
     """True when `.version` names a build newer than the one running.
@@ -1817,9 +1840,25 @@ def ensure(root=None):
         # option cannot sit in the file looking as though it still does something.
         # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
         # filter, and then raises TypeError on the first `>` comparison in a different module.
-        merged.update({k: v for k, v in current.items()
-                       if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
-                       and _in_range(k, v)})
+        good = {k: v for k, v in current.items()
+                if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
+                and _in_range(k, v)}
+        merged.update(good)
+        # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) A known key that failed the check above used to be
+        # silently REPLACED here by the default, and the write below then put that default ON DISK
+        # in place of what the user wrote — `{"log_retention_days": "30"}` became 7, not just in the
+        # running config but in the file itself, and `log_retention_days` 90 -> 7 starts deleting
+        # logs the user meant to keep. `load_config` already refuses to TRUST a value like this at
+        # read time (see its own comment above); refusing was never the bug. Destroying the user's
+        # text on the next scaffold run was. It is kept exactly as written instead — still ignored
+        # while it is wrong, never overwritten — and named for the session block below.
+        ignored_known = [(k, v, _config_value_wants(k, v))
+                          for k, v in current.items()
+                          if k in DEFAULT_CONFIG and k not in good]
+        for k, v, _wants in ignored_known:
+            merged[k] = v
+        if ignored_known:
+            LAST_CONFIG_KEYS_IGNORED[:] = ignored_known
         # 🐛 [2026-09-07] Dropping a key not in DEFAULT_CONFIG is correct for a RETIRED option — the
         # comment above says why, and it is right. It is wrong for a key belonging to a NEWER
         # chamnan that has already run in this workspace, and the two are indistinguishable by
@@ -3466,6 +3505,13 @@ def _config_problem(path):
         return ""
     try:
         parsed = json.loads(text)
+    except json.JSONDecodeError as err:
+        # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) "does not parse" was the whole message -- true, and
+        # useless for finding the stray comma or quote in a file with more than a couple of lines.
+        # `JSONDecodeError` already carries where it gave up; `json.JSONDecodeError` is caught ahead
+        # of the bare `ValueError` below (it is a subclass of it) only so this branch sees it before
+        # the generic one does.
+        return f"does not parse (line {err.lineno}, column {err.colno})"
     except (ValueError, RecursionError):
         return "does not parse"
     if not isinstance(parsed, dict):

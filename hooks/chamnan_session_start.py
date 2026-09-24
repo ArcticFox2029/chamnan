@@ -2749,12 +2749,34 @@ def main():
             # as completely by load_config, was not detected at all, and would have been described
             # with syntax advice that does not apply to it. `config_is_malformed` names the reason
             # now and it is interpolated here, so the line tells the reader which mistake they made.
-            _fix = ("fix the syntax" if _bad_cfg == "does not parse"
+            # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) `_config_problem` now appends "(line N, column
+            # M)" to "does not parse" so a syntax error can be found without a full re-read -- this
+            # was an exact `==` against the string it used to always be, and stopped matching the
+            # moment the location was added, silently falling into the wrap-in-`{ }` advice for a
+            # syntax error too. `startswith` is what the caller actually means by the check.
+            _fix = ("fix the syntax" if _bad_cfg.startswith("does not parse")
                     else "wrap the settings in `{ }`")
             out.insert(0, f"_⚠ `.chamnan/config.json` "
                           f"{mdblock.as_quoted(redact.scrub(_bad_cfg), 120)}. "
                           "This session is running on DEFAULTS and every value set in that file is "
                           f"being ignored. It has NOT been overwritten; {_fix} and it takes "
+                          "effect on the next session._\n")
+        if ws.LAST_CONFIG_KEYS_IGNORED:
+            # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) A key of the wrong type or out of range is now
+            # kept in `config.json` exactly as the user wrote it (see `_merged`'s own comment)
+            # rather than silently replaced by the default -- but the running config still ignores
+            # it, same as `load_config` always has, and a setting that quietly does nothing reads as
+            # broken unless something says so. One line per key, said once per session; values are
+            # scrubbed like every other repository-controlled string that reaches this block.
+            _shown = ws.LAST_CONFIG_KEYS_IGNORED[:KEPT_KEYS_NAMED]
+            _named = "; ".join(
+                f"`{k}` is {mdblock.as_quoted(redact.scrub(json.dumps(v)), 40)} — it wants "
+                f"{wants}, so the default {json.dumps(ws.DEFAULT_CONFIG[k])} is in use"
+                for k, v, wants in _shown)
+            if len(ws.LAST_CONFIG_KEYS_IGNORED) > len(_shown):
+                _named += f" (+{len(ws.LAST_CONFIG_KEYS_IGNORED) - len(_shown)} more)"
+            out.insert(0, f"_⚠ `.chamnan/config.json` has settings this build cannot use: "
+                          f"{_named}. The file has NOT been changed; fix the value and it takes "
                           "effect on the next session._\n")
         if any(OPEN_MARK in part for part in out):
             out.insert(0, FRAMING + "\n")
