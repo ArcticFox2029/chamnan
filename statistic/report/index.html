@@ -88,7 +88,7 @@ const KINDOF = { "cache read": "t_read", "cache write": "t_write", "output": "t_
                  "new input": "t_new" };
 M.append(panel("what kind of tokens, and what each one weighs",
   "โทเค็นแต่ละชนิด และถูกถ่วงน้ำหนักเท่าไร",
-  `transcripts on this machine · ${n(tk.requests)} request(s) · hero.rates`
+  `this account's interactive sessions · ${n(tk.requests)} request(s) · hero.rates`
   + (ratesAreCustom() ? " · tuned on this machine" : ""),
   [
     donut((tk.kinds || []).map((k) => {
@@ -129,6 +129,41 @@ M.append(panel("what this repository puts in front of a session",
       T(unknown.map((c) => c.part).join(", ") + " — not on disk, so not counted here",
         "ส่วนของโฮสต์ไม่ได้อยู่บนดิสก์ จึงไม่ถูกนับ")) : null,
   ]));
+
+/* ---- 🎯 [owner, 2026-09-24] "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร" — what filled the context in
+   this period, ranked. Each thing is counted once, when it entered; a long session re-reads it on
+   every later turn and that multiplier is not applied, so this ranks what the context was MADE of,
+   which is the part a person can change. */
+const spentRows = Object.entries(row.spent || {})
+  .map(([what, chars]) => ({ what, tok: Math.round(chars / cpt) }))
+  .filter((r) => r.tok > 0).sort((a, b) => b.tok - a.tok);
+const spentTotal = spentRows.reduce((a, r) => a + r.tok, 0);
+const SPENT_TH = { "Read — file contents": "Read — เนื้อหาไฟล์", "Bash — command output": "Bash — ผลของคำสั่ง",
+  "search (Grep, Glob)": "การค้นหา (Grep, Glob)", "subagent reports": "รายงานจาก subagent",
+  "web (fetch, search)": "เว็บ (fetch, search)", "edits (Edit, Write)": "การแก้ไฟล์ (Edit, Write)",
+  "MCP tools": "เครื่องมือ MCP", "what you typed": "สิ่งที่คุณพิมพ์",
+  "the model's own output": "output ของโมเดลเอง",
+  "the host's system prompt and instructions": "system prompt และคำสั่งของโฮสต์",
+  "hook and reminder context": "context จาก hook และ reminder", "other tools": "เครื่องมืออื่น" };
+const top5 = spentRows.slice(0, 5);
+const rest = spentRows.slice(5).reduce((a, r) => a + r.tok, 0);
+M.append(panel(`where the tokens went in ${row[key] || "—"} — the top five`,
+  `โทเค็นในช่วง ${row[key] || "—"} ถูกใช้ไปกับอะไร — ห้าอันดับแรก`,
+  "transcripts of this account's interactive sessions · counted once, when each thing entered the context",
+  spentRows.length ? [
+    hbars(top5.map((r, i) => ({ label: r.what, th: SPENT_TH[r.what], value: r.tok,
+      text: `${short(r.tok)} · ${pct(r.tok, spentTotal).toFixed(0)}%`, colour: PAL[i % PAL.length] }))
+      .concat(rest ? [{ label: "everything else", th: "ที่เหลือทั้งหมด", value: rest,
+        text: `${short(rest)} · ${pct(rest, spentTotal).toFixed(0)}%`, dim: true }] : []),
+      { sort: false }),
+    el("p", { class: "src", style: "margin:10px 0 0" },
+      T("each thing is counted once, when it entered the context. A long session re-reads all of it "
+        + "on every later turn, which is why the cache-read total above is far larger — this ranks "
+        + "what the context was filled with, the part you can change.",
+        "แต่ละอย่างนับครั้งเดียวตอนที่เข้า context · session ยาวจะอ่านซ้ำทุกเทิร์นหลังจากนั้น "
+        + "ยอด cache read ข้างบนจึงใหญ่กว่ามาก · อันดับนี้คือสิ่งที่เติม context เข้าไป ซึ่งเป็นส่วนที่คุณปรับได้")),
+  ] : el("p", { class: "note" }, T("no session transcript in this period", "ไม่มี transcript ในช่วงนี้")),
+  { wide: true, off: !spentRows.length }));
 
 /* ---- and the rest of the difference, counted as events rather than claimed as a saving */
 const im = S.impact || { rows: [] };

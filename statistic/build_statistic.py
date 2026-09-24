@@ -115,12 +115,57 @@ def estimate(text):
     return int(_tok.estimate(text)) if _tok else max(1, len(text) // 4)
 
 
+def _session_origin(path):
+    """(cwd, entrypoint) from the first records of a transcript, or (None, None)."""
+    cwd = entry = None
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i > 400 or (cwd and entry):
+                    break
+                if '"cwd"' not in line and '"entrypoint"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                cwd = cwd or rec.get("cwd")
+                entry = entry or rec.get("entrypoint")
+    except OSError:
+        pass
+    return cwd, entry
+
+
 def transcripts():
-    """This project's transcript files, for whichever config directory is in use."""
+    """The sessions a person worked in this repository, on the account in use.
+
+    \U0001F3AF [owner, 2026-09-24] Three things the denominator had wrong, all found by measuring
+    it: *"คนปกติใช้บัญชีเดียวในการทำงาน"* — so only the config directory in use is read, never
+    the other accounts a dispatcher may run on. Sessions started by a script (`claude -p`,
+    entrypoint `sdk-cli`) are left out: on Lumin-App in September they were a third of this
+    account's tokens, research dispatches and batch jobs the plugin never serves. And a session
+    started in a SUBDIRECTORY of the repository is stored under its own project key, so reading
+    only the root's key missed them; every key that starts with the root's is read, and the
+    transcript's own `cwd` decides, so a sibling repository whose name merely starts the same way
+    is not counted.
+    """
     home = os.environ.get("CLAUDE_CONFIG_DIR") or str(pathlib.Path.home() / ".claude")
-    key = str(ROOT.resolve()).replace("/", "-")
-    base = pathlib.Path(home) / "projects" / key
-    return sorted(base.glob("*.jsonl")) if base.is_dir() else []
+    root = str(ROOT.resolve())
+    key = root.replace("/", "-")
+    base = pathlib.Path(home) / "projects"
+    if not base.is_dir():
+        return []
+    out = []
+    for d in base.iterdir():
+        if not d.is_dir() or not (d.name == key or d.name.startswith(key + "-")):
+            continue
+        for f in d.glob("*.jsonl"):
+            cwd, entry = _session_origin(f)
+            if not cwd or entry == "sdk-cli":
+                continue
+            if cwd == root or cwd.startswith(root + os.sep):
+                out.append(f)
+    return sorted(out)
 
 
 # 🎯 [owner, 2026-09-23] "dashboard ต้องอัปเดตด้วยนะ … มันไม่ควรมีการรัน py script อะไรเพื่อ gen
@@ -191,7 +236,16 @@ def _merge_usage(a, b):
         days.setdefault(d, collections.Counter()).update(c)
     return {"n": int(a.get("n") or 0) + int(b.get("n") or 0),
             "tot": dict(tot), "days": {d: dict(c) for d, c in days.items()},
-            "last": b.get("last") or a.get("last")}
+            "spent": _merge_days(a.get("spent"), b.get("spent")),
+            "last": b.get("last") or a.get("last"),
+            "pending": b.get("pending") if b.get("pending") is not None else a.get("pending")}
+
+
+def _merge_days(a, b):
+    out = {d: collections.Counter(c) for d, c in (a or {}).items()}
+    for d, c in (b or {}).items():
+        out.setdefault(d, collections.Counter()).update(c)
+    return {d: dict(c) for d, c in out.items()}
 
 
 # ---------------------------------------------------------------- the panels
@@ -213,19 +267,23 @@ def _usage_of(path, start=0, prev=None):
     """
     tot = collections.Counter()
     per_day = collections.defaultdict(collections.Counter)
+    spent = collections.defaultdict(collections.Counter)
     n, at = 0, start
     last = (prev or {}).get("last")
+    pending = dict((prev or {}).get("pending") or {})
     try:
         with path.open(encoding="utf-8", errors="replace") as fh:
             if start:
                 fh.seek(start)
             for line in fh:
-                if '"usage"' not in line:
+                if not any(m in line for m in _SPEND_MARKS):
                     continue
                 try:
                     rec = json.loads(line)
                 except ValueError:
                     continue
+                day = str(rec.get("timestamp") or "")[:10]
+                _spent_on(rec, pending, spent[day] if day else collections.Counter())
                 u = (rec.get("message") or {}).get("usage")
                 if not isinstance(u, dict):
                     continue
@@ -235,22 +293,90 @@ def _usage_of(path, start=0, prev=None):
                         continue
                     last = key
                 n += 1
-                day = str(rec.get("timestamp") or "")[:10]
-                for key, field in (("cache_read", "cache_read_input_tokens"),
-                                   ("cache_write", "cache_creation_input_tokens"),
-                                   ("output", "output_tokens"),
-                                   ("new_input", "input_tokens")):
+                if day:
+                    spent[day][SPEND_OUTPUT] += int(u.get("output_tokens") or 0) * CHARS_PER_TOKEN
+                for kind, field in (("cache_read", "cache_read_input_tokens"),
+                                    ("cache_write", "cache_creation_input_tokens"),
+                                    ("output", "output_tokens"),
+                                    ("new_input", "input_tokens")):
                     v = int(u.get(field) or 0)
-                    tot[key] += v
+                    tot[kind] += v
                     if day:
-                        per_day[day][key] += v
+                        per_day[day][kind] += v
                 if day:
                     per_day[day]["requests"] += 1
             at = fh.tell()
     except OSError:
-        return {"n": 0, "tot": {}, "days": {}, "last": last}, start
+        return {"n": 0, "tot": {}, "days": {}, "last": last, "pending": pending}, start
+    # Only the calls still waiting for a result carry over, so the map stays a handful of ids.
     return ({"n": n, "tot": dict(tot), "days": {d: dict(c) for d, c in per_day.items()},
-             "last": last}, at)
+             "spent": {d: {k: int(v) for k, v in c.items() if v} for d, c in spent.items() if c},
+             "last": last, "pending": dict(list(pending.items())[-200:])}, at)
+
+
+# 🎯 [owner, 2026-09-24] "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร". What each thing put into the
+# context, counted ONCE, when it entered: a tool's result under that tool, what the person typed,
+# what the host and the hooks injected, and the model's own output (from its usage, exact). A long
+# session re-reads all of it on every later turn, and that multiplier is not applied here; the
+# ranking is what the context was FILLED with, which is the part a person can change.
+# Stored in characters; the page divides by CHARS_PER_TOKEN like every other estimate on it.
+SPEND_OUTPUT = "the model's own output"
+_SPEND_MARKS = ('"usage"', '"tool_result"', '"tool_use"', '"attachment"', '"type":"user"',
+                '"type": "user"')
+_TOOL_GROUPS = {"Read": "Read — file contents", "Bash": "Bash — command output",
+                "Grep": "search (Grep, Glob)", "Glob": "search (Grep, Glob)",
+                "Agent": "subagent reports", "Task": "subagent reports",
+                "WebFetch": "web (fetch, search)", "WebSearch": "web (fetch, search)",
+                "Edit": "edits (Edit, Write)", "Write": "edits (Edit, Write)",
+                "MultiEdit": "edits (Edit, Write)", "NotebookEdit": "edits (Edit, Write)"}
+_HOST_ATTACH = {"prompt_snapshot", "instructions", "skill_listing", "agent_listing_delta",
+                "deferred_tools_delta", "environment", "model", "date"}
+
+
+def _chars(v):
+    if isinstance(v, str):
+        return len(v)
+    if isinstance(v, list):
+        return sum(_chars(x.get("text") if isinstance(x, dict) and "text" in x else x)
+                   for x in v if not (isinstance(x, dict) and x.get("type") == "image"))
+    if isinstance(v, dict):
+        return len(json.dumps(v, ensure_ascii=False))
+    return 0
+
+
+def _spent_on(rec, pending, into):
+    """Add what `rec` put into the context to `into`, by what it was."""
+    kind = rec.get("type")
+    if kind == "attachment":
+        a = rec.get("attachment") or {}
+        text = a.get("content") or a.get("context") or a.get("systemPrompt") or a.get("text")
+        what = ("the host's system prompt and instructions" if a.get("type") in _HOST_ATTACH
+                else "hook and reminder context")
+        into[what] += _chars(text if text is not None else a)
+        return
+    msg = rec.get("message") or {}
+    content = msg.get("content")
+    if kind == "assistant":
+        for b in content if isinstance(content, list) else []:
+            if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id"):
+                name = str(b.get("name") or "?")
+                pending[b["id"]] = ("MCP tools" if name.startswith("mcp__")
+                                    else _TOOL_GROUPS.get(name, name))
+        return
+    if kind != "user":
+        return
+    if isinstance(content, str):
+        into["hook and reminder context" if rec.get("isMeta") else "what you typed"] += len(content)
+        return
+    for b in content if isinstance(content, list) else []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "tool_result":
+            into[pending.pop(b.get("tool_use_id"), "other tools")] += _chars(b.get("content"))
+        elif b.get("type") == "text":
+            t = b.get("text") or ""
+            meta = rec.get("isMeta") or t.lstrip().startswith("<")
+            into["hook and reminder context" if meta else "what you typed"] += len(t)
 
 
 def token_kinds():
@@ -263,7 +389,7 @@ def token_kinds():
     is the cheapest kind of token on every host that has caching at all, and the share is the
     number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
     """
-    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v2")
+    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v3")
     tot = collections.Counter()
     n = 0
     for row in scanned.values():
@@ -466,10 +592,13 @@ def series():
     # PER DAY now, so the picker drives a comparison over one window instead of two.
     # \U0001F534 The same cached scan `token_kinds` uses, so the two panels cannot disagree about a
     # transcript: one reader, one cache, two views of the result.
-    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v2")
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v3")
+    spent = collections.defaultdict(collections.Counter)
     for row in scanned.values():
         if not isinstance(row, dict):
             continue
+        for d, c in (row.get("spent") or {}).items():
+            spent[d].update(c)
         for d, c in (row.get("days") or {}).items():
             day[d]["t_read"] += int(c.get("cache_read") or 0)
             day[d]["t_write"] += int(c.get("cache_write") or 0)
@@ -481,15 +610,19 @@ def series():
     fields = ("commands", "opens", "edits", "named", "long_reads", "scratch", "agents",
               "failures", "local_calls", "local_chars", "carried", "requests",
               "t_read", "t_write", "t_new", "t_out")
-    days = [{"day": d, **{f: day[d].get(f, 0) for f in fields}}
-            for d in sorted(day)][-KEEP_DAYS:]
+    days = [{"day": d, **{f: day[d].get(f, 0) for f in fields},
+             "spent": dict(spent.get(d) or {})}
+            for d in sorted(set(day) | set(spent))][-KEEP_DAYS:]
     month = collections.defaultdict(lambda: collections.Counter())
+    month_spent = collections.defaultdict(collections.Counter)
     for row in days:
         m = row["day"][:7]
         for f in fields:
             month[m][f] += row[f]
+        month_spent[m].update(row["spent"])
         month[m]["days"] += 1
     months = [{"month": m, **{f: month[m].get(f, 0) for f in fields},
+               "spent": dict(month_spent[m]),
                "days": month[m]["days"]} for m in sorted(month)][-KEEP_MONTHS:]
     # 🎯 One row per day, one cell per hour — the calendar the owner asked for, which reads at a
     # glance in a way twenty-four bars never do.
