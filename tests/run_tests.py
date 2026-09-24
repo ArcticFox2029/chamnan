@@ -244,35 +244,24 @@ import md  # noqa: E402
 import pointer as pointer_mod  # noqa: E402
 
 def fake(*parts):
-    """Assemble a test credential at runtime so no literal one is ever stored in this file.
+    """Assemble a test secret at runtime so no literal one is ever stored in this file.
 
-    A realistic-looking Stripe or Slack token in a fixture is indistinguishable from a real leak to
-    a scanner, and GitHub's push protection blocked this repository's first push over exactly these
-    lines. Splitting the literal leaves the regex under test working on the identical string while
-    leaving nothing for a scanner to match — the alternative, clicking "allow this secret", teaches
-    the reviewer to wave through the next one, which may be real.
+    Used only for passwords inside URLs now. Provider-shaped keys -- AWS, Stripe, Slack, GitHub,
+    PEM blocks -- are not in this suite at all (owner, 2026-09-24): the checks that need them run
+    from chamnan-corpus in the release's corpus step, and the pre-push scan refuses one written here.
     """
     return "".join(parts)
 
 
-# 🐛 [2026-09-24] (self-measured) Seventeen fixtures wrote this literal out while three used
-# `fake()` — the helper that exists for exactly this, whose own docstring records push
-# protection blocking this repository once already. The same seventeen are in the tree v1.30.0
-# put on GitHub, so nothing about them is new; GitHub's setting changed and the rule that was
-# adopted in three places and stopped is what let it matter. Assembled once here, referenced
-# everywhere, so a scanner has nothing to match and every test works on the identical string.
-AKIA_FIXTURE = fake("AKIA", "IOSFODNN7EXAMPLE")
 # A base64 literal for the checks about the assignment-with-a-call rule. It decodes to plain text:
-# what those checks prove is that a literal inside `NAME = f("...")` goes, whatever it encodes, and
-# key-shaped data lives in chamnan-corpus (2026-09-24).
+# what those checks prove is that a literal inside `NAME = f("...")` goes, whatever it encodes.
 CALL_B64 = __import__("base64").b64encode(b"not-a-key-just-bytes").decode()
-# Plain secrets for the checks that are about a RULE or a SURFACE rather than a key shape
-# (2026-09-24: key-shaped data lives in chamnan-corpus). PLAIN_TOKEN has no shape, so only a column,
-# assignment or flag rule can catch it; PLUMB_URL is caught anywhere, by the credentialed-URL rule.
+# Plain secrets for the checks that are about a RULE or a SURFACE rather than a key shape.
+# PLAIN_TOKEN has no shape, so only a column, assignment or flag rule can catch it; PLUMB_URL is
+# caught anywhere, by the credentialed-URL rule.
 PLAIN_TOKEN = "zQ8mR4tW7pX2kV9nL3sB"
 PLUMB_SECRET = "Tr0ub4dorHorse9"
 PLUMB_URL = f"postgres://deploy:{PLUMB_SECRET}@db.internal/main"
-AKIA_ALL_Z = fake("AKIA", "Z" * 16)
 
 PASSED = 0
 FAILED = []
@@ -5355,8 +5344,7 @@ _rmtree(_rdos, ignore_errors=True)
 
 # The Thai word-boundary trap, in the redaction layer this time. Thai does not put spaces between
 # clause words, and Python's \b is Unicode-aware, so a key glued to Thai prose was never matched.
-check("a key glued to Thai prose is still redacted",
-      "<REDACTED>" in redact.scrub("// รหัสจริงคือsk-ant-api03-AAAAAAAAAAAAAAAAAAAA"))
+# The Thai-glued key case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 check("a commit hash is still not a secret",
       "<REDACTED>" not in redact.scrub("see commit a954fba1c3d4e5f60718293a4b5c6d7e8f901234"))
 
@@ -5408,9 +5396,7 @@ check("a connection string with no username is redacted",
       "<REDACTED>" in redact.scrub("redis://:S3cretPass123456@redis.internal:6379/0"))
 check("a Slack app-level token is redacted",
       "<REDACTED>" in redact.scrub("socket = xapp-1-A0123456-abcdefghijklmnop"))
-check("a webhook URL whose path IS the credential is redacted",
-      "<REDACTED>" in redact.scrub(
-          fake("https://hooks.slack.com/services/", "T00000000/B00000000/", "X" * 24)))
+# The Slack webhook case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 check("an ordinary URL is not",
       "<REDACTED>" not in redact.scrub("see https://github.com/ArcticFox2029/chamnan"))
 check("prose about passwords survives",
@@ -6935,12 +6921,7 @@ check("an Authorization header loses its credential, not its scheme name",
 
 # "BLOCK" is not decoration: a PGP secret key ends "PRIVATE KEY BLOCK-----", and a pattern anchored
 # on "PRIVATE KEY-----" matched every other key format and missed that one.
-check("a PGP private key block is redacted like any other private key",
-      "lQOY" not in redact.scrub(
-          "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOY\n-----END PGP PRIVATE KEY BLOCK-----"))
-check("an OpenSSH private key still is too",
-      "b3Bl" not in redact.scrub(
-          "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----"))
+# The PGP and OpenSSH block cases: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 check("a PUBLIC key block is left alone — it is not a secret",
       "MFkw" in redact.scrub("-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----"))
 
@@ -6975,8 +6956,7 @@ check("and a credentialed URL keeps its host while losing its password",
 # The recall wall, asserted so nobody "fixes" it with an entropy heuristic by accident. A 40-char
 # AWS secret has no prefix and no keyword; the only thing that finds it also finds commit hashes.
 check("a bare high-entropy string is NOT redacted, by design",
-      redact.PLACEHOLDER not in redact.scrub(
-          fake("wJalrXUtnFEMIK7MDENG", "bPxRfiCYEXAMPLEKEYzz")))
+      redact.PLACEHOLDER not in redact.scrub(PLAIN_TOKEN + PLAIN_TOKEN))
 
 # ------------------------------ tokens: held to the counts bench/calibration.json recorded
 # The estimator's constants were measured once against Claude's own accounting and then lived on as
@@ -7548,12 +7528,7 @@ for _label, _text, _secret in [
 
 # The highest-value pattern in the file, and it was defeated by a sentence. A lazy body stops at
 # the FIRST text shaped like an END line, which a comment or a README snippet supplies.
-_decoy = ("-----BEGIN RSA PRIVATE KEY-----\n"
-          "# NOTE: keys are terminated with -----END RSA PRIVATE KEY-----\n"
-          "MIIBOgIBAAJBAKj34REALKEYDATA\nREALKEYDATA==\n"
-          "-----END RSA PRIVATE KEY-----")
-check("A DECOY END MARKER DOES NOT LEAVE THE REAL KEY BODY EXPOSED",
-      "REALKEYDATA" not in redact.scrub(_decoy))
+# The decoy END-marker case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 
 for _label, _text, _kept in [
     ("monkey_patch",   'monkey_patch = "enabled_for_tests"', "enabled_for_tests"),
@@ -7613,7 +7588,7 @@ check("A CHECK GLOB CANNOT READ OUTSIDE THE REPOSITORY",
       _esc and _esc[0][1] == "unverifiable")
 check("...and the file it was aimed at really is outside, and really exists",
       _outside.is_file() and _hz.resolve() not in _outside.resolve().parents)
-(_hz / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nx\n", encoding="utf-8")
+(_hz / "id_rsa").write_text("blocked by name; never opened\n", encoding="utf-8")
 _blocked = _rc.run(_hz, [("k", "r\n\n**Check:** present `PRIVATE KEY` in `id_rsa`")])
 check("...and it does not open a file the redactor never opens",
       _blocked and _blocked[0][1] == "unverifiable")
@@ -9738,19 +9713,7 @@ for _name in ("api_key", "password", "auth_token", "private_key", "client_secret
           "REDACTED" in redact.scrub(_json_key(_name, "s3cr3tV4lu3H3r3x")))
 # The whole file, as `gcloud iam service-accounts keys create` writes it: exactly two fields are
 # secret and exactly two should go.
-_gcp = ('{\n  "type": "service_account",\n  "project_id": "my-project-123456",\n'
-        '  "private_key_id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",\n'
-        '  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIabc123\\n-----END PRIVATE KEY-----\\n",\n'
-        '  "client_email": "deploy@my-project-123456.iam.gserviceaccount.com",\n'
-        '  "auth_uri": "https://accounts.google.com/o/oauth2/auth",\n'
-        '  "token_uri": "https://oauth2.googleapis.com/token",\n'
-        '  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"\n}')
-_gcp_out = redact.scrub(_gcp)
-check("A SERVICE-ACCOUNT KEY LOSES ITS SECRETS AND KEEPS ITS PUBLIC ENDPOINTS",
-      _gcp_out.count("<REDACTED>") == 2
-      and "accounts.google.com/o/oauth2/auth" in _gcp_out
-      and "oauth2.googleapis.com/token" in _gcp_out
-      and "googleapis.com/oauth2/v1/certs" in _gcp_out)
+# The GCP service-account key case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 # 🐛 The asymmetry that produced it: `token` fires only as a compound suffix while `auth` had no
 # such left-side requirement. One word bounded, its neighbour not, inside a single tuple.
 check("...and the two words that were bounded differently now behave the same",
@@ -10622,9 +10585,7 @@ if not _NEWLINE_IN_NAME_OK:
     print("      (the newline half is not run here: Windows rejects a newline in a filename, "
           "so the escape it defends against cannot be constructed on this platform)")
 # as_quoted makes a value inert, not non-secret; its own docstring says the caller must still scrub.
-_sec = _notice_for(f"dump_aws_secret_key={AKIA_FIXTURE}.min.js")
-check("...and a secret-shaped filename is redacted, because the finished note is scrubbed",
-      AKIA_FIXTURE not in _sec and "REDACTED" in _sec)
+# The secret-shaped-filename case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 # The fix must not start mangling ordinary names, which is every real use of this hook.
 _ord = _quoted_name(_notice_for("bundle.min.js"))
 check("...while an ordinary filename is passed through untouched", _ord == "bundle.min.js")
@@ -14173,7 +14134,7 @@ check("...including the stripped and kept-newline forms",
       and bool(_rd._YAML_BLOCK_OPENER.search("k: |+  \n  x\n")))
 # The real guarantee: on a document carrying neither trigger, scrubbing is unchanged from what the
 # other rules alone produce — the pre-filters remove work, never coverage.
-_plain_key = fake("sk_", "live_", "0123456789abcdef")
+_plain_key = PLAIN_TOKEN
 _plain = "def f():\n    return 1\n\nAPI_KEY = '" + _plain_key + "'\n"
 check("an ordinary document is still scrubbed by the rules that do apply",
       _plain_key not in _rd.scrub(_plain))
@@ -14682,8 +14643,7 @@ check("promote refuses a credential file before copying it",
       "redact.is_blocked(src)" in _pksrc and "is_never_opened(src)" in _pksrc)
 _pkroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-key-"))
 (_pkroot / ".chamnan" / "tools").mkdir(parents=True)
-(_pkroot / "id_rsa_x").write_text(
-    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\n", encoding="utf-8")
+(_pkroot / "id_rsa_x").write_text("refused by name before it is copied\n", encoding="utf-8")
 (_pkroot / "fine.py").write_text("print('hi')\n", encoding="utf-8")
 _pkr = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "id_rsa_x"), "k",
                        "--desc", "d"], cwd=_pkroot, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -14701,12 +14661,12 @@ import peek as _pk  # noqa: E402
 _envdir = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-env-"))
 for _n in (".env", ".env.production", "local.env"):
     (_envdir / _n).write_text("DB_HOST=db.internal.example\nADMIN_EMAIL=ops@example.com\n"
-                              "# a comment\nexport API_KEY=sk_live_zzz\n", encoding="utf-8")
+                              "# a comment\nexport API_KEY=zz-env-api-value\n", encoding="utf-8")
 for _n in (".env", ".env.production", "local.env"):
     _out = _pk.peek(_envdir / _n)
     check(f"peek prints no env VALUES ({_n})",
           "db.internal.example" not in _out and "ops@example.com" not in _out
-          and "sk_live_zzz" not in _out)
+          and "zz-env-api-value" not in _out)
     check("...but does print the names, which is what a reader wants",
           "DB_HOST" in _out and "API_KEY" in _out)
 # 🐛 `Path(".env").suffix` is "", so the commonest env file never matched an extension test.
@@ -15082,8 +15042,7 @@ _slroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-symlink-")) / "r"
 (_slroot / ".chamnan" / "skills").mkdir(parents=True)
 subprocess.run(["git", "init", "-q", str(_slroot)], check=True)
 _outside = _slroot.parent / "outside_key"
-_outside.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n"
-                    "-----END OPENSSH PRIVATE KEY-----\n", encoding="utf-8")
+_outside.write_text("zz-outside-marker-7c1f: a file outside the repository\n", encoding="utf-8")
 os.symlink(_outside, _slroot / ".chamnan" / "skills" / "evil.md")
 os.symlink(_outside, _slroot / ".chamnan" / "STATE.md")
 _slout = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
@@ -15091,7 +15050,7 @@ _slout = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_s
                                           "session_id": "sl"}),
                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("a symlink out of the repository contributes nothing to the block",
-      "PRIVATE KEY" not in _slout and "b3Blb" not in _slout)
+      "zz-outside-marker" not in _slout)
 check("...and the session still gets its block rather than an error", len(_slout) > 300)
 check("the containment test resolves both sides, so a repo under a symlinked parent still works",
       _ws.inside(_slroot / ".chamnan" / "config.json", _slroot))
@@ -17342,52 +17301,11 @@ _sw_spec.loader.exec_module(_sw)
 # One of each class agent 2 separated: hyphen-delimited provider prefixes (which the old per-token
 # filter could not see at all), an underscore-delimited one (which it could), and a bare blob with
 # no prefix of its own, caught only by the `key = value` SHAPE the tokeniser also destroys.
-_secrets = {
-    "anthropic": fake("sk-", "ant-", "api03-", "PLANTEDSECRETVALUEXYZ123456789ABCDEFGH"),
-    "slack": fake("xox", "b-", "1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUvWx"),
-    "gitlab": fake("glp", "at-", "ABCDEFGHIJKLMNOPQRST"),
-    "github": fake("gh", "p_", "PLANTEDSECRETVALUEXYZ123456789ABCD"),
-    "bare-hex-by-shape": "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
-}
-# Real surrounding content, because MIN_TOKENS wants 8 distinct 4+ character identifiers and the
-# assignments alone scrub down to seven -- a fixture under that threshold makes the hook return
-# without writing anything, and every assertion below would then be about an empty file.
-_planted_body = ("import requests\n" + "".join(
-    f'{k.upper().replace("-", "_")}_SECRET_KEY = "{v}"\n' for k, v in _secrets.items()) +
-    "def call_endpoint(session_object, timeout_seconds):\n"
-    "    response_body = session_object.post(SLACK_SECRET_KEY, timeout=timeout_seconds)\n"
-    "    return response_body.json()\n")
-# 🐛 The first version of THIS check rebuilt the pipeline itself -- `scrubbable`, then
-# `fingerprint`, then `headline` -- and mutation-testing it by restoring the old per-token filter
-# left it green, because the test never went near `main()`. Seventeenth vacuous assertion here, and
-# written in the same edit that quotes the rule against it. The hook is RUN, as a subprocess, on a
-# real workspace, and the assertion reads the file that landed on disk.
-_swdir = Path(tempfile.mkdtemp(prefix="chamnan-scratch-secrets-")).resolve()
-(_swdir / ".git").mkdir()
-ws.ensure(_swdir)
-subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
-               input=json.dumps({"tool_name": "Write",
-                                 "tool_input": {"file_path": "/tmp/probe_secrets.py",
-                                                "content": _planted_body}}),
-               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=_swdir)
-_swlog = _swdir / ".chamnan" / "logs" / "scratch.jsonl"
-_landed = _swlog.read_text(encoding="utf-8") if _swlog.is_file() else ""
-check("the hook wrote the entry this check is about", bool(_landed.strip()))
-_stored_fp = sorted(json.loads(_landed.splitlines()[0])["fp"]) if _landed.strip() else []
-
-_leaked = sorted(n for n, v in _secrets.items() if v.lower() in _landed.lower())
-check("NO PLANTED SECRET REACHES THE SCRATCH LOG, WHOLE OR IN PART", not _leaked)
-if _leaked:
-    print("      leaked:", _leaked)
-# A secret's random tail is the part worth having; the old hole shipped exactly that.
-_tails = sorted(n for n, v in _secrets.items()
-                if v.rsplit("-", 1)[-1].rsplit("_", 1)[-1].lower() in _landed.lower())
-check("...and neither does the random tail left behind when the prefix is split off", not _tails)
-if _tails:
-    print("      tails leaked:", _tails)
-check("...while the variable names that make the fingerprint useful are still there",
-      "anthropic_secret_key" in _stored_fp and "requests" in _stored_fp)
-_rmtree(_swdir, ignore_errors=True)
+# The planted-provider-key scratch-log case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
+# The bounds below need only a body under the ceiling, so a plain one stands in.
+_planted_body = (f'API_SECRET_KEY = "{PLAIN_TOKEN}"\n'
+                 'def call_endpoint(session_object, timeout_seconds):\n'
+                 '    return session_object.post(API_SECRET_KEY, timeout=timeout_seconds).json()\n')
 
 # The scrub is bounded, or a large scratch file makes a PostToolUse hook wait on it. Line-aligned,
 # so a secret is never cut in half into a fragment too short for the pattern that would catch it.
@@ -18516,11 +18434,11 @@ _rmtree(_jad, ignore_errors=True)
 import deploy as _dep  # noqa: E402
 
 _SECRET_FIRST = ("apiVersion: v1\nkind: Secret\nstringData:\n  name: "
-                 + fake("AKIA", "IOSFODNN7EXAMPLE")
+                 + PLAIN_TOKEN
                  + "\nmetadata:\n  name: db-credentials\n")
 # `generateName` is a real Kubernetes field, and it leaves no metadata.name to find at all.
 _NO_META_NAME = ("apiVersion: v1\nkind: Secret\nmetadata:\n  generateName: db-cred-\n"
-                 "stringData:\n  name: " + fake("sk-", "proj-", "AbCdEf1234567890XyZwVuTs") + "\n")
+                 "stringData:\n  name: " + PLAIN_TOKEN + "pj\n")
 _ORDINARY = ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: db-credentials\n"
              "stringData:\n  username: admin\n")
 
@@ -18531,7 +18449,7 @@ _p2 = _dep._k8s_pairs(_NO_META_NAME, "s.yaml")
 check("...and with no metadata.name at all it falls back to the FILENAME, not to the value",
       _p2 == [("Secret", "s.yaml")])
 check("...so no part of the secret survives into the pairs",
-      not any(fake("sk-", "proj-", "AbCdEf") in n for _, n in _p1 + _p2))
+      not any(PLAIN_TOKEN in n for _, n in _p1 + _p2))
 check("...while an ordinary manifest is unchanged",
       _dep._k8s_pairs(_ORDINARY, "s.yaml") == [("Secret", "db-credentials")])
 
@@ -18540,7 +18458,7 @@ _k8d = Path(tempfile.mkdtemp(prefix="chamnan-k8s-"))
 (_k8d / "secret.yaml").write_text(_SECRET_FIRST, encoding="utf-8")
 _k8_out = _dep.render(_dep.scan(_k8d))
 check("...and the rendered Deployment section carries the name, never the value",
-      "db-credentials" in _k8_out and fake("AKIA", "IOSFODNN7EXAMPLE") not in _k8_out)
+      "db-credentials" in _k8_out and PLAIN_TOKEN not in _k8_out)
 _rmtree(_k8d, ignore_errors=True)
 
 # The quieter wrong answer the same fix closes: a container's name is not its Deployment's name.
@@ -22414,43 +22332,8 @@ check("...and the redaction still happened in it",
 check("...and a file with no trailing newline does not grow one",
       not _rd.scrub('api_keys = ["a1b2c3d4e5"]').endswith("\n"))
 
-# ------------------------------------- a filename is repository content, and it reaches the block
-# 🐛 [2026-09-08] Three copies of one warning went in together. The skills one wrapped its filenames
-# in `redact.scrub`; the threads and sessions ones appended theirs AFTER the surrounding text had
-# already been scrubbed, so the names went into the injected block untouched. A filename is written
-# by whoever wrote the repository, so a key-shaped `.md` NAME rode in whole (R7 agent 2, 2026-09-06).
-#
-# Checked by DRIVING every store that can carry a filename into the block, not by reading the two
-# lines that were wrong. Three identical features and one of them correct is exactly the shape that
-# a check naming specific call sites fails to catch the fourth time.
-_leak_root = Path(tempfile.mkdtemp(prefix="chamnan-fnleak-")) / "repo"
-(_leak_root / "src").mkdir(parents=True)
-(_leak_root / "src" / "a.py").write_text('"""A."""\n', encoding="utf-8")
-subprocess.run(["git", "init", "-q", str(_leak_root)], capture_output=True)
-subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_leak_root),
-               capture_output=True)
-_KEYLIKE = AKIA_FIXTURE
-_ws_leak = _leak_root / ".chamnan"
-for _sub, _fname, _body in (
-        ("skills", f"{_KEYLIKE}.md", "# A skill\n\nordinary text.\n"),
-        ("sessions", f"2026-09-08-{_KEYLIKE}.md", "# A session\n\n**Remaining:** something\n"),
-        ("threads", f"{_KEYLIKE}.md", "# A thread\n\n**Status:** open\n**Started:** 2026-09-08\n"),
-        ("candidates", f"{_KEYLIKE}.md", "# A habit\n\n**Sequence:** git, add\n**Observed:** 3\n")):
-    (_ws_leak / _sub).mkdir(parents=True, exist_ok=True)
-    (_ws_leak / _sub / _fname).write_text(_body, encoding="utf-8")
-_leak_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
-                           input="{}", capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", cwd=str(_leak_root)).stdout
-check("A SECRET-SHAPED FILENAME NEVER REACHES THE INJECTED BLOCK, FROM ANY STORE",
-      _KEYLIKE not in _leak_out)
-if _KEYLIKE in _leak_out:
-    _at = _leak_out.find(_KEYLIKE)
-    print(f"      it arrived here: {_leak_out[max(0, _at - 90):_at + 40]!r}")
-# The block must still SAY something about those files -- scrubbing the name is not the same as
-# dropping the warning, and a silent scrub would pass the check above for the wrong reason.
-check("...while the block still reports the files it found, with the name redacted",
-      "<REDACTED>" in _leak_out and len(_leak_out) > 200)
-_rmtree(_leak_root.parent, ignore_errors=True)
+# ------------------------------------- a filename is repository content
+# Moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 
 # ------------------------------------------ a config value ABOUT a secret, redacted as if it were one
 # 🐛 [2026-09-08] `password_policy = "minimum-twelve-characters"` came back as
@@ -22861,20 +22744,20 @@ _ws_root = Path(tempfile.mkdtemp(prefix="chamnan_writescrub_"))
 subprocess.run(["git", "init", "-q"], cwd=_ws_root, check=True)
 (_ws_root / "app.py").write_text("x = 1\n", encoding="utf-8")
 ws.ensure(str(_ws_root))
-_WS_SECRET = AKIA_FIXTURE
+_WS_SECRET = PLUMB_SECRET
+_WS_URL = PLUMB_URL
 
 timeline.create(str(_ws_root), "Deploy notes", "2026-09-08")
 _tl_path = timeline.append(str(_ws_root), "deploy-notes", "2026-09-08",
-                      f"rotated the key, new value is {_WS_SECRET}, deployed to prod",
-                      files=[f"config/{_WS_SECRET}.env"])
+                      f"rotated the key, new value is {_WS_URL}, deployed to prod",
+                      files=["config/app.env"])
 _tl_text = Path(_tl_path).read_text(encoding="utf-8")
 check("A NOTE TYPED AT `chamnan-timeline add` IS SCRUBBED BEFORE IT REACHES THE FILE",
       _WS_SECRET not in _tl_text and _rd.PLACEHOLDER in _tl_text)
-check("...and so is a FILE NAME passed with it, which is the same field one line later",
-      _tl_text.count(_rd.PLACEHOLDER) >= 2)
+# The file-NAME-passed-with-a-note case: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 
 envs.upsert(str(_ws_root), "production",
-                envs.render_entry("production", platform=_WS_SECRET, versions="py3.12",
+                envs.render_entry("production", platform=_WS_URL, versions="py3.12",
                                       constraints=[f"conn=postgres://u:{_WS_SECRET}@db/x"],
                                       checked="2026-09-08"))
 _env_text = (_ws_root / ".chamnan" / "environments.md").read_text(encoding="utf-8")
@@ -22883,7 +22766,7 @@ check("EVERY FIELD OF `chamnan-env set` IS SCRUBBED, NOT THE OBVIOUS ONE",
 check("...and what is left still says which system it was, which is why this is a scrub not a drop",
       "postgres://" in _env_text and "@db/x" in _env_text)
 
-tools_index.register(str(_ws_root), {"name": "t", "desc": f"uses the key {_WS_SECRET} to deploy"})
+tools_index.register(str(_ws_root), {"name": "t", "desc": f"uses the key {_WS_URL} to deploy"})
 _ti_text = (_ws_root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8")
 check("A `--desc` TYPED AT `chamnan-promote` IS SCRUBBED BEFORE IT REACHES index.json",
       _WS_SECRET not in _ti_text and _rd.PLACEHOLDER in _ti_text)
@@ -23721,14 +23604,7 @@ check("AN IBAN IS REDACTED IN LOWER CASE, LIKE EVERY OTHER RULE IN THIS FILE",
 # whose second sentence is that GitHub's push protection blocked this repository's first push over
 # exactly this shape -- was not used for any of them. The push of this release was blocked at all
 # three. A helper that exists to stop one thing, in the same file as the thing it did not stop.
-for _fn2_label, _fn2_tok in (("rotation-era refresh",
-                              fake("xox", "e-1-", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4")),
-                             ("rotation-era access",
-                              fake("xox", "e.", "xox", "p-1-", "A1b2C3d4E5f6G7h8I9j0K1l2")),
-                             ("the older bot token",
-                              fake("xox", "b-1-", "A1b2C3d4E5f6G7h8I9j0K1l2"))):
-    check(f"...and a Slack token is redacted whichever era it is from: {_fn2_label}",
-          _rd.PLACEHOLDER in _rd.scrub(f"token: {_fn2_tok}"))
+# The Slack-token-by-era cases: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 
 # 3. CPF's separator was a literal dot while `_SEP` sat two hundred lines up -- the fourth rule in
 #    this file found spelling its own copy of a shared set.
@@ -50084,11 +49960,11 @@ check("...and saying nothing to the session, which can already see the failure",
 # parked for, reached by a different road.
 _fl_fire(tool_name="Bash", error="Exit code 22", tool_input={
     # Assembled: a whole key shape in this file is what push protection refuses (2026-09-24).
-    "command": "curl -H 'Authorization: Bearer " + fake("sk-ant-", "api03-" + "A" * 24)
+    "command": "curl -H 'Authorization: Bearer " + PLAIN_TOKEN + "A1"
                + "' https://x.invalid"})
 _fl_secret = _fl_rows()[-1]["subj"]
 check("A CREDENTIAL ON THE FAILING COMMAND LINE IS SCRUBBED BEFORE IT REACHES DISK",
-      "sk-ant-api03" not in _fl_secret and "curl" in _fl_secret, saw=_fl_secret)
+      PLAIN_TOKEN not in _fl_secret and "curl" in _fl_secret, saw=_fl_secret)
 
 # An interrupt is the user changing their mind, not a mistake to remember.
 _fl_before = len(_fl_rows())
@@ -50709,28 +50585,12 @@ _rmtree(_se.parent, ignore_errors=True)
 # redact.py requires the prefix and the body to be CONTIGUOUS, and here they are two quoted
 # strings that Python, C and every human reader join back together. The file this plugin
 # encourages committing published a GitHub token with a quote-space-quote in the middle.
-_sj_split = ('The deploy key, wrapped by the formatter: "ghp_" '
-             '"EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234" -- one value, two lines.')
-check("A CREDENTIAL SPLIT ACROSS TWO STRING LITERALS IS STILL REDACTED",
-      "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234" not in redact.scrub(_sj_split),
-      saw=redact.scrub(_sj_split))
-check("...across a newline, which is where a formatter actually leaves it",
-      "AAAABBBBCCCCDDDD1234" not in redact.scrub('TOKEN = ("sk_live_"\n         "AAAABBBBCCCCDDDD1234")'),
-      saw=redact.scrub('TOKEN = ("sk_live_"\n         "AAAABBBBCCCCDDDD1234")'))
-check("...and with an explicit + between the halves",
-      "AAAABBBBCCCCDDDD1234" not in redact.scrub('T = "sk_live_" + "AAAABBBBCCCCDDDD1234"'),
-      saw=redact.scrub('T = "sk_live_" + "AAAABBBBCCCCDDDD1234"'))
-# The other half, and the reason this rule is allowed to be shaped as broadly as it is: joining is
-# a change to the reader's text, so `scrub` keeps the joined form only when it redacts MORE.
-# Ordinary adjacent strings are rewritten, found to buy nothing, and thrown away.
+# The split-prefix key cases: moved to chamnan-corpus redaction/chamnan_checks (key-shaped data does not ship in the plugin).
 for _sj_ok in ('He said "hello" "world" and then left.',
                'msg = "user" "name"  # two words, deliberately adjacent',
                "SELECT 'a' 'b' FROM t"):
     check(f"...while ordinary adjacent strings are returned untouched: {_sj_ok[:28]}",
           redact.scrub(_sj_ok) == _sj_ok, saw=redact.scrub(_sj_ok))
-check("...and a contiguous token is still caught, which is what this must not regress",
-      "EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234" not in
-      redact.scrub("token = ghp_EXAMPLEEXAMPLEEXAMPLEEXAMPLE1234"))
 
 
 # ------------------- every state/ file the plugin writes has been DECIDED about, not enumerated
