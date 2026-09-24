@@ -32903,14 +32903,8 @@ check("with no delivery failure the block carries no warning line",
       "_Also: " not in _plain166 and _FAIL_LINE166 not in _plain166,
       saw=_plain166[:200])
 _plain166_again = _run166(9500, [])
-# 🐛 [2026-09-24] (self-measured) The block carries relative times — "Last edited 1m ago", "built 0
-# seconds behind" — so two firings a moment apart can straddle a minute and differ in one digit at
-# the same length: 4887 against 4887 bytes on the Windows Python 3.8 runner of the 1.31.2 check
-# branch, the other four legs green. What this check guards is the STRUCTURE of the no-failure
-# path, so a relative duration is masked before the two firings are compared.
-_age_re166 = re.compile(r"\b\d+(?:\.\d+)?\s?(?:s|m|h|d|w|seconds?|minutes?|hours?|days?|weeks?)\b")
 check("...and is unchanged from firing to firing — the no-failure path is untouched by the move",
-      _age_re166.sub("<age>", _plain166_again) == _age_re166.sub("<age>", _plain166),
+      _plain166_again == _plain166,
       saw=f"{len(_plain166)} vs {len(_plain166_again)} bytes")
 
 # 2 & 1 & 4. Pin the ceiling to EXACTLY what the no-failure body already fills — reproducing the
@@ -48637,15 +48631,8 @@ if _t_has_preview98:
     _t_shown98 = (_t_preview98.split(_t_begin98, 1)[1].split(_t_end98, 1)[0]
                   if _t_marked98 else "")
     _t_real98 = _t_real_emission98()
-    # 🐛 [2026-09-24] (self-measured) The preview and the real emission are built a moment apart, and the
-    # block carries relative times ("Last edited 1m ago"), so the confirming 1.31.2 gate saw 5000
-    # against 5000 bytes that differed in one digit. What this check proves is that the preview
-    # SHOWS the real bytes, so a relative duration is masked on both sides first. The checks that
-    # guard prompt-cache stability across two firings (13793, 48910) are deliberately left strict.
-    _t_age98 = re.compile(r"\b\d+(?:\.\d+)?\s?(?:s|m|h|d|w|seconds?|minutes?|hours?|days?|weeks?)\b")
     check("THE PREVIEW AND THE REAL SESSIONSTART EMISSION AGREE BYTE-FOR-BYTE",
-          _t_age98.sub("<age>", _t_shown98).encode("utf-8")
-          == _t_age98.sub("<age>", _t_real98).encode("utf-8"),
+          _t_shown98.encode("utf-8") == _t_real98.encode("utf-8"),
           saw="preview=%d bytes real=%d bytes" %
               (len(_t_shown98.encode("utf-8")), len(_t_real98.encode("utf-8"))))
 
