@@ -26386,73 +26386,6 @@ try:
           _ss.rebuild_hook_installed(_d_09) is (ws.git_hook_state(_d_09, _tmpl) == "installed"))
 finally:
     shutil.rmtree(_d_09, ignore_errors=True)
-# ---- 247_every_store_has_a_reader_and_every_reader_a_store.py
-# ------------- the closed loop: producer -> consumer -> a reachable path, asserted both ways
-# 🎯 [1.31, Alpha's verdict 2026-09-23] Three findings in one day were one class: 25 of 29 skills
-# unreachable, 2 of 243 guards with a mutation proof, 3,114 lessons with no reader. Each looks
-# like health from either end alone — the writer writes happily and the reader never fires.
-#
-# 🐛 [2026-09-23] (self-measured) `invariant_map.py` had the consumer direction and three defects that made it
-# report the wrong thing. `Path.glob` has no brace expansion, so a declaration naming several
-# extensions matched nothing and the tool printed "POPULATION IS EMPTY, nothing writes for it" —
-# a diagnosis, and the wrong one: the population was not empty, the pattern was unreadable. The
-# contract could only say "every member carries the marker", which is right for a router and
-# wrong for a scanner, so a scanner had to lie or go undeclared — and undeclared is exactly how
-# the 25 skills stayed invisible. And it walked consumers only, so a store nobody claims was
-# invisible by construction.
-#
-# 🔴 What is asserted here is the SET, not any one pair: that the sweep parses every declaration
-# it finds, that it finds a real number of them, and that both directions close.
-import importlib.util as _ilu100
-
-_t_ws100 = ROOT.parent.parent / ".chamnan"
-_t_map100 = _t_ws100 / "tools" / "invariant_map.py"
-check("the invariant map is on disk where the workspace keeps its tools",
-      _t_map100.is_file(), saw=str(_t_map100))
-
-if _t_map100.is_file():
-    _t_spec100 = _ilu100.spec_from_file_location("_invmap100", _t_map100)
-    _t_mod100 = _ilu100.module_from_spec(_t_spec100)
-    _t_spec100.loader.exec_module(_t_mod100)
-
-    # 🐛 A sweep that finds nothing passes every assertion below it. The floor is checked first,
-    # and it is a real number rather than >0: seven pairs were declared the day this was written.
-    _t_pairs100 = _t_mod100.consumers()
-    check("THE SWEEP FINDS THE DECLARATIONS — %d pair(s)" % len(_t_pairs100),
-          len(_t_pairs100) >= 7,
-          saw="fewer than seven declared pairs; every assertion below would pass on an empty list")
-
-    # 1. Every declared glob has to be one the tool can actually expand. This is the check that
-    #    would have caught the brace bug the day it was written, instead of a week later when
-    #    somebody read the output carefully.
-    _t_unparsed100 = [str(p.relative_to(ROOT.parent.parent)) + " -> " + g
-                      for p, g, _m, _w, _s, _l in _t_pairs100 if not _t_mod100._expand(g)]
-    check("EVERY DECLARED GLOB PARSES, SO EVERY PAIR WAS ACTUALLY MEASURED",
-          _t_unparsed100 == [], saw=_t_unparsed100[:5])
-
-    # 2. Both halves of every declared pair connect.
-    _t_broken100 = []
-    for _p100, _g100, _m100, _w100, _s100, _l100 in _t_pairs100:
-        _t_total100, _t_ok100, _t_miss100 = _t_mod100.reach(_g100, _m100, _w100, _s100)
-        _t_rel100 = str(_p100.relative_to(ROOT.parent.parent))
-        if _t_total100 < 0:
-            _t_broken100.append(f"{_t_rel100}: `{_g100}` does not parse")
-        elif _l100:
-            if _t_ok100 < _l100:
-                _t_broken100.append(f"{_t_rel100}: {_t_ok100} carry `{_m100}`, floor is {_l100}")
-        elif _t_total100 == 0:
-            _t_broken100.append(f"{_t_rel100}: `{_g100}` matches no file")
-        elif _t_miss100:
-            _t_broken100.append(f"{_t_rel100}: {len(_t_miss100)} member(s) carry no `{_m100}`")
-    check("EVERY DECLARED PAIR CLOSES — A DECLARED READER REACHES ITS WHOLE POPULATION",
-          _t_broken100 == [], saw=_t_broken100[:5])
-
-    # 3. The direction a consumer sweep cannot see: a store on disk nothing claims. `state/` is
-    #    excluded by the tool itself — those are records people read, not stores a tool consumes —
-    #    so what is left is `logs/`, where a file nothing reads is dead weight.
-    _t_loose100 = [str(q) for q, why in _t_mod100.unclaimed(_t_pairs100) if why is None]
-    check("EVERY STORE ON DISK IS REACHED BY A DECLARATION, OR IS NAMED WITH ITS REASON",
-          _t_loose100 == [], saw=_t_loose100[:8])
 # ---- 100_evidence_and_review_status_are_separate.py
 # --------------------------- what was observed survives the adjective a review awards afterwards
 # 🎯 [2026-09-12, R3 RQ8] A candidate carried `Observed:` but encoded review state inside
@@ -26539,74 +26472,6 @@ check("...and a report cannot invent its own status adjective",
       _t_bad_status100 == "refused", saw=_t_bad_status100)
 
 shutil.rmtree(_t_root100, ignore_errors=True)
-# ---- 248_only_chamnans_own_scratch_is_ever_swept.py
-# ------------- a closed stage is removed; a directory the user put there never is
-# 🎯 [owner, 2026-09-23] "เราไม่แตะพื้นที่นอก repo chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ"
-# — the scope is the workspace, and the second half of it had no sweeper. `prune_orphaned_temps`
-# covers a killed atomic write, which leaves a `.tmp`. Nothing covered a tool that made itself a
-# working DIRECTORY and finished without removing it: `corpus_coverage.py` cleaned its copy at the
-# start of the NEXT run, so the workspace permanently carried 795 files and 8.8 MB of another
-# repository, and it confused two other tools before anybody noticed.
-#
-# 🔴 The safety property is the whole design, and it is what this check pins: only a directory
-# chamnan created and MARKED is ever removed. An unmarked directory is the user's and is never
-# touched at any age. That inverts the question from "can I prove this is safe to delete", which
-# nothing in a stranger's repository can answer, to "did I make this myself", which is a fact
-# written down at creation.
-import os as _os101
-import tempfile as _tf101
-import time as _t101
-
-_t_root101 = Path(_tf101.mkdtemp(prefix="chamnan-scratch-101-"))
-try:
-    ws.ensure(_t_root101)
-    _t_old101 = _t101.time() - 40 * 86400
-
-    _t_mine101 = ws.scratch_dir(_t_root101, "a-closed-stage")
-    check("scratch_dir makes a directory and marks it as chamnan's",
-          _t_mine101 is not None and (_t_mine101 / ws.SCRATCH_MARK).is_file(),
-          saw=str(_t_mine101))
-    (_t_mine101 / "left-behind.txt").write_text("x", encoding="utf-8")
-    _os101.utime(_t_mine101 / "left-behind.txt", (_t_old101, _t_old101))
-
-    _t_busy101 = ws.scratch_dir(_t_root101, "a-stage-still-running")
-    (_t_busy101 / "now.txt").write_text("x", encoding="utf-8")
-
-    _t_theirs101 = _t_root101 / ".chamnan" / "logs" / "something-the-user-put-here"
-    _t_theirs101.mkdir(parents=True, exist_ok=True)
-    (_t_theirs101 / "notes.txt").write_text("x", encoding="utf-8")
-    _os101.utime(_t_theirs101 / "notes.txt", (_t_old101, _t_old101))
-
-    _t_link101 = _t_root101 / ".chamnan" / "logs" / "a-link-out"
-    try:
-        _t_link101.symlink_to(_t_theirs101)
-    except OSError:
-        _t_link101 = None
-
-    _t_removed101 = ws.prune_scratch(_t_root101)
-    check("A CLOSED STAGE NOBODY DELETED IS SWEPT — %d removed" % _t_removed101,
-          _t_removed101 == 1 and not _t_mine101.is_dir(),
-          saw="removed=%r still there=%r" % (_t_removed101, _t_mine101.is_dir()))
-    check("...but a stage still being written to is left alone",
-          _t_busy101.is_dir())
-    # 🔴 The one that must never regress. A guard that deletes a stranger's directory is worse
-    # than a guard that leaves rubbish, and this is the assertion that says so.
-    check("A DIRECTORY THE USER PUT THERE IS NEVER SWEPT, AT ANY AGE",
-          _t_theirs101.is_dir() and (_t_theirs101 / "notes.txt").is_file(),
-          saw="the sweep removed an unmarked directory")
-    if _t_link101 is not None:
-        check("...and a symlink under logs/ is never followed or removed",
-              _t_link101.is_symlink())
-
-    # The producer that taught this lesson uses it, rather than keeping its own copy of the idea.
-    _t_cov101 = (ROOT.parent.parent / ".chamnan" / "tools" / "corpus_coverage.py")
-    if _t_cov101.is_file():
-        _t_src101 = _t_cov101.read_text(encoding="utf-8")
-        check("the corpus gate removes its scratch when the run ENDS, not when the next one starts",
-              "finally:" in _t_src101 and "rmtree(SCRATCH" in _t_src101,
-              saw="no finally-scoped cleanup in corpus_coverage.py")
-finally:
-    shutil.rmtree(_t_root101, ignore_errors=True)
 # ---- 101_report_exposes_the_persistence_funnel.py
 # ----------------------- a reminder being printed is not evidence that repository state survived
 # 🎯 [2026-09-12, R2 RQ6] The proposed outcome is a funnel — written, tracked, committed, fresh
@@ -26691,58 +26556,6 @@ check("A FRESH CLONE GETS THE COMMITTED COPY, NOT EITHER CURRENT UNCOMMITTED COP
 
 shutil.rmtree(_t_root101, ignore_errors=True)
 shutil.rmtree(_t_clone_parent101, ignore_errors=True)
-# ---- 249_a_candidate_is_a_procedure_not_a_repeated_command.py
-# ------------- a proposed workflow has to carry more information than the commonest command
-# 🐛 [2026-09-23] (self-measured) Nine candidates were queued in this repository and seven were the same shape:
-# `python3 → python3 → python3 → python3 → python3 → git add → git commit`, seen on three separate
-# days. The gate was `len(set(sequence)) >= MIN_LENGTH` — an ABSOLUTE floor — so an eight-step run
-# holding one command five times passed on the same evidence as three genuinely different steps.
-#
-# 🔴 That is not a near-miss, it is the whole store failing: `python3` is 1,847 of 6,398 commands
-# recorded here, 29%, so a run of it recurring is the background rate rather than a procedure.
-# Measured downstream the same day: 9 files awaiting review, `chamnan-candidates` invoked 0 times
-# in 21 days, and no session block ever carrying their content. The store was not underused — it
-# was being filled with noise, which is why reviewing it had never been worth anybody's time.
-#
-# The rule is about INFORMATION, not length. A procedure may invoke one tool twice — build then
-# test, add then commit — but a step appearing three or more times in one sequence is repetition.
-import importlib.util as _ilu102
-
-_t_spec102 = _ilu102.spec_from_file_location("_wf102", ROOT / "lib" / "workflows.py")
-_t_wf102 = _ilu102.module_from_spec(_t_spec102)
-_t_spec102.loader.exec_module(_t_wf102)
-
-check("the detector declares what makes a sequence informative",
-      hasattr(_t_wf102, "_informative") and hasattr(_t_wf102, "MAX_REPEATS"),
-      saw=sorted(n for n in dir(_t_wf102) if "REPEAT" in n or "inform" in n))
-
-# The real queue this was found in, kept verbatim: four that must be refused and two that must
-# survive. Derived from the candidates on disk at the time, not invented to fit the rule.
-_t_noise102 = [
-    ["python3"] * 5 + ["git add", "git commit"],
-    ["git add", "git commit"] + ["python3"] * 6,
-    ["python3", "python3", "s", "python3", "git add", "git commit"],
-    ["python3", "s", "python3", "python3", "s", "git add", "git commit"],
-]
-_t_real102 = [
-    ["python3", "python3 track_traffic.py", "python3 track_traffic.py", "gh pr", "gh pr",
-     "gh issue", "gh api", "gh api"],
-    ["python3", "python3", "xargs", "git add", "git commit", "git log"],
-]
-_t_wrong102 = [s for s in _t_noise102 if _t_wf102._informative(s)]
-check("A SEQUENCE MADE OF ONE REPEATED COMMAND IS NOT PROPOSED AS A PROCEDURE",
-      _t_wrong102 == [], saw=[" → ".join(s) for s in _t_wrong102])
-_t_lost102 = [s for s in _t_real102 if not _t_wf102._informative(s)]
-# 🔴 The other half, and the one a stricter rule would break: a real procedure legitimately
-# repeats a tool. A guard that refuses everything scores perfectly on the noise above and is
-# worthless, so the population that must SURVIVE is asserted beside the one that must not.
-check("...while a real procedure that uses one tool twice still is",
-      _t_lost102 == [], saw=[" → ".join(s) for s in _t_lost102])
-
-# And the floor it replaces is still enforced: three different steps, not two.
-check("...and a two-step sequence is still refused on distinctness",
-      not (len({"a", "b"}) >= _t_wf102.MIN_LENGTH),
-      saw="MIN_LENGTH=%r" % (_t_wf102.MIN_LENGTH,))
 # ---- 102_untracked_workspace_state_is_named_once.py
 # ----------------------- written here is not durable until the repository carries it somewhere
 # 🎯 [2026-09-12, R2 RQ6] One issue and one discussion independently showed users unsure whether
@@ -26996,50 +26809,6 @@ check("WITHOUT THE SWITCH, RECORD STILL APPENDS ONE ORDINARY COMMAND AND RETURNS
           (_ordinary_before103, _ordinary_after103, _ordinary_history103))
 
 _shutil103.rmtree(_root103, ignore_errors=True)
-# ---- 250_the_commit_guard_has_something_that_calls_it.py
-# ------------- a guard nothing invokes is not a guard
-# 🐛 [2026-09-23] (self-measured) `chamnan-guard` scans a staged diff for anything shaped like a secret. It worked:
-# fed a staged AWS key it names the file and the line and prints none of the matched text, because
-# reading a secret out loud copies it into the terminal and the transcript. It had been installed
-# thirteen days and had run ZERO times, against 294 `git commit` calls recorded in the window.
-#
-# 🔴 Every part of the process was missing at once: nothing called the command, its own docstring
-# said `--strict` was "for a hook somebody opted into", and there was no config key to opt in
-# WITH. The owner's framing is the one to keep — *"ออกแบบมา แต่มันไม่โดนเรียก แปลว่ากระบวนการไม่
-# สมบูรณ์"* — a designed thing that is never invoked is a defect, not a feature awaiting demand.
-import json as _json103
-
-_t_hooks103 = _json103.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-_t_cmds103 = [h["command"] for groups in _t_hooks103["hooks"].values()
-              for g in groups for h in g["hooks"]]
-check("SOMETHING CALLS THE COMMIT GUARD — a guard nothing invokes is not a guard",
-      any("chamnan_commit_guard.py" in c for c in _t_cmds103),
-      saw=[c for c in _t_cmds103 if "guard" in c] or "no hook names it")
-check("...on PreToolUse, which is the only moment that can act before the commit",
-      any("chamnan_commit_guard.py" in h["command"]
-          for g in _t_hooks103["hooks"].get("PreToolUse", []) for h in g["hooks"]),
-      saw=sorted(_t_hooks103["hooks"]))
-check("...and there is a key to turn it off, which is what opting in requires",
-      "commit_guard" in ws.DEFAULT_CONFIG, saw=sorted(ws.DEFAULT_CONFIG))
-
-# 🐛 The first matcher fired on `echo git commit` — the mention-is-not-use error this workspace
-# has recorded six times, made inside the fix for another instance of it. A name is an invocation
-# only in COMMAND POSITION, which `lib/canonical.py` already says in a comment of the same date.
-import importlib.util as _ilu103
-_t_spec103 = _ilu103.spec_from_file_location("_cg103", ROOT / "hooks" / "chamnan_commit_guard.py")
-_t_cg103 = _ilu103.module_from_spec(_t_spec103)
-_t_spec103.loader.exec_module(_t_cg103)
-_t_yes103 = ["git commit -m x", "git commit", "git -C /p commit -q -m x", "cd /p && git commit -m y",
-             "git -c user.name=x commit -m y", "env FOO=1 git commit"]
-_t_no103 = ["git add -A", "git log --oneline", "git -C x status", "echo git commit",
-            'grep -rn "git commit" .']
-_t_missed103 = [c for c in _t_yes103 if not _t_cg103._is_commit(c)]
-_t_false103 = [c for c in _t_no103 if _t_cg103._is_commit(c)]
-check("A REAL `git commit` IS RECOGNISED IN EVERY SHAPE THIS REPOSITORY USES",
-      _t_missed103 == [], saw=_t_missed103)
-# 🔴 Both populations. A matcher that says yes to everything passes the line above and would run
-# the guard on every command in the session.
-check("...and a command that only MENTIONS it is not", _t_false103 == [], saw=_t_false103)
 # ---- 104_a_nested_repository_is_not_an_all_clear.py
 # ----------------------- absent from this index is not the same as nothing depends on this file
 # 🐛 [2026-09-13, R3 defect A; R5 triage item 1] `chamnan-impact` told a reader to change a
@@ -41374,6 +41143,328 @@ else:
           saw="%d pattern(s) ran past %.1fs on a crafted input, which is a session that stops "
               "responding rather than a slow one:\n        %s"
           % (len(_t_hung245), _T245, "\n        ".join(_t_hung245[:8])))
+# ---- 246_a_repository_named_driver_does_not_run.py
+# ------------------ a driver the repository names in its own config does not run
+# 🐛 [2026-09-24] (self-measured) `_harden_git_config` forces eleven FIXED config keys inert, and an
+# attribute driver has no fixed key: `.gitattributes` names it, and the program sits in config under
+# `filter.<name>.clean` / `.process` with a name the repository chose. Measured on git 2.55: such a
+# program ran on `git status --porcelain` whenever a tracked file's stat info had changed, and
+# SessionStart runs exactly that. `workspace._stand_down_repository_drivers` reads the names from the
+# repository and overrides each one found in a repository scope.
+#
+# Driven through the real entry points, each in a fresh interpreter — the override is written into
+# `os.environ`, so running it inside the suite's own process would leak into every later check.
+# Each case also runs once with the stand-down switched off and must record the program running
+# there: without that, "the marker is absent" would pass on a fixture that never reached git.
+import os as _os246, subprocess as _sp246, sys as _sys246, tempfile as _tf246   # noqa: E402
+import pathlib as _pl246, shutil as _sh246                                     # noqa: E402
+
+_LIB246 = str(ROOT / "lib")
+_PROBE246 = (
+    "import sys, workspace\n"
+    "if sys.argv[2] == 'off':\n"
+    "    workspace._stand_down_repository_drivers = lambda *a, **k: None\n"
+    "print(workspace.git_status(sys.argv[1]) is not None)\n")
+
+
+def _repo246(kind):
+    """A committed repository whose own config names a driver for `a.txt`, with `a.txt` edited."""
+    base = _pl246.Path(_tf246.mkdtemp(prefix="chamnan-driver-"))
+    repo, mark = base / "r", base / "ran"
+    repo.mkdir()
+    # The driver is a Python script, not a shell line, so the same fixture means the same thing on
+    # every CI platform.
+    script = base / "driver.py"
+    script.write_text(
+        "import sys\nopen(%r, 'a').write('x')\n" % str(mark)
+        + ("sys.exit(1)\n" if kind == "process" else
+           "sys.stdout.buffer.write(sys.stdin.buffer.read())\n"), encoding="utf-8")
+    command = '"%s" "%s"' % (_pl246.Path(_sys246.executable).as_posix(), script.as_posix())
+    g = lambda *a: _sp246.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+    g("init", "-q")
+    g("config", "user.email", "t@example.invalid")
+    g("config", "user.name", "t")
+    (repo / ".gitattributes").write_text("*.txt filter=probe\n", encoding="utf-8")
+    (repo / "a.txt").write_text("one\n", encoding="utf-8")
+    # Committed BEFORE the driver exists, so setting the fixture up never runs it.
+    g("add", "-A")
+    g("commit", "-qm", "x")
+    variable = "process" if kind == "process" else "clean"
+    if kind == "include":
+        inc = base / "included.cfg"
+        inc.write_text('[filter "probe"]\n\tclean = %s\n' % command.replace('"', '\\"'),
+                       encoding="utf-8")
+        g("config", "include.path", str(inc))
+    else:
+        g("config", "filter.probe.%s" % variable, command)
+    if kind == "process":
+        g("config", "filter.probe.required", "true")
+    # 🐛 The first draft wrote "three\n": a different SIZE, and git calls a size change modified
+    # without hashing anything, so the driver never ran and the switched-off control caught it.
+    # Same size, and an mtime moved forward, is the case that makes git read the file through the
+    # filter — which is also the everyday one: a file saved without a net change.
+    target = repo / "a.txt"
+    target.write_text("two\n", encoding="utf-8")
+    stamp = target.stat().st_mtime + 10
+    _os246.utime(target, (stamp, stamp))
+    return base, repo, mark
+
+
+def _run246(kind, switch):
+    base, repo, mark = _repo246(kind)
+    try:
+        out = _sp246.run([_sys246.executable, "-c", _PROBE246, str(repo), switch],
+                         capture_output=True, text=True,
+                         env=dict(_os246.environ, PYTHONPATH=_LIB246))
+        return mark.exists(), out.stdout.strip(), out.stderr.strip()[-300:]
+    finally:
+        _sh246.rmtree(base, ignore_errors=True)
+
+
+for _kind246 in ("clean", "process", "include"):
+    _ran_off246, _, _ = _run246(_kind246, "off")
+    check("the %s fixture runs its driver when nothing stands it down" % _kind246, _ran_off246,
+          saw="the fixture never reached git, so the check below would prove nothing")
+    _ran246, _answered246, _err246 = _run246(_kind246, "on")
+    check("A REPOSITORY-NAMED %s DRIVER DOES NOT RUN ON git_status" % _kind246.upper(),
+          not _ran246, saw=_err246 or "the driver's marker file was written")
+    check("...and git_status still answers (%s)" % _kind246, _answered246 == "True",
+          saw="stdout %r, stderr %r" % (_answered246, _err246))
+
+# The entry point every session takes, not only the function it calls.
+_base246, _repo_h246, _mark246 = _repo246("clean")
+try:
+    _sp246.run([_sys246.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+               input='{"cwd": "%s"}' % _repo_h246.as_posix(), capture_output=True, text=True,
+               encoding="utf-8", errors="replace", cwd=str(_repo_h246))
+    check("A SESSION START IN THAT REPOSITORY DOES NOT RUN ITS DRIVER", not _mark246.exists())
+finally:
+    _sh246.rmtree(_base246, ignore_errors=True)
+
+# The user's own scopes are left alone — `git lfs install` writes `filter.lfs.*` to global config,
+# and overriding it would make every LFS file read as modified. Asserted on the override list,
+# because a trusted driver running is the intended behaviour and needs no program to prove.
+_base246, _repo_g246, _ = _repo246("clean")
+try:
+    _glob246 = _base246 / "global.cfg"
+    _glob246.write_text('[filter "userwide"]\n\tclean = cat\n', encoding="utf-8")
+    _probe_g246 = ("import os, sys, workspace\nworkspace.git_can_speak_for(sys.argv[1])\n"
+                   "n = int(os.environ.get('GIT_CONFIG_COUNT', '0'))\n"
+                   "print(sorted({os.environ['GIT_CONFIG_KEY_%d' % i] for i in range(n)}))\n")
+    _keys246 = _sp246.run([_sys246.executable, "-c", _probe_g246, str(_repo_g246)],
+                          capture_output=True, text=True,
+                          env=dict(_os246.environ, PYTHONPATH=_LIB246,
+                                   GIT_CONFIG_GLOBAL=str(_glob246))).stdout
+    check("the repository's own driver is overridden", "filter.probe.clean" in _keys246,
+          saw=_keys246)
+    check("...and a driver from the user's global config is not", "userwide" not in _keys246,
+          saw=_keys246)
+finally:
+    _sh246.rmtree(_base246, ignore_errors=True)
+
+# The spawn is skipped only when a plain read PROVES there is nothing to find — the SessionStart
+# process ceiling depends on the common case paying nothing.
+import workspace as _ws246                                                     # noqa: E402
+_plain246 = _pl246.Path(_tf246.mkdtemp(prefix="chamnan-driver-plain-"))
+try:
+    _sp246.run(["git", "init", "-q", str(_plain246)], capture_output=True)
+    check("a repository with no driver section costs no extra spawn",
+          _ws246._config_could_name_a_driver(str(_plain246)) is False)
+    with open(_plain246 / ".git" / "config", "a", encoding="utf-8") as _f246:
+        _f246.write('[Filter "x"]\n\tclean = cat\n')
+    check("...and a driver section in any letter case is noticed",
+          _ws246._config_could_name_a_driver(str(_plain246)) is True)
+    check("...and a .git that is not a directory asks git rather than guessing",
+          _ws246._config_could_name_a_driver(str(_plain246 / "nowhere")) is True)
+finally:
+    _sh246.rmtree(_plain246, ignore_errors=True)
+# ---- 247_every_store_has_a_reader_and_every_reader_a_store.py
+# ------------- the closed loop: producer -> consumer -> a reachable path, asserted both ways
+# 🎯 [1.31, Alpha's verdict 2026-09-23] Three findings in one day were one class: 25 of 29 skills
+# unreachable, 2 of 243 guards with a mutation proof, 3,114 lessons with no reader. Each looks
+# like health from either end alone — the writer writes happily and the reader never fires.
+#
+# 🐛 [2026-09-23] (self-measured) `invariant_map.py` had the consumer direction and three defects that made it
+# report the wrong thing. `Path.glob` has no brace expansion, so a declaration naming several
+# extensions matched nothing and the tool printed "POPULATION IS EMPTY, nothing writes for it" —
+# a diagnosis, and the wrong one: the population was not empty, the pattern was unreadable. The
+# contract could only say "every member carries the marker", which is right for a router and
+# wrong for a scanner, so a scanner had to lie or go undeclared — and undeclared is exactly how
+# the 25 skills stayed invisible. And it walked consumers only, so a store nobody claims was
+# invisible by construction.
+#
+# 🔴 What is asserted here is the SET, not any one pair: that the sweep parses every declaration
+# it finds, that it finds a real number of them, and that both directions close.
+import importlib.util as _ilu247
+
+_t_ws247 = ROOT.parent.parent / ".chamnan"
+_t_map247 = _t_ws247 / "tools" / "invariant_map.py"
+check("the invariant map is on disk where the workspace keeps its tools",
+      _t_map247.is_file(), saw=str(_t_map247))
+
+if _t_map247.is_file():
+    _t_spec247 = _ilu247.spec_from_file_location("_invmap247", _t_map247)
+    _t_mod247 = _ilu247.module_from_spec(_t_spec247)
+    _t_spec247.loader.exec_module(_t_mod247)
+
+    # 🐛 A sweep that finds nothing passes every assertion below it. The floor is checked first,
+    # and it is a real number rather than >0: seven pairs were declared the day this was written.
+    _t_pairs247 = _t_mod247.consumers()
+    check("THE SWEEP FINDS THE DECLARATIONS — %d pair(s)" % len(_t_pairs247),
+          len(_t_pairs247) >= 7,
+          saw="fewer than seven declared pairs; every assertion below would pass on an empty list")
+
+    # 1. Every declared glob has to be one the tool can actually expand. This is the check that
+    #    would have caught the brace bug the day it was written, instead of a week later when
+    #    somebody read the output carefully.
+    _t_unparsed247 = [str(p.relative_to(ROOT.parent.parent)) + " -> " + g
+                      for p, g, _m, _w, _s, _l in _t_pairs247 if not _t_mod247._expand(g)]
+    check("EVERY DECLARED GLOB PARSES, SO EVERY PAIR WAS ACTUALLY MEASURED",
+          _t_unparsed247 == [], saw=_t_unparsed247[:5])
+
+    # 2. Both halves of every declared pair connect.
+    _t_broken247 = []
+    for _p247, _g247, _m247, _w247, _s247, _l247 in _t_pairs247:
+        _t_total247, _t_ok247, _t_miss247 = _t_mod247.reach(_g247, _m247, _w247, _s247)
+        _t_rel247 = str(_p247.relative_to(ROOT.parent.parent))
+        if _t_total247 < 0:
+            _t_broken247.append(f"{_t_rel247}: `{_g247}` does not parse")
+        elif _l247:
+            if _t_ok247 < _l247:
+                _t_broken247.append(f"{_t_rel247}: {_t_ok247} carry `{_m247}`, floor is {_l247}")
+        elif _t_total247 == 0:
+            _t_broken247.append(f"{_t_rel247}: `{_g247}` matches no file")
+        elif _t_miss247:
+            _t_broken247.append(f"{_t_rel247}: {len(_t_miss247)} member(s) carry no `{_m247}`")
+    check("EVERY DECLARED PAIR CLOSES — A DECLARED READER REACHES ITS WHOLE POPULATION",
+          _t_broken247 == [], saw=_t_broken247[:5])
+
+    # 3. The direction a consumer sweep cannot see: a store on disk nothing claims. `state/` is
+    #    excluded by the tool itself — those are records people read, not stores a tool consumes —
+    #    so what is left is `logs/`, where a file nothing reads is dead weight.
+    _t_loose247 = [str(q) for q, why in _t_mod247.unclaimed(_t_pairs247) if why is None]
+    check("EVERY STORE ON DISK IS REACHED BY A DECLARATION, OR IS NAMED WITH ITS REASON",
+          _t_loose247 == [], saw=_t_loose247[:8])
+# ---- 248_only_chamnans_own_scratch_is_ever_swept.py
+# ------------- a closed stage is removed; a directory the user put there never is
+# 🎯 [owner, 2026-09-23] "เราไม่แตะพื้นที่นอก repo chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ"
+# — the scope is the workspace, and the second half of it had no sweeper. `prune_orphaned_temps`
+# covers a killed atomic write, which leaves a `.tmp`. Nothing covered a tool that made itself a
+# working DIRECTORY and finished without removing it: `corpus_coverage.py` cleaned its copy at the
+# start of the NEXT run, so the workspace permanently carried 795 files and 8.8 MB of another
+# repository, and it confused two other tools before anybody noticed.
+#
+# 🔴 The safety property is the whole design, and it is what this check pins: only a directory
+# chamnan created and MARKED is ever removed. An unmarked directory is the user's and is never
+# touched at any age. That inverts the question from "can I prove this is safe to delete", which
+# nothing in a stranger's repository can answer, to "did I make this myself", which is a fact
+# written down at creation.
+import os as _os248
+import tempfile as _tf248
+import time as _t248
+
+_t_root248 = Path(_tf248.mkdtemp(prefix="chamnan-scratch-101-"))
+try:
+    ws.ensure(_t_root248)
+    _t_old248 = _t248.time() - 40 * 86400
+
+    _t_mine248 = ws.scratch_dir(_t_root248, "a-closed-stage")
+    check("scratch_dir makes a directory and marks it as chamnan's",
+          _t_mine248 is not None and (_t_mine248 / ws.SCRATCH_MARK).is_file(),
+          saw=str(_t_mine248))
+    (_t_mine248 / "left-behind.txt").write_text("x", encoding="utf-8")
+    _os248.utime(_t_mine248 / "left-behind.txt", (_t_old248, _t_old248))
+
+    _t_busy248 = ws.scratch_dir(_t_root248, "a-stage-still-running")
+    (_t_busy248 / "now.txt").write_text("x", encoding="utf-8")
+
+    _t_theirs248 = _t_root248 / ".chamnan" / "logs" / "something-the-user-put-here"
+    _t_theirs248.mkdir(parents=True, exist_ok=True)
+    (_t_theirs248 / "notes.txt").write_text("x", encoding="utf-8")
+    _os248.utime(_t_theirs248 / "notes.txt", (_t_old248, _t_old248))
+
+    _t_link248 = _t_root248 / ".chamnan" / "logs" / "a-link-out"
+    try:
+        _t_link248.symlink_to(_t_theirs248)
+    except OSError:
+        _t_link248 = None
+
+    _t_removed248 = ws.prune_scratch(_t_root248)
+    check("A CLOSED STAGE NOBODY DELETED IS SWEPT — %d removed" % _t_removed248,
+          _t_removed248 == 1 and not _t_mine248.is_dir(),
+          saw="removed=%r still there=%r" % (_t_removed248, _t_mine248.is_dir()))
+    check("...but a stage still being written to is left alone",
+          _t_busy248.is_dir())
+    # 🔴 The one that must never regress. A guard that deletes a stranger's directory is worse
+    # than a guard that leaves rubbish, and this is the assertion that says so.
+    check("A DIRECTORY THE USER PUT THERE IS NEVER SWEPT, AT ANY AGE",
+          _t_theirs248.is_dir() and (_t_theirs248 / "notes.txt").is_file(),
+          saw="the sweep removed an unmarked directory")
+    if _t_link248 is not None:
+        check("...and a symlink under logs/ is never followed or removed",
+              _t_link248.is_symlink())
+
+    # The producer that taught this lesson uses it, rather than keeping its own copy of the idea.
+    _t_cov248 = (ROOT.parent.parent / ".chamnan" / "tools" / "corpus_coverage.py")
+    if _t_cov248.is_file():
+        _t_src248 = _t_cov248.read_text(encoding="utf-8")
+        check("the corpus gate removes its scratch when the run ENDS, not when the next one starts",
+              "finally:" in _t_src248 and "rmtree(SCRATCH" in _t_src248,
+              saw="no finally-scoped cleanup in corpus_coverage.py")
+finally:
+    shutil.rmtree(_t_root248, ignore_errors=True)
+# ---- 249_a_candidate_is_a_procedure_not_a_repeated_command.py
+# ------------- a proposed workflow has to carry more information than the commonest command
+# 🐛 [2026-09-23] (self-measured) Nine candidates were queued in this repository and seven were the same shape:
+# `python3 → python3 → python3 → python3 → python3 → git add → git commit`, seen on three separate
+# days. The gate was `len(set(sequence)) >= MIN_LENGTH` — an ABSOLUTE floor — so an eight-step run
+# holding one command five times passed on the same evidence as three genuinely different steps.
+#
+# 🔴 That is not a near-miss, it is the whole store failing: `python3` is 1,847 of 6,398 commands
+# recorded here, 29%, so a run of it recurring is the background rate rather than a procedure.
+# Measured downstream the same day: 9 files awaiting review, `chamnan-candidates` invoked 0 times
+# in 21 days, and no session block ever carrying their content. The store was not underused — it
+# was being filled with noise, which is why reviewing it had never been worth anybody's time.
+#
+# The rule is about INFORMATION, not length. A procedure may invoke one tool twice — build then
+# test, add then commit — but a step appearing three or more times in one sequence is repetition.
+import importlib.util as _ilu249
+
+_t_spec249 = _ilu249.spec_from_file_location("_wf249", ROOT / "lib" / "workflows.py")
+_t_wf249 = _ilu249.module_from_spec(_t_spec249)
+_t_spec249.loader.exec_module(_t_wf249)
+
+check("the detector declares what makes a sequence informative",
+      hasattr(_t_wf249, "_informative") and hasattr(_t_wf249, "MAX_REPEATS"),
+      saw=sorted(n for n in dir(_t_wf249) if "REPEAT" in n or "inform" in n))
+
+# The real queue this was found in, kept verbatim: four that must be refused and two that must
+# survive. Derived from the candidates on disk at the time, not invented to fit the rule.
+_t_noise249 = [
+    ["python3"] * 5 + ["git add", "git commit"],
+    ["git add", "git commit"] + ["python3"] * 6,
+    ["python3", "python3", "s", "python3", "git add", "git commit"],
+    ["python3", "s", "python3", "python3", "s", "git add", "git commit"],
+]
+_t_real249 = [
+    ["python3", "python3 track_traffic.py", "python3 track_traffic.py", "gh pr", "gh pr",
+     "gh issue", "gh api", "gh api"],
+    ["python3", "python3", "xargs", "git add", "git commit", "git log"],
+]
+_t_wrong249 = [s for s in _t_noise249 if _t_wf249._informative(s)]
+check("A SEQUENCE MADE OF ONE REPEATED COMMAND IS NOT PROPOSED AS A PROCEDURE",
+      _t_wrong249 == [], saw=[" → ".join(s) for s in _t_wrong249])
+_t_lost249 = [s for s in _t_real249 if not _t_wf249._informative(s)]
+# 🔴 The other half, and the one a stricter rule would break: a real procedure legitimately
+# repeats a tool. A guard that refuses everything scores perfectly on the noise above and is
+# worthless, so the population that must SURVIVE is asserted beside the one that must not.
+check("...while a real procedure that uses one tool twice still is",
+      _t_lost249 == [], saw=[" → ".join(s) for s in _t_lost249])
+
+# And the floor it replaces is still enforced: three different steps, not two.
+check("...and a two-step sequence is still refused on distinctness",
+      not (len({"a", "b"}) >= _t_wf249.MIN_LENGTH),
+      saw="MIN_LENGTH=%r" % (_t_wf249.MIN_LENGTH,))
 # ---- 24_ignore_matching_agrees_with_real_git.py
 # ------------------------------------------- fnmatch asks the platform, git asks its own config
 # 🐛 [2026-09-09] `fnmatch.fnmatch` normalises case with `os.path.normcase`, which folds on Windows
@@ -41469,6 +41560,154 @@ for _t_f_24 in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glo
         _t_left_24.append(_t_f_24.name)
 check("no module still asks the platform whether to fold case",
       not _t_left_24, saw=", ".join(_t_left_24) or None)
+# ---- 250_the_commit_guard_has_something_that_calls_it.py
+# ------------- a guard nothing invokes is not a guard
+# 🐛 [2026-09-23] (self-measured) `chamnan-guard` scans a staged diff for anything shaped like a secret. It worked:
+# fed a staged AWS key it names the file and the line and prints none of the matched text, because
+# reading a secret out loud copies it into the terminal and the transcript. It had been installed
+# thirteen days and had run ZERO times, against 294 `git commit` calls recorded in the window.
+#
+# 🔴 Every part of the process was missing at once: nothing called the command, its own docstring
+# said `--strict` was "for a hook somebody opted into", and there was no config key to opt in
+# WITH. The owner's framing is the one to keep — *"ออกแบบมา แต่มันไม่โดนเรียก แปลว่ากระบวนการไม่
+# สมบูรณ์"* — a designed thing that is never invoked is a defect, not a feature awaiting demand.
+import json as _json250
+
+_t_hooks250 = _json250.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_t_cmds250 = [h["command"] for groups in _t_hooks250["hooks"].values()
+              for g in groups for h in g["hooks"]]
+check("SOMETHING CALLS THE COMMIT GUARD — a guard nothing invokes is not a guard",
+      any("chamnan_commit_guard.py" in c for c in _t_cmds250),
+      saw=[c for c in _t_cmds250 if "guard" in c] or "no hook names it")
+check("...on PreToolUse, which is the only moment that can act before the commit",
+      any("chamnan_commit_guard.py" in h["command"]
+          for g in _t_hooks250["hooks"].get("PreToolUse", []) for h in g["hooks"]),
+      saw=sorted(_t_hooks250["hooks"]))
+check("...and there is a key to turn it off, which is what opting in requires",
+      "commit_guard" in ws.DEFAULT_CONFIG, saw=sorted(ws.DEFAULT_CONFIG))
+
+# 🐛 The first matcher fired on `echo git commit` — the mention-is-not-use error this workspace
+# has recorded six times, made inside the fix for another instance of it. A name is an invocation
+# only in COMMAND POSITION, which `lib/canonical.py` already says in a comment of the same date.
+import importlib.util as _ilu250
+_t_spec250 = _ilu250.spec_from_file_location("_cg250", ROOT / "hooks" / "chamnan_commit_guard.py")
+_t_cg250 = _ilu250.module_from_spec(_t_spec250)
+_t_spec250.loader.exec_module(_t_cg250)
+_t_yes250 = ["git commit -m x", "git commit", "git -C /p commit -q -m x", "cd /p && git commit -m y",
+             "git -c user.name=x commit -m y", "env FOO=1 git commit"]
+_t_no250 = ["git add -A", "git log --oneline", "git -C x status", "echo git commit",
+            'grep -rn "git commit" .']
+_t_missed250 = [c for c in _t_yes250 if not _t_cg250._is_commit(c)]
+_t_false250 = [c for c in _t_no250 if _t_cg250._is_commit(c)]
+check("A REAL `git commit` IS RECOGNISED IN EVERY SHAPE THIS REPOSITORY USES",
+      _t_missed250 == [], saw=_t_missed250)
+# 🔴 Both populations. A matcher that says yes to everything passes the line above and would run
+# the guard on every command in the session.
+check("...and a command that only MENTIONS it is not", _t_false250 == [], saw=_t_false250)
+# ---- 251_a_fresh_session_starts_from_a_handoff.py
+# ------------------ a fresh session starts from a handoff, and --fresh really starts one
+# 🎯 [owner 2026-09-24] `chamnan-open` decided FRESH (a new date AND a night's gap) and then launched
+# a session that knew nothing of the one it replaced — and `--fresh` was parsed and never read, so
+# it resumed whenever the clock said to. Now a FRESH start with an earlier conversation writes
+# `.chamnan/logs/handoff.md` from that transcript's last typed messages, redacted, and opens the new
+# session with an instruction to read it.
+#
+# Driven through the real command with `--dry-run` (nothing is launched), against a transcript
+# written into a throwaway CLAUDE_CONFIG_DIR, plus `write_handoff` itself for what reaches disk.
+import json as _js251, os as _os251, subprocess as _sp251, sys as _sys251     # noqa: E402
+import tempfile as _tf251, shutil as _sh251, pathlib as _pl251                  # noqa: E402
+from datetime import datetime as _dt251, timedelta as _td251                   # noqa: E402
+import handoff as _ho251                                                       # noqa: E402
+import redact as _rd251                                                        # noqa: E402
+
+_OPEN251 = str(ROOT / "bin" / "chamnan-open")
+# Built at runtime and proved redactable before use: a fixture the redactor does not recognise
+# would make "the secret did not reach the handoff" pass for the wrong reason.
+_SECRET251 = "Zq8" + "vN3pL0wR7tY2kD9s"
+_ASK_SECRET251 = "the login is password: " + _SECRET251
+check("the secret fixture is one the redactor removes, so the handoff check below means something",
+      _SECRET251 not in _rd251.scrub(_ASK_SECRET251))
+
+
+def _transcript251(cfg, repo, hours_ago):
+    """A transcript for `repo` whose last turn was `hours_ago` hours ago."""
+    d = cfg / "projects" / str(repo.resolve()).replace(_os251.sep, "-").replace("/", "-")
+    d.mkdir(parents=True)
+    t = (_dt251.now().astimezone() - _td251(hours=hours_ago)).isoformat()
+    rows = [
+        {"type": "user", "timestamp": t, "message": {"role": "user", "content": "fix the importer"}},
+        {"type": "user", "timestamp": t, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "x", "content": "TOOL OUTPUT NOT TYPED"},
+            # The harness appends text blocks beside a tool result; they are not the person either.
+            {"type": "text", "text": "TEXT BESIDE A TOOL RESULT"}]}},
+        {"type": "user", "timestamp": t, "isMeta": True,
+         "message": {"role": "user", "content": "META NOT TYPED"}},
+        {"type": "user", "timestamp": t, "message": {"role": "user",
+         "content": "<command-name>/clear</command-name>"}},
+        {"type": "user", "timestamp": t, "message": {"role": "user", "content": [
+            {"type": "text", "text": _ASK_SECRET251}]}},
+        {"type": "assistant", "timestamp": t, "message": {"role": "assistant", "content": "ok"}},
+        {"type": "user", "timestamp": t, "message": {"role": "user",
+         "content": "then commit it locally"}},
+    ]
+    f = d / "11111111-2222-3333-4444-555555555555.jsonl"
+    f.write_text("\n".join(_js251.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return f
+
+
+def _open251(cfg, repo, *flags):
+    out = _sp251.run([_sys251.executable, _OPEN251, *flags, "--dry-run", str(repo)],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace",
+                     env=dict(_os251.environ, CLAUDE_CONFIG_DIR=str(cfg)))
+    return out.returncode, out.stderr
+
+
+_base251 = _pl251.Path(_tf251.mkdtemp(prefix="chamnan-handoff-"))
+try:
+    # A night and a new date ago: the rule says FRESH on its own.
+    _cfg251, _repo251 = _base251 / "cfg", _base251 / "repo"
+    (_repo251 / ".git").mkdir(parents=True)
+    _tr251 = _transcript251(_cfg251, _repo251, 30)
+    _rc251, _err251 = _open251(_cfg251, _repo251)
+    check("A NIGHT AND A NEW DATE LATER, chamnan-open STARTS FRESH WITH THE HANDOFF PROMPT",
+          _rc251 == 0 and "fresh" in _err251 and _ho251.HANDOFF_PROMPT in _err251
+          and "--resume 1111" not in _err251.split("would run:")[-1], saw=_err251)
+    check("...and a dry run writes no handoff",
+          not (_repo251 / ".chamnan" / "logs" / _ho251.HANDOFF_NAME).exists())
+
+    # What reaches disk.
+    _w251 = _ho251.write_handoff(_repo251, "11111111-2222-3333-4444-555555555555", _tr251,
+                                 None, "test")
+    _txt251 = _w251.read_text(encoding="utf-8") if _w251 else ""
+    check("the handoff is written under the workspace's gitignored logs/",
+          _w251 is not None and _w251.parent.name == "logs" and _w251.parent.parent.name == ".chamnan")
+    check("...it carries what the person typed, in order",
+          "fix the importer" in _txt251 and "then commit it locally" in _txt251
+          and _txt251.index("fix the importer") < _txt251.index("then commit it locally"),
+          saw=_txt251)
+    _leaked251 = [s for s in ("TOOL OUTPUT NOT TYPED", "TEXT BESIDE A TOOL RESULT", "META NOT TYPED",
+                              "<command-name>")
+                  if s in _txt251]
+    check("...and nothing the harness wrote in the person's name", not _leaked251, saw=_leaked251)
+    check("A SECRET THE PERSON TYPED DOES NOT REACH THE HANDOFF FILE",
+          _SECRET251 not in _txt251 and "the login is" in _txt251, saw=_txt251)
+    check("...and it names the earlier session so it can still be resumed",
+          "claude --resume 11111111-2222-3333-4444-555555555555" in _txt251)
+
+    # Minutes ago on the same day: the rule says RESUME, and only --fresh overrides it.
+    _cfg2, _repo2 = _base251 / "cfg2", _base251 / "repo2"
+    (_repo2 / ".git").mkdir(parents=True)
+    _transcript251(_cfg2, _repo2, 0.05)
+    _rc_r, _err_r = _open251(_cfg2, _repo2)
+    check("a few minutes later the same conversation is resumed, with no handoff prompt",
+          _rc_r == 0 and "resume" in _err_r and "--resume 1111" in _err_r
+          and _ho251.HANDOFF_PROMPT not in _err_r, saw=_err_r)
+    _rc_f, _err_f = _open251(_cfg2, _repo2, "--fresh")
+    check("--FRESH STARTS A NEW CONVERSATION EVEN WHEN THE RULE SAYS RESUME",
+          _rc_f == 0 and "asked for with --fresh" in _err_f and _ho251.HANDOFF_PROMPT in _err_f
+          and "--resume 1111" not in _err_f.split("would run:")[-1], saw=_err_f)
+finally:
+    _sh251.rmtree(_base251, ignore_errors=True)
 # ---- 25_the_block_log_answers_what_it_records.py
 # ------------------------------------------- five fixes to blocklog, and no test behind any of them
 # 🐛 [2026-09-09] `check_coverage_audit.py` was written to answer the owner's "go back and find what
