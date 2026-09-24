@@ -32903,8 +32903,14 @@ check("with no delivery failure the block carries no warning line",
       "_Also: " not in _plain166 and _FAIL_LINE166 not in _plain166,
       saw=_plain166[:200])
 _plain166_again = _run166(9500, [])
+# 🐛 [2026-09-24] (self-measured) The block carries relative times — "Last edited 1m ago", "built 0
+# seconds behind" — so two firings a moment apart can straddle a minute and differ in one digit at
+# the same length: 4887 against 4887 bytes on the Windows Python 3.8 runner of the 1.31.2 check
+# branch, the other four legs green. What this check guards is the STRUCTURE of the no-failure
+# path, so a relative duration is masked before the two firings are compared.
+_age_re166 = re.compile(r"\b\d+(?:\.\d+)?\s?(?:s|m|h|d|w|seconds?|minutes?|hours?|days?|weeks?)\b")
 check("...and is unchanged from firing to firing — the no-failure path is untouched by the move",
-      _plain166_again == _plain166,
+      _age_re166.sub("<age>", _plain166_again) == _age_re166.sub("<age>", _plain166),
       saw=f"{len(_plain166)} vs {len(_plain166_again)} bytes")
 
 # 2 & 1 & 4. Pin the ceiling to EXACTLY what the no-failure body already fills — reproducing the
