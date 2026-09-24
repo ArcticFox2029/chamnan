@@ -149,7 +149,18 @@ M.append(panel("what this repository puts in front of a session",
    which is the part a person can change. */
 const spentRows = Object.entries(row.spent || {})
   .map(([what, chars]) => ({ what, tok: Math.round(chars / cpt) }))
-  .filter((r) => r.tok > 0).sort((a, b) => b.tok - a.tok);
+  .filter((r) => r.tok > 0);
+/* 🐛 [2026-09-24, owner] What the transcript shows added up to 1.7M input tokens in September while
+   the host billed 8.2M cache writes. The difference is real and has two causes the transcript
+   cannot see: the context rewritten whole after the cache expires or after a compaction, and the
+   host's own tool definitions, which are sent every session and never recorded. It is a row of
+   its own, measured as the gap, so the ranking adds up to what was actually written. */
+const SPENT_GAP = "cache rewrites and host parts the transcript does not show";
+const seenIn = spentRows.filter((r) => r.what !== "the model's own output")
+  .reduce((a, r) => a + r.tok, 0);
+const gapTok = (row.t_write || 0) + (row.t_new || 0) - seenIn;
+if (spentRows.length && gapTok > 0) spentRows.push({ what: SPENT_GAP, tok: gapTok });
+spentRows.sort((a, b) => b.tok - a.tok);
 const spentTotal = spentRows.reduce((a, r) => a + r.tok, 0);
 const SPENT_TH = { "Read — file contents": "Read — เนื้อหาไฟล์", "Bash — command output": "Bash — ผลของคำสั่ง",
   "search (Grep, Glob)": "การค้นหา (Grep, Glob)", "subagent reports": "รายงานจาก subagent",
@@ -157,7 +168,8 @@ const SPENT_TH = { "Read — file contents": "Read — เนื้อหาไ�
   "MCP tools": "เครื่องมือ MCP", "what you typed": "สิ่งที่คุณพิมพ์",
   "the model's own output": "output ของโมเดลเอง",
   "the host's system prompt and instructions": "system prompt และคำสั่งของโฮสต์",
-  "hook and reminder context": "context จาก hook และ reminder", "other tools": "เครื่องมืออื่น" };
+  "hook and reminder context": "context จาก hook และ reminder", "other tools": "เครื่องมืออื่น",
+  [SPENT_GAP]: "การเขียน cache ซ้ำ และส่วนของโฮสต์ที่ transcript ไม่ได้บันทึก" };
 const top5 = spentRows.slice(0, 5);
 const rest = spentRows.slice(5).reduce((a, r) => a + r.tok, 0);
 M.append(panel(`where the tokens went in ${row[key] || "—"} — the top five`,
@@ -170,10 +182,14 @@ M.append(panel(`where the tokens went in ${row[key] || "—"} — the top five`,
         text: `${short(rest)} · ${pct(rest, spentTotal).toFixed(0)}%`, dim: true }] : []),
       { sort: false }),
     el("p", { class: "note", style: "margin:10px 0 0" },
-      T(`${n(spentTotal)} tokens entered the context in ${row[key] || "—"}. Every later turn sends `
+      T(`${n(spentTotal)} tokens entered the context in ${row[key] || "—"}`
+        + (gapTok >= 0 ? ` — the cache writes, new input and output above, to the token` : ``)
+        + `. Every later turn sends `
         + `the whole context again, and that is where the ${n(row.t_read || 0)} cached reads above `
         + `come from — so shrinking any row here shrinks those too.`,
-        `ในช่วง ${row[key] || "—"} มีโทเค็นเข้า context ${n(spentTotal)} · ทุกเทิร์นถัดไปส่ง context ทั้งหมดซ้ำ `
+        `ในช่วง ${row[key] || "—"} มีโทเค็นเข้า context ${n(spentTotal)}`
+        + (gapTok >= 0 ? ` เท่ากับ cache write + input ใหม่ + output ข้างบนพอดี` : ``)
+        + ` · ทุกเทิร์นถัดไปส่ง context ทั้งหมดซ้ำ `
         + `นั่นคือที่มาของ cached read ${n(row.t_read || 0)} ข้างบน · ลดแถวไหนในนี้ได้ ยอดนั้นก็ลดตาม`)),
     el("p", { class: "src", style: "margin:8px 0 0" },
       T("each thing is counted once, when it entered the context. A long session re-reads all of it "
