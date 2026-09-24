@@ -200,7 +200,7 @@ def privacy_preview(root, profile, ceiling, payload=None):
         "  are scrubbed by their real hooks, but their exact bytes depend on the matching event.\n"
         "  They are not simulated here: four also write local bookkeeping when they run.\n"
         "  bin/chamnan-* output is scrubbed too, and exists only when a command is run.\n\n"
-        "tools/redactor_recall.py measures coverage on credential-shaped test strings. It is not\n"
+        "chamnan-corpus's redaction/recall.py measures coverage on credential-shaped test strings. It is not\n"
         "measured or claimed for names, hostnames, project codenames, or other ordinary text.\n"
         "This preview is not a sandbox and is not a preview of host tool results.\n")
 

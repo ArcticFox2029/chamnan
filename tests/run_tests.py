@@ -6908,7 +6908,7 @@ check("everything inside the fence is still file text", "handoff line 0" in _ins
 # Published head-to-head over 818 repos and 15,084 true secrets: Gitleaks 46% precision / 88%
 # recall, GitHub's own scanner 75%/6%, git-secrets 1%/23%. No scanner wins both axes, so this one
 # will not either, and "credentials are stripped" without a pair of numbers is an unmeasured claim.
-# Measured by .chamnan/tools/redactor_recall.py in the host repo; the cases that found real defects
+# Measured by chamnan-corpus redaction/recall.py; the cases that found real defects
 # are pinned here.
 _F = "0123456789abcdefghij"
 
@@ -22662,7 +22662,7 @@ _pop_damaged = []
 for _pf in _pop_files:
     _pt = _pf.read_text(encoding="utf-8", errors="replace")
     # The suite's own file and the recall corpus hold deliberate secrets; everything else is code.
-    if _pf.name in ("run_tests.py", "redactor_recall.py") or "redact" in _pf.name:
+    if _pf.name == "run_tests.py" or "redact" in _pf.name:
         continue
     if _rd._redact_delimited_columns(_pt) != _pt:
         _pop_damaged.append(_pf.name)
@@ -23716,7 +23716,7 @@ check("...and no published document prints an address for anyone to harvest",
 # `input_tokens` line the redactor mangles. So the document that records what is accepted became
 # two new unaccepted findings the moment it was written, and the gate failed on its own paperwork.
 # Same trap as a check that matches its own source, which this file already records twice.
-_RED_DEMOS = ("lib/redact.py", "site/lib/redact.py", "tools/redactor_recall.py",
+_RED_DEMOS = ("lib/redact.py", "site/lib/redact.py",
               "bench/pinned.py", "docs/i18n/i18n_strings.py", "tests/run_tests.py",
               "tests/redactor_selfscan_baseline.txt")
 # \U0001f41b [2026-09-11] `ls-files` alone lists files git ALREADY TRACKS, so a file added in the
@@ -29302,100 +29302,6 @@ try:
           saw="; ".join(w for w in _worse if "dropped whole" in w) or None)
 finally:
     shutil.rmtree(_d_12, ignore_errors=True)
-# ---- 130_a_credentials_neighbours_cannot_hide_it.py
-# ------------------ a credential's NEIGHBOURS cannot decide whether it is one
-# R3.1, measured 2026-09-15. A boundary-mutation study across ten credential types measured
-# detection of at least 0.9976 in ten ordinary contexts and only 0.5233 when the credential ended
-# in a hyphen -- the same secret, the same rule, one different neighbouring character. A corpus of
-# fixed examples cannot see that axis at all: every fixture in `tools/redactor_recall.py` sits in
-# exactly one context, so it measures one cell of a grid.
-#
-# Run for the first time, the grid found two families, and both were the-set-not-the-member:
-#
-#   * LEFT edge. Every provider-prefix rule guarded with `(?<![A-Za-z0-9_-])`, which is correct for
-#     a rule anchored on an ordinary WORD (`Bearer`, a URL scheme) and wrong for one anchored on
-#     `ghp_` or `AKIA`. 14 of 47 labelled positives passed through WHOLE behind a `-` or `_`, and a
-#     diff hunk begins every removed line with `-`.
-#   * RIGHT edge. The AWS key-ID rule ended in `\b`, and `_` is a word character, so
-#     `AWS_KEY_AKIA…EXAMPLE_backup` carried a complete valid 20-character key ID untouched.
-#
-# Neither cost anything: 1,193 real files scrub byte-identically before and after, and no labelled
-# decoy changed. The asymmetry is the lesson -- a provider prefix is proof on its own, so nothing
-# adjacent to it can make it not-a-credential, while a rule anchored on an English word needs the
-# wider guard precisely because the word occurs inside ordinary text.
-import importlib as _importlib130
-import importlib.util as _ilu130
-
-_t_redact130 = _importlib130.import_module("redact")
-_t_rr_path130 = ROOT / "tools" / "redactor_recall.py"
-_t_spec130 = _ilu130.spec_from_file_location("_rr130", str(_t_rr_path130))
-_t_rr130 = _ilu130.module_from_spec(_t_spec130)
-# The tool's main() is guarded by __name__, so importing it runs only the corpus definitions.
-_t_spec130.loader.exec_module(_t_rr130)
-
-# The battery lives in the tool, not here, so the published number and the gate cannot drift apart.
-check("the recall tool exposes the boundary battery this block gates on",
-      hasattr(_t_rr130, "boundary_leaks") and hasattr(_t_rr130, "BOUNDARIES_LEFT"),
-      saw=sorted(n for n in dir(_t_rr130) if n.isupper() or n.startswith("boundary")))
-
-# R5.6: a derived sweep whose population is empty asserts nothing while looking green. The
-# battery below is 47 x 22 x 17; if the corpus or either boundary table were ever emptied, "no
-# credential leaks" would pass on having tested none.
-_t_cells130 = (len(_t_rr130.POSITIVES) * len(_t_rr130.BOUNDARIES_LEFT)
-               * len(_t_rr130.BOUNDARIES_RIGHT))
-check(f"the boundary grid is populated before anything is concluded from it: {_t_cells130} cell(s)",
-      _t_cells130 >= 1000 and len(_t_rr130.POSITIVES) >= 40,
-      saw=f"{len(_t_rr130.POSITIVES)} positives x {len(_t_rr130.BOUNDARIES_LEFT)} left x "
-          f"{len(_t_rr130.BOUNDARIES_RIGHT)} right")
-
-_t_leaks130 = _t_rr130.boundary_leaks()
-
-# The population a boundary leak is measured AGAINST is derived, not written down: a fixture that
-# already survives with no neighbours at all is not a boundary failure, it is a known recall gap,
-# and hard-coding its name here would let a real regression hide behind the same name later.
-_t_baseline130 = {
-    _lab130 for _lab130, _txt130, _sec130 in _t_rr130.POSITIVES
-    if _sec130 in _t_redact130.scrub(_txt130 + "\n")
-}
-_t_boundary_only130 = sorted({
-    (_lab130, _ln130, _rn130) for _lab130, _ln130, _rn130 in _t_leaks130
-    if _lab130 not in _t_baseline130
-})
-check(f"no credential survives because of what sits NEXT to it "
-      f"({len(_t_rr130.POSITIVES)} positives x {len(_t_rr130.BOUNDARIES_LEFT)} left x "
-      f"{len(_t_rr130.BOUNDARIES_RIGHT)} right contexts)",
-      not _t_boundary_only130,
-      saw=f"{_t_boundary_only130[:8]} -- these are redacted with no neighbours and leak with them, "
-          f"which is a boundary defect rather than a recall gap. "
-          f"Known recall gaps, excluded on purpose: {sorted(_t_baseline130)}")
-
-# The set, asserted rather than the members. A rule anchored on a fixed provider prefix must not
-# use the word-anchored guard; the two rules that ARE anchored on a word must keep it.
-_t_src130 = __import__("pathlib").Path(_t_redact130.__file__).read_text(encoding="utf-8")
-_t_wide130 = r"(?<![A-Za-z0-9_-])"
-_t_word_anchored130 = ("(?:Bearer|Basic|Token)", "([a-zA-Z][a-zA-Z0-9+.-]*")
-_t_misguarded130 = []
-for _t_i130, _t_line130 in enumerate(_t_src130.splitlines(), 1):
-    if _t_wide130 not in _t_line130:
-        continue
-    _t_after130 = _t_line130.split(_t_wide130, 1)[1]
-    if not any(_t_after130.startswith(_w130) for _w130 in _t_word_anchored130):
-        _t_misguarded130.append(f"{_t_i130}: {_t_after130[:52]}")
-check("only a rule anchored on an ordinary WORD excludes `-` and `_` from its left edge",
-      not _t_misguarded130,
-      saw=f"{_t_misguarded130} -- a rule anchored on a fixed provider prefix should use "
-          f"`(?<![A-Za-z0-9])`: nothing adjacent to `ghp_` or `AKIA` makes it not a credential, "
-          f"and a leading `-` is what every removed line of a diff starts with.")
-
-# The right edge of the one fixed-length key rule, stated as behaviour rather than as pattern text.
-_t_akia130 = "AKIA" + "IOSFODNN7EXAMPLE"
-for _t_suffix130, _t_want130 in ((("_backup"), True), (("foo"), True),
-                                 (("EXTRACHARS"), False), (("."), True)):
-    _t_out130 = _t_redact130.scrub(_t_akia130 + _t_suffix130)
-    check(f"a 20-character AWS key ID followed by {_t_suffix130!r} is "
-          f"{'redacted' if _t_want130 else 'left alone'}",
-          (_t_akia130 not in _t_out130) is _t_want130,
-          saw=_t_out130)
 # ---- 131_a_language_does_not_get_a_wider_vocabulary_than_english.py
 # ------------------ no language gets a wider credential vocabulary than English does
 # R3.5, measured 2026-09-15. Unicode states that Thai, Lao, Chinese and Japanese need dictionary
@@ -32666,10 +32572,9 @@ check("...and the sweep found citations to check, so that is not a pass over not
 # The two figures that started this: a number attributed to a tool is only as good as the tool
 # being reachable. Asserted directly rather than left to the sweep, because these are the ones a
 # reader is asked to TRUST rather than merely to find.
-for _tool162 in ("tools/redactor_recall.py",):
-    check("...and %s, which the README's redaction figures are credited to, ships" % _tool162,
-          (_PKG162 / _tool162).is_file(),
-          saw="the figure and the tool that produces it must travel together")
+# The recall benchmark the README's redaction figures are credited to moved to chamnan-corpus on
+# 2026-09-24 with its key-shaped tables; the corpus step checks that it runs and that the figures
+# still match it (chamnan-corpus redaction/chamnan_checks/11).
 # ---- 163_a_secret_already_committed_is_findable.py
 # ------------------ R20.3: the staged diff cannot answer "is it already in"
 # Everything chamnan-guard did answered "is this about to go in". Somebody adopting chamnan on a
@@ -32768,116 +32673,6 @@ check("...and a clean history exits 0 rather than crying wolf",
 # first version and it tells a reader nothing they will act on.
 check("...and the report groups by FILE, so a fixture file is one line and not two hundred",
       "line(s)" in _out163 and "file(s)" in _out163, saw=_out163[:200])
-# ---- 164_a_published_number_still_matches_the_tool_that_made_it.py
-# ------------------ R2 RQ7: a number the README asks a reader to TRUST must still be true
-# Banked 2026-09-12 as "design waits until anyone proposes publishing a second metric". That gate
-# closed on 2026-09-15, when a second redactor metric was added to the same table — the touch rate
-# on real content, beside the recall figure that was already there. Nobody proposed it; it was
-# simply published, which is how the gate would always have closed.
-#
-# RQ7 asked for a machine-readable evidence ledger: claim_id, value, numerator, denominator, corpus
-# manifest hash, class counts, and a release verifier that fails when a cited value changes without
-# its denominator changing. That is a design for a repository publishing many metrics. This one
-# publishes three, in one table, from one tool — so the ledger is answered by asking the TOOL.
-#
-# The lesson underneath is already recorded here: a number written into a pinned file decays. The
-# README's redaction figures are the ones a reader is asked to trust the most, and until now nothing
-# re-derived them. They were true when checked by hand on 2026-09-16; this is what keeps them true.
-import re as _re164
-import subprocess as _sp164
-import sys as _sys164
-from pathlib import Path as _P164
-import importlib as _im164
-
-_PKG164 = _P164(_im164.import_module("redact").__file__).resolve().parent.parent
-_TOOL164 = _PKG164 / "tools" / "redactor_recall.py"
-
-check("THE TOOL THE README CREDITS ITS FIGURES TO SHIPS", _TOOL164.is_file(), saw=str(_TOOL164))
-
-if _TOOL164.is_file():
-    try:
-        # encoding named explicitly: text mode without it decodes with the machine's codec, which
-        # is cp1252 on the Windows runner, and a stray byte kills the reader thread rather than
-        # the call.
-        _run164 = _sp164.run([_sys164.executable, str(_TOOL164)], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace",
-                             timeout=300, cwd=str(_PKG164))
-        _out164 = _run164.stdout or ""
-    except (OSError, _sp164.SubprocessError) as _e164:
-        _out164 = ""
-        print("      DETAIL  the tool did not run: %s" % type(_e164).__name__)
-
-    # What the tool says now. Parsed from its own output rather than recomputed here, because a
-    # second implementation of the measurement would drift from the one the README names.
-    def _pair164(label):
-        m = _re164.search(r"%s\s+([\d.]+)%%\s+\((\d+)/(\d+)" % label, _out164)
-        return (m.group(1), int(m.group(2)), int(m.group(3))) if m else None
-
-    _recall164 = _pair164("recall")
-    _bare164 = _re164.search(r"bare\s+([\d.]+)%\s+\((\d+)/(\d+)\)", _out164)
-    _damaged164 = _re164.search(r"(\d+)/(\d+) ordinary strings damaged", _out164)
-    print("      DETAIL  tool now reports recall=%s bare=%s damaged=%s"
-          % (_recall164, _bare164.groups() if _bare164 else None,
-             _damaged164.groups() if _damaged164 else None))
-
-    check("...and it still produces the three figures the README quotes",
-          bool(_recall164 and _bare164 and _damaged164),
-          saw="the tool's output shape changed; the README's figures cannot be verified from it")
-
-    _readme164 = (_PKG164 / "README.md").read_text(encoding="utf-8", errors="replace")
-    _claims164 = []
-    if _recall164:
-        _claims164.append(("recall", "%s%%" % _recall164[0],
-                           "%d of %d" % (_recall164[1], _recall164[2])))
-    if _bare164:
-        _claims164.append(("weakest class", "%s%%" % _bare164.group(1),
-                           "%s of %s" % (_bare164.group(2), _bare164.group(3))))
-    if _damaged164:
-        _claims164.append(("decoys damaged", None,
-                           "%s of %s ordinary strings damaged"
-                           % (_damaged164.group(1), _damaged164.group(2))))
-
-    # \U0001f41b Twice wrong before this worked, and both bugs had the same shape: a test that
-    # cannot fail. First an `if`/`elif`, so the percentage was only examined once the fraction had
-    # already failed. Then a bare substring search over the WHOLE README — and `99.0%` also appears
-    # in the FAQ, so a drifted table still "found" it somewhere else in the file.
-    #
-    # A claim is a percentage AND its fraction, standing together on ONE line. That is what is
-    # checked, and it is why the mutation test now bites.
-    _stale164 = []
-    _lines164 = _readme164.split("\n")
-    for _name164, _pct164, _frac164 in _claims164:
-        _where164 = [l for l in _lines164 if _frac164 in l]
-        if not _where164:
-            _stale164.append("%s: the tool says %r and no line of the README says it"
-                             % (_name164, _frac164))
-            continue
-        if _pct164 and not any(_pct164 in l for l in _where164):
-            _stale164.append("%s: the tool says %s beside %r, and the README's own line does not"
-                             % (_name164, _pct164, _frac164))
-    for _x164 in _stale164:
-        print("      DETAIL  %s" % _x164)
-
-    check("EVERY REDACTION FIGURE THE README PUBLISHES IS WHAT THE TOOL PRODUCES TODAY",
-          not _stale164,
-          saw="a number a reader is asked to trust has drifted from the tool it is credited to — "
-              "re-run tools/redactor_recall.py and update the table, or explain the difference")
-    check("...and there were claims to check, so that is not a pass over an empty list",
-          len(_claims164) >= 3, saw="%d claim(s) parsed from the tool" % len(_claims164))
-
-    # 🐛 A denominator is what makes a percentage checkable at all. RQ7's own example was a blended
-    # metric published while the class that actually leaked had zero test cases behind it — the
-    # percentage looked fine because nothing said what it was a percentage OF.
-    _bare_pct164 = _re164.findall(r"\*\*(\d+(?:\.\d+)?%)\*\* — (?!\d+ of \d+)", _readme164)
-    _table164 = _readme164[_readme164.find("| recall |"):][:1800] if "| recall |" in _readme164 else ""
-    _nodenom164 = [p for p in _re164.findall(r"\*\*(\d+(?:\.\d+)?%)\*\*", _table164)
-                   if not _re164.search(r"\*\*%s\*\* — \d+ of \d+" % _re164.escape(p), _table164)]
-    print("      DETAIL  figures in the redaction table without a denominator beside them: %d"
-          % len(_nodenom164))
-    check("...and every percentage in that table says what it is a percentage OF",
-          not _nodenom164,
-          saw="%s — a percentage with no denominator cannot be checked, which is the failure RQ7 "
-              "was written about" % ", ".join(_nodenom164))
 # ---- 165_the_nudge_asks_about_this_session_not_the_calendar.py
 # ------------------------------------------- AUDIT-5: the nudge asks about THIS session, not the calendar
 # `sessions.written_today(root)` answers a CALENDAR question -- any record filed today, by anyone --
@@ -43272,149 +43067,6 @@ check("the installed-plugin manifest is read as a list of installs per name, not
       _so43.active_plugin_roots(_t_shape43 / "home") == [("acme", _Path43("/nowhere/acme"))],
       saw=str(_so43.active_plugin_roots(_t_shape43 / "home")))
 _sh43.rmtree(_t_shape43, ignore_errors=True)
-# ---- 44_the_published_redactor_numbers_are_the_measured_ones.py
-# ------------------------------- two documents, one measurement, and nothing made them agree
-# 🐛 [2026-09-10] SECURITY.md and README.md stated different corpus sizes and different recall
-# figures for the SAME measurement, and the live tool agreed with only one of them. The corpus had
-# grown twice since SECURITY.md was last touched. The suite already had redactor tests; what they
-# asserted was that one unrelated substring appears in README.md, so a number could drift in the
-# one document whose entire job is "trust this before you commit anything" and nothing fired
-# (R12 agent 5, 2026-09-10, finding 1).
-#
-# The figures are deliberately NOT written out anywhere below. This file is folded into the suite
-# it scans, so a stale number quoted in a comment here would be found by its own check -- the trap
-# this workspace has recorded as "a check that reads its own source matches itself".
-#
-# The fix is not to pin the numbers -- they are supposed to move as the corpus grows. It is to make
-# the DOCUMENTS agree with the TOOL: whatever `redactor_recall.py` prints today is what the prose
-# must say. Deriving it from the run is the difference between a check that survives the next corpus
-# addition and one that has to be edited every time, which is how the first pair drifted apart.
-import re as _re44
-import subprocess as _sp44
-
-_t_rr44 = ROOT / "tools" / "redactor_recall.py"
-if _t_rr44.is_file():
-    _t_env44 = dict(os.environ, CHAMNAN_READ_ONLY="1")
-    with open(os.devnull, "rb") as _t_null44:
-        _t_out44 = subprocess.run([sys.executable, str(_t_rr44)], cwd=str(ROOT), stdin=_t_null44,
-                                  capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", env=_t_env44, timeout=300).stdout
-
-    # The tool prints a recall line as "recall <pct>% (<hit>/<all> ...)" and a decoy line as
-    # "<damaged>/<decoys> ordinary strings damaged". Written as shapes rather than as an example,
-    # because this file is folded into the suite it scans and an example carrying digits is a
-    # stale published number by its own definition — which is exactly how it failed once.
-    _t_rec44 = _re44.search(r"recall\s+([\d.]+)%\s+\((\d+)/(\d+)", _t_out44)
-    _t_dec44 = _re44.search(r"(\d+)/(\d+)\s+ordinary strings damaged", _t_out44)
-    check("the recall tool still prints a recall figure this check can read",
-          bool(_t_rec44), saw=_t_out44[:200] or None)
-    check("...and a decoy-corpus figure alongside it", bool(_t_dec44), saw=_t_out44[:200] or None)
-
-    if _t_rec44 and _t_dec44:
-        _t_pct44, _t_hit44, _t_all44 = _t_rec44.group(1), _t_rec44.group(2), _t_rec44.group(3)
-        _t_decoys44 = _t_dec44.group(2)
-        _t_stale44 = []
-        for _t_doc44 in ("README.md", "SECURITY.md", "tests/run_tests.py"):
-            _t_p44 = ROOT / _t_doc44
-            if not _t_p44.is_file():
-                continue
-            _t_txt44 = _t_p44.read_text(encoding="utf-8", errors="replace")
-            # Any "<n>-string decoy corpus" or "<n> ordinary strings" must name the live corpus.
-            for _t_m44 in _re44.finditer(r"(\d+)[- ]string decoy corpus|(\d+) ordinary strings",
-                                         _t_txt44):
-                _t_n44 = _t_m44.group(1) or _t_m44.group(2)
-                if _t_n44 != _t_decoys44:
-                    _t_stale44.append(f"{_t_doc44}: says {_t_n44} decoys, tool measures {_t_decoys44}")
-            # ...and wherever a document states the corpus as "<hit> of <all>", those are the
-            # live counts. The percentage itself is asserted separately, below: this page also
-            # quotes OTHER scanners' recall in a comparison table and says "that is not 100%
-            # recall" about this very figure in prose, so a bare "<n>% recall" cannot be matched
-            # positionally without reporting both of those as drift -- the first version did.
-            for _t_m44 in _re44.finditer(r"(\d+) of (\d+) secret", _t_txt44):
-                if (_t_m44.group(1), _t_m44.group(2)) != (_t_hit44, _t_all44):
-                    _t_stale44.append(f"{_t_doc44}: says {_t_m44.group(0)}, tool measures "
-                                      f"{_t_hit44} of {_t_all44}")
-
-            # 🐛 [2026-09-14] The three patterns above assert the DECOY count in two
-            # spellings and the recall pair in one, and never assert the SECRET-corpus size at all
-            # -- which is the number that went stale. Five places drifted for three days across
-            # README.md and SECURITY.md and not one matched: a number joined to `secret` by a
-            # hyphen is not `<n>-string decoy corpus`; a number introducing `secret shapes` is not
-            # `<n> ordinary strings`; a recall pair inside brackets is not `<n> of <n> secret`,
-            # because nothing follows the closing bracket. The commit that corrected the table row
-            # left every one of them, and SECURITY.md -- the document whose whole job is "trust
-            # this before you commit anything" -- published a three-day-old pair.
-            # The-set-not-the-member, inside the check written to stop exactly this.
-            #
-            # No digits in this comment, for the reason the header gives: this file is folded into
-            # the suite it scans, so an example carrying a stale figure is found by its own check.
-            # Not hypothetical -- the first version of this paragraph listed all five and the fold
-            # reported the comment itself as drift.
-            #
-            # Two changes. The corpus size is asserted wherever a number introduces one of the
-            # nouns this project uses for it, kept apart from the decoy count, which is a different
-            # number wearing a similar noun. And each guarded document must YIELD at least one
-            # claim: a reword that escapes every pattern FAILS here rather than passing silently,
-            # which is the failure mode above.
-            _t_claims44 = 0
-            # 🐛 [2026-09-21] (owner) The number had no LEFT boundary, so `base64 secret` read as a
-            # corpus of 64 — the failure fired on prose that says nothing about the corpus at all,
-            # the moment a release note mentioned base64. A digit run is only a count when a word
-            # character does not run into it, which is the same boundary the right-hand side
-            # already had.
-            for _t_m44 in _re44.finditer(
-                    r"(?<![A-Za-z0-9])(\d+)[- ]secret\b(?![ -]key)"
-                    r"|(?<![A-Za-z0-9])(\d+) secret(?:s)? (?:shapes|and personal-data)",
-                    _t_txt44):
-                _t_claims44 += 1
-                _t_n44 = _t_m44.group(1) or _t_m44.group(2)
-                if _t_n44 != _t_all44:
-                    _t_stale44.append(f"{_t_doc44}: {_t_m44.group(0)!r} states the corpus size, "
-                                      f"tool measures {_t_all44}")
-            # The recall PAIR wherever it sits beside the word, brackets included -- the spelling
-            # that slipped. A sentence recording a MOVE from one pair to another carries no
-            # "recall" within reach of the bracket, so a dated fact is left alone.
-            for _t_m44 in _re44.finditer(r"recall[^.\n]{0,40}?\((\d+) of (\d+)\)", _t_txt44):
-                _t_claims44 += 1
-                if (_t_m44.group(1), _t_m44.group(2)) != (_t_hit44, _t_all44):
-                    _t_stale44.append(f"{_t_doc44}: states recall ({_t_m44.group(1)} of "
-                                      f"{_t_m44.group(2)}), tool measures {_t_hit44} of {_t_all44}")
-            # A document stating no claim at all has been reworded past every pattern or has lost
-            # the figures. Both are what this block exists to catch. The suite file is exempt: it
-            # carries this check's own prose, not a published claim.
-            if _t_doc44 != "tests/run_tests.py":
-                check(f"{_t_doc44} still states the corpus in a shape this check can read: "
-                      f"{_t_claims44} claim(s)",
-                      _t_claims44 >= 1,
-                      saw=f"no corpus-size or recall-pair claim found in {_t_doc44} — reworded "
-                          f"past every pattern, or the figures are gone")
-        check("EVERY PUBLISHED REDACTOR NUMBER IS THE ONE THE TOOL ACTUALLY MEASURES",
-              not _t_stale44, saw="\n".join(sorted(set(_t_stale44))) or None)
-
-        # Both documents must carry the LIVE percentage. Agreeing by both going silent is not
-        # agreement, and SECURITY.md drifting quiet is the failure this cannot afford to miss --
-        # it is the one document whose whole job is to be read before pointing this at a private
-        # repository. Presence is asserted rather than position, because the two files state the
-        # same measurement in four different prose shapes between them.
-        # \U0001f41b [2026-09-11] The `is_file()` guard below used to be the whole population filter,
-        # so the day both documents went missing the list came back empty and this reported a PASS
-        # for "both documents state the figure" while reading neither. That is the exact failure the
-        # paragraph above says it cannot afford, arriving through the check meant to catch it
-        # (R2 agent 8, 2026-09-11). The presence of the files is now asserted FIRST, and the silence check runs
-        # over the ones that are there.
-        _t_absent44 = [d for d in ("README.md", "SECURITY.md") if not (ROOT / d).is_file()]
-        check("both published documents are on disk for this check to read",
-              not _t_absent44,
-              saw="%s missing — with neither present the silence check below has nothing to judge "
-                  "and passes while measuring nothing" % ", ".join(_t_absent44))
-        _t_silent44 = [d for d in ("README.md", "SECURITY.md")
-                       if (ROOT / d).is_file()
-                       and f"{_t_pct44}%" not in (ROOT / d).read_text(encoding="utf-8",
-                                                                     errors="replace")]
-        check("...and both documents state the live recall figure rather than going quiet",
-              not _t_silent44, saw=", ".join(_t_silent44) or None)
-else:
-    skip("  · no redactor_recall.py — the published-number check is skipped, not passed")
 # ---- 45_every_jsonl_this_package_writes_is_accounted_for.py
 # ------------------------------- the retention list was a list, and a list falls behind its set
 # 🐛 [2026-09-10] `SELF_PRUNING_LOGS` names the logs that bound themselves by RECORD and must not be
@@ -49124,7 +48776,7 @@ _rmtree(_br_dir.parent, ignore_errors=True)
 # 🐛 [2026-09-24] (owner) The rules for `chamnan-corpus/redaction/cases.jsonl` moved out of this suite:
 # a plugin suite that depends on another repository prints a [SKIP] nobody who clones the plugin
 # can explain. The file is checked by the corpus's own `redaction/check.py`, and the release's
-# corpus step runs it and loads the cases through `tools/redactor_recall.py`.
+# corpus step runs it and loads the cases through the corpus's own `redaction/recall.py`.
 
 
 # ------------------------------- which test covers this file, when the import graph cannot say

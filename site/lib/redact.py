@@ -866,7 +866,7 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
 # The second half of that is the dangerous half: the line comes back carrying a `<REDACTED>` marker,
 # so a reader — or a later automated check — sees the redactor having fired and the credential
 # sitting in the clear beside it. Measured by R8 agent 2 across five language idioms; adding these
-# to `tools/redactor_recall.py`'s corpus drops recall from 97.4% to 88.1% without this.
+# to the recall benchmark's corpus (chamnan-corpus `redaction/recall.py`) drops recall from 97.4% to 88.1% without this.
 #
 # Stepped over rather than matched: an annotation is only an annotation when a real `=` follows it,
 # and a YAML anchor only when whitespace and a value follow. `api_key = os.environ["X"]` has
@@ -899,7 +899,7 @@ _BETWEEN_NAME_AND_VALUE = (
 # this is a second name-side shape rather than something that can be stepped over after one.
 # Narrower than it looks: a single identifier-shaped word, then `=`, then a value that still has to
 # clear the six-character floor and `_looks_like_a_credential_name`. Precision is what decides
-# whether this is worth having, and it is measured -- `tools/redactor_recall.py` reports it.
+# whether this is worth having, and it is measured -- chamnan-corpus `redaction/recall.py` reports it.
 _TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*"
 
 # 🐛 [2026-09-17] A value written on the line AFTER the separator was found — `\s*` behind the

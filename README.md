@@ -1350,8 +1350,8 @@ in that path. Anything claiming otherwise is describing a capability Claude Code
 No credential scanner wins both axes. The published head-to-head over 818 repositories and 15,084
 true secrets puts **Gitleaks at 46% precision / 88% recall**, **GitHub's own scanner at 75% / 6%**,
 and **git-secrets at 1% / 23%**. "Credentials are stripped" with no pair of numbers beside it is a
-claim nobody has measured, so here is the pair, from `tools/redactor_recall.py` against a labelled
-corpus of 99 secret shapes and 48 ordinary strings that must survive:
+claim nobody has measured, so here is the pair, from `redaction/recall.py` in
+[chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus) against a labelled corpus of 99 secret shapes and 48 ordinary strings that must survive:
 
 | | |
 |---|---|

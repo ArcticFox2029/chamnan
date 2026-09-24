@@ -815,7 +815,11 @@ def _recall():
     the code it describes is the one number on this page nobody would think to doubt.
     """
     src = PLUGIN / "lib" / "redact.py"
-    harness = PLUGIN / "tools" / "redactor_recall.py"
+    # The benchmark lives in chamnan-corpus since 2026-09-24 (its tables are key shapes, and the
+    # plugin carries none). Found beside the plugin or through CHAMNAN_CORPUS; without it the panel
+    # greys itself, which is the honest state for an install that never cloned the corpus.
+    harness = pathlib.Path(os.environ.get("CHAMNAN_CORPUS") or PLUGIN.parent / "chamnan-corpus") \
+        / "redaction" / "recall.py"
     cache = WS / "state" / "redactor_recall.json"
     try:
         stamp = f"{src.stat().st_mtime_ns}:{src.stat().st_size}"
@@ -831,7 +835,8 @@ def _recall():
         return None
     try:
         import subprocess                              # noqa: PLC0415
-        got = subprocess.run([sys.executable, str(harness)], capture_output=True, text=True,
+        got = subprocess.run([sys.executable, str(harness), "--chamnan", str(PLUGIN)],
+                             capture_output=True, text=True,
                              timeout=180)
         text = got.stdout
     except Exception:                                  # noqa: BLE001
