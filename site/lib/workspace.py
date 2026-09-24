@@ -2432,6 +2432,12 @@ IGNORE_LINES = [
     "state/drift.json",
     "state/.temps-swept",
     "state/notices.json",
+    "state/statistic_scan_cache.json",
+    "",
+    "# chamnan: the dashboard. `statistic/data/` and the pages beside it are built at session end",
+    "# from THIS person's logs and transcripts — their working hours and the files they touched.",
+    "# Rebuilt in about a second, and never something to put in a teammate's checkout.",
+    "statistic/",
 ]
 
 # Every path chamnan itself writes under `state/`, classified, because the list above was built by
@@ -2445,6 +2451,7 @@ DERIVED_STATE = (
     "state/drift.json",             # a function of HEAD
     "state/.temps-swept",           # this machine's last sweep
     "state/notices.json",           # how often THIS person has been shown a one-off notice
+    "state/statistic_scan_cache.json",  # per-transcript scan cache the dashboard build keeps
 )
 RECORDED_STATE = (
     "state/written_artefacts.json", # what was written, and by which run

@@ -10419,14 +10419,17 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # `deps._run` asks `git log --follow` and `git show <commit>:<manifest>` what a dependency manifest
 # listed before and after, a TWENTY-FIRST purpose: no other site reads a manifest's history, and
 # "this repository once used that library and stopped" is only in those commits.
+# Raised 2026-09-24 from 29 to 30, found by CI on the 1.31.1 check branch. `workspace`'s driver
+# stand-down asks `git config --show-scope --get-regexp` which attribute drivers a repository's own
+# config names, a TWENTY-SECOND purpose: no other site reads config to neutralise it.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 29, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 30, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-nine call sites serve twenty-one read-only paths"
+      and "Thirty call sites serve twenty-two read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -17645,6 +17648,9 @@ _GIT_OWNS_EXEMPT = {
     ("workspace.py", "git_owns"),            # the guards themselves; asking them is the recursion
     ("workspace.py", "git_can_speak_for"),
     ("workspace.py", "git_toplevel"),        # answers WHICH repository, for a message that names it
+    # Part of the guard: `git_can_speak_for` calls it only after answering yes, to stand down the
+    # attribute drivers that repository names before any other git call reads its config.
+    ("workspace.py", "_stand_down_repository_drivers"),
 }
 _ungated_git = []
 for _gp, _gsrc in _runtime_sources():
@@ -17679,7 +17685,8 @@ for _u in _ungated_git:
 check("...and every exemption is a guard, which cannot consult itself",
       _GIT_OWNS_EXEMPT == {("workspace.py", "git_owns"),
                            ("workspace.py", "git_can_speak_for"),
-                           ("workspace.py", "git_toplevel")})
+                           ("workspace.py", "git_toplevel"),
+                           ("workspace.py", "_stand_down_repository_drivers")})
 
 # 🐛 [2026-09-06] The three hooks that run on EVERY tool call imported everything they might need
 # at module scope, and most calls need almost none of it: eight early returns stand between
@@ -23938,7 +23945,9 @@ _red_base_lines = [ln for ln in _red_base_path.read_text(encoding="utf-8").split
 # the tail wagging the dog. The ceiling exists so that this paragraph has to be written, which is
 # the whole point of the reader's question it was built for — does removing something from the
 # policy file get the same rigor as removing it from the live database.
-RED_BASELINE_MAX = 63
+# Lowered 2026-09-24 from 63 to 56: the six cases.jsonl lines left with the corpus, and one hook
+# comment now describes a PEM header in words instead of spelling it.
+RED_BASELINE_MAX = 56
 check("THE ACCEPTED-FINDINGS BASELINE CANNOT GROW WITHOUT SOMEBODY RAISING THE CEILING",
       len(_red_base_lines) <= RED_BASELINE_MAX,
       saw=f"{len(_red_base_lines)} accepted lines against a ceiling of {RED_BASELINE_MAX} — "
@@ -41304,12 +41313,15 @@ finally:
 # it finds, that it finds a real number of them, and that both directions close.
 import importlib.util as _ilu247
 
-_t_ws247 = ROOT.parent.parent / ".chamnan"
-_t_map247 = _t_ws247 / "tools" / "invariant_map.py"
-check("the invariant map is on disk where the workspace keeps its tools",
-      _t_map247.is_file(), saw=str(_t_map247))
+# A tool of the development workspace, not of the package: on a clone (CI) there is none, and that
+# is said as a skip rather than failed (found by CI on the 1.31.1 check branch).
+_t_ws247 = owner_workspace("the invariant map")
+_t_map247 = _t_ws247 / "tools" / "invariant_map.py" if _t_ws247 is not None else None
+if _t_map247 is not None:
+    check("the invariant map is on disk where the workspace keeps its tools",
+          _t_map247.is_file(), saw=str(_t_map247))
 
-if _t_map247.is_file():
+if _t_map247 is not None and _t_map247.is_file():
     _t_spec247 = _ilu247.spec_from_file_location("_invmap247", _t_map247)
     _t_mod247 = _ilu247.module_from_spec(_t_spec247)
     _t_spec247.loader.exec_module(_t_mod247)
@@ -49861,8 +49873,15 @@ _ms_identity = {x for x in (Path.home().name, _ms_gp.getuser(),
                             _ms_sock.gethostname().split(".")[0]) if x and len(x) > 3}
 _ms_hits = sorted({f"{f.relative_to(ROOT)}:{w}" for f in _ms_files for w in _ms_identity
                    if w in f.read_text(encoding="utf-8", errors="replace")})
-check("THIS MACHINE'S OWN IDENTITY IS IN NOTHING THAT SHIPS "
-      f"({len(_ms_files)} files, {len(_ms_identity)} names)", _ms_hits == [], saw=_ms_hits[:6])
+# On a CI runner the "identity" is the service's -- user and home are both `runner`, an ordinary
+# word this package uses on its own -- so the question has no person to protect there (found by CI
+# on the 1.31.1 check branch). Said as a skip, never passed silently.
+if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true":
+    skip("  [SKIP] this machine's identity in shipped files — a CI runner's user and host belong to "
+         "the service, not to a person")
+else:
+    check("THIS MACHINE'S OWN IDENTITY IS IN NOTHING THAT SHIPS "
+          f"({len(_ms_files)} files, {len(_ms_identity)} names)", _ms_hits == [], saw=_ms_hits[:6])
 
 # The other half: reading the owner's work repositories is fine, carrying what is in them out here
 # is not. An internal hostname or a routable address is the shape that leaks, and unlike a repo

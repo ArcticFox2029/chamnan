@@ -82,15 +82,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: The test corpus, where key-shaped fixtures live
-        # 🐛 [2026-09-24] (owner) This repository carries no fake credentials: the redaction cases
-        # moved to chamnan-corpus, and the suite finds them through CHAMNAN_CORPUS. Without this
-        # step those checks print [SKIP] -- the release gate is where that is not acceptable.
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/ArcticFox2029/chamnan-corpus.git "$RUNNER_TEMP/chamnan-corpus"
-          echo "CHAMNAN_CORPUS=$RUNNER_TEMP/chamnan-corpus" >> "$GITHUB_ENV"
-
       - name: Identify to git
         # Several tests build a real repository and commit into it. A runner has no global
         # identity, and `git commit` fails outright without one.
