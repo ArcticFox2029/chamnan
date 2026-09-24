@@ -41496,7 +41496,7 @@ try:
     _f253 = _dir253 / "t.jsonl"
     _first253 = _rec253("r1", "m1", "thinking", 40) + _rec253("r1", "m1", "tool_use", 40)
     _rest253 = _rec253("r1", "m1", "tool_use", 40) + _rec253("r2", "m2", "text", 7)
-    _f253.write_text(_first253 + _rest253, encoding="utf-8")
+    _f253.write_bytes((_first253 + _rest253).encode("utf-8"))
     _whole253, _ = _bs253._usage_of(_f253)
     check("A RESPONSE WRITTEN AS THREE BLOCKS IS COUNTED AS ONE REQUEST",
           _whole253["n"] == 2 and _whole253["tot"].get("cache_read") == 2000
@@ -41504,9 +41504,9 @@ try:
           saw=_whole253)
     # The same file read in two parts, the boundary falling inside the first response.
     _cut253 = len(_first253.encode("utf-8"))
-    _f253.write_text(_first253, encoding="utf-8")
+    _f253.write_bytes(_first253.encode("utf-8"))
     _a253, _at253 = _bs253._usage_of(_f253, 0)
-    _f253.write_text(_first253 + _rest253, encoding="utf-8")
+    _f253.write_bytes((_first253 + _rest253).encode("utf-8"))
     _b253, _ = _bs253._usage_of(_f253, _at253, _a253)
     _m253 = _bs253._merge_usage(_a253, _b253)
     check("...AND STILL ONE WHEN AN INCREMENTAL READ SPLITS IT",
@@ -41537,15 +41537,15 @@ try:
     (_tmp254 / "proj-other").mkdir()
     _bs254.bind(_repo254)
     _home254 = _tmp254 / "home"
-    _key254 = str(_bs254.ROOT.resolve()).replace("/", "-")
+    _key254 = re.sub(r"[^A-Za-z0-9]", "-", str(_bs254.ROOT.resolve()))
 
     def _session254(dirname, cwd, entry, lines):
         d = _home254 / "projects" / dirname
         d.mkdir(parents=True, exist_ok=True)
         head = {"type": "user", "cwd": cwd, "entrypoint": entry, "timestamp": "2026-09-24T10:00:00Z",
                 "message": {"content": "fix the parser"}}
-        (d / f"{dirname[-6:]}-{entry}.jsonl").write_text(
-            "\n".join(_js254.dumps(x) for x in [head] + lines) + "\n", encoding="utf-8")
+        (d / f"{dirname[-6:]}-{entry}.jsonl").write_bytes(
+            ("\n".join(_js254.dumps(x) for x in [head] + lines) + "\n").encode("utf-8"))
 
     _ts254 = "2026-09-24T10:00:01Z"
     _use254 = {"type": "assistant", "requestId": "q1", "timestamp": _ts254,
@@ -41556,14 +41556,15 @@ try:
                "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "x" * 3800}]}}
     _root_r = str(_bs254.ROOT.resolve())
     _session254(_key254, _root_r, "cli", [_use254, _res254])
-    _session254(_key254 + "-sub", _root_r + "/sub", "cli", [])
+    _session254(_key254 + "-sub", str(_bs254.ROOT.resolve() / "sub"), "cli", [])
     _session254(_key254, _root_r, "sdk-cli", [])
     _session254(_key254 + "-other", str((_tmp254 / "proj-other").resolve()), "cli", [])
     _os254.environ["CLAUDE_CONFIG_DIR"] = str(_home254)
     _got254 = [p.parent.name[len(_key254):] + "/" + p.name.split("-")[-1] for p in _bs254.transcripts()]
     check("THE DASHBOARD READS INTERACTIVE SESSIONS IN THE REPOSITORY AND ITS SUBDIRECTORIES ONLY",
           sorted(_got254) == ["-sub/cli.jsonl", "/cli.jsonl"], saw=_got254)
-    _sum254, _ = _bs254._usage_of(next(p for p in _bs254.transcripts() if p.parent.name == _key254))
+    _root254 = next((p for p in _bs254.transcripts() if p.parent.name == _key254), None)
+    _sum254, _ = _bs254._usage_of(_root254) if _root254 else ({}, 0)
     _sp254 = (_sum254.get("spent") or {}).get("2026-09-24", {})
     check("...AND RANKS A TOOL'S RESULT UNDER THAT TOOL, AND WHAT THE PERSON TYPED APART FROM IT",
           _sp254.get("Read — file contents") == 3800 and _sp254.get("what you typed") == 14
@@ -50386,7 +50387,17 @@ check("with reorder never called, _followers is exactly what it was",
 _se = Path(tempfile.mkdtemp(prefix="chamnan-expiring-sessions-")) / "r"
 (_se / ".git").mkdir(parents=True)
 ws.ensure(_se)
-_se_today = datetime.date.today()
+# 🐛 [2026-09-24] (R20 acc5, 2026-09-24) These expectations held only before 12:00 UTC. `_age` dates a
+# record from NOON UTC of the day in its name, so a record named 30 days ago is 29.9 days old at
+# 09:00 UTC and 30.1 at 15:00 — and "due tomorrow" became "already doomed" every afternoon. The
+# 1.31.1 CI ran in the morning and passed; the 1.31.2 check branch ran at 13:44 UTC and all five
+# failed on every leg. The clock is pinned to 11:00 UTC of a UTC day, so every age is a whole
+# number of days minus an hour, whenever the suite runs.
+import calendar as _se_cal
+_se_today = datetime.datetime.now(datetime.timezone.utc).date()
+_se_clock = _se_cal.timegm((_se_today.year, _se_today.month, _se_today.day, 11, 0, 0))
+_se_real_time = time.time
+time.time = lambda: _se_clock
 
 
 def _se_write(days_ago, name):
@@ -50421,6 +50432,7 @@ check("the notice and the delete agree: what was named is what goes on the next 
 check("and the workspace wrapper reads the configured window rather than a literal",
       [n for n, _d in ws.expiring_sessions(_se)] == [_se_due],
       saw=ws.expiring_sessions(_se))
+time.time = _se_real_time
 _rmtree(_se.parent, ignore_errors=True)
 
 

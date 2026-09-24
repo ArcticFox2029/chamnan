@@ -151,7 +151,11 @@ def transcripts():
     """
     home = os.environ.get("CLAUDE_CONFIG_DIR") or str(pathlib.Path.home() / ".claude")
     root = str(ROOT.resolve())
-    key = root.replace("/", "-")
+    # 🐛 [2026-09-24] (self-measured) Claude Code names a project directory by replacing EVERY
+    # character that is not a letter or digit with `-`, not only `/`. `.replace("/", "-")` missed a
+    # repository whose path holds a dot, an underscore or a space, and every Windows path, whose
+    # separators and drive colon it left in place — found by the Windows CI legs.
+    key = re.sub(r"[^A-Za-z0-9]", "-", root)
     base = pathlib.Path(home) / "projects"
     if not base.is_dir():
         return []
