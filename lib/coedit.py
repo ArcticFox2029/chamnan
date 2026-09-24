@@ -417,9 +417,15 @@ def last_sitting(wsdir, now=None):
 
 
 def _ago(seconds):
-    """"13h", "2d" -- the coarsest unit that is still true, because precision here is noise."""
+    """"13h", "2d" -- the coarsest unit that is still true, because precision here is noise.
+
+    🐛 [2026-09-24] (self-measured) Under an hour this said "1m", "2m", … so the session block changed
+    every minute, and two firings of one session a minute apart differed by a digit — a full cache
+    write for the user, and the reason the 1.31.2 check branch's "two firings carrying the advice
+    are still byte-identical" failed on the slowest CI runner. "<1h" is as true and holds still.
+    """
     if seconds < 3600:
-        return "%dm" % max(1, seconds // 60)
+        return "<1h"
     if seconds < 36 * 3600:
         return "%dh" % (seconds // 3600)
     return "%dd" % (seconds // 86400)

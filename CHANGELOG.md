@@ -31,6 +31,7 @@ _A patch on 1.31.1: the dashboard counts honestly, and outside research earned f
 
 ### Fixed and improved
 
+- **The session block holds still between firings, so it does not cost a cache write.** "Last edited" counted minutes when the last change was under an hour old, so the block changed every minute and a second firing of the same session re-wrote the whole cached block. Under an hour it now says `<1h`.
 - **A config value of the wrong type is kept, and named — no longer replaced by the default.** Writing `"log_retention_days": "30"` (a quoted number) used to be overwritten with 7 on the next session, silently, which began deleting logs the user meant to keep. The file is now left as written, the session says which setting is being ignored and what it wants, and a config that does not parse says the line and column.
 - **The dashboard's notes are held to a readable line length.** On a wide panel a note ran to about 130 characters; measured comprehension peaks near 55 and long lines read slower. Notes stop at 78 characters and source lines at 90, as the headline's sentences already did.
 - **`/chamnan:review` checks the size of a change first.** Above about 400 changed lines it says so and reviews in parts: measured defect detection falls from 87% on 1-100 lines to 28% above 1,000, and a review of a large change finds less while reading as complete. A change that mixes a rename or move with a behaviour change is named too, and the behaviour reviewed on its own.
