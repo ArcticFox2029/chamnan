@@ -45,7 +45,7 @@ _A patch on 1.31.1: the dashboard counts honestly, and outside research earned f
 
 ### Verification
 
-_Filled in from the release gate's own totals line._
+**6104/6104** checks on the release gate (macOS, with the live workspace), and CI green on all five legs — macOS · Linux · Windows on Python 3.8 and 3.13 — on the same commit. The check branch found seven things on the way, all fixed before this: a session-expiry test that passed only before noon UTC, a bare `next()`, the dashboard missing every Windows path and any path with a dot or a space, a byte offset shifted by Windows line endings, a concurrency harness decoding as cp1252 with a 30-second timeout, and the session block's "Last edited" line changing every minute — the last one a real cache cost for users.
 
 ---
 

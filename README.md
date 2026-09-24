@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **4,109 of 4,109** <!-- live: map_claim_check -->; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **4,114 of 4,114** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
@@ -1254,7 +1254,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **4,109 of 4,109** <!-- live: map_claim_check --> rather than asserted.
+claims about the tree are checked at **4,114 of 4,114** <!-- live: map_claim_check --> rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1515,7 +1515,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **4,109 of 4,109** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
+searched for, and its claims about the tree check out at **4,114 of 4,114** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.
