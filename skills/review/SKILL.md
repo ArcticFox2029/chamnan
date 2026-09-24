@@ -15,6 +15,13 @@ chamnan-impact <each changed file>
 That answers **who imports it**, **which tests cover it**, and **which threads name it**. Run it per
 changed file, not once for the change.
 
+**Size first.** If the change is more than about 400 changed lines, say so before anything else and
+review it in parts, one coherent group of files at a time. Defect detection measured at 87% for
+reviews of 1-100 lines falls to 28% above 1,000 — a review of a large change finds less, and says it
+found everything.
+<!-- 🎯 [2026-09-24] (R35 acc5, 2026-09-24) Screened from a research round on code review: the
+     87%-to-28% figure is its first finding, and the review skill had no word about size. -->
+
 ## The four signals, and what each one is for
 
 **1 · Who breaks.** The import graph. Say the number and name the surprising ones — *"six call
