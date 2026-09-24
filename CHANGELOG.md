@@ -33,6 +33,10 @@ already reports the last released number while running newer code.
   whenever a file's stat info changed, which is every session start in a repository somebody is
   working in. Drivers set in a repository scope are stood down; your own global ones (git-lfs) are
   left alone.
+- **The dashboard is yours, and stays in your repository.** It is built at session end into
+  `.chamnan/statistic/` of the repository you are working in, which the workspace gitignores. It
+  used to be written into the plugin's own directory, shared by every repository on the machine,
+  and it looked for your repository in the wrong place on any install but the developer's.
 - **`chamnan-doctor` no longer runs scripts from the repository it is pointed at.** It ran two
   workspace tools that do not ship with chamnan from whatever checkout it was asked about.
 
