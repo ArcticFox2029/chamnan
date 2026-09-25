@@ -101,6 +101,10 @@ def repeats(wsdir, minimum=REPEATS):
             row = json.loads(line)
         except (ValueError, RecursionError):
             continue
+        # (R196, 2026-09-25) A line that parses but is not an object -- a hand edit -- would reach
+        # `.get()` below and end the whole reading; the dashboard build had exactly that defect.
+        if not isinstance(row, dict):
+            continue
         k = key(row)
         if not k:
             continue
