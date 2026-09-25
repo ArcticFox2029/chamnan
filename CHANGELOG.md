@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Small text on the dashboard is readable in both themes.** The grey used for every note under
+  a chart measured 2.81:1 against the dark panels and 2.40:1 against the light ones, below the
+  4.5:1 that WCAG asks of text that size. The light theme also kept the dark theme's orange note
+  text (2.63:1) and the blue that marks the active tab and a focused field (2.48:1). Each colour
+  now reaches 4.5:1, moved as little as that needed.
 - **The README's Windows step no longer damages your PATH.** It told PowerShell users to run
   `setx PATH "$bin;$env:PATH"`, which copies the machine PATH into your user PATH and cuts the
   result at 1,024 characters. Its first line was a `::` comment, which PowerShell does not accept,

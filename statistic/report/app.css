@@ -2,18 +2,24 @@
 :root {
   color-scheme: dark;
   --bg: #0e1016; --panel: #161922; --panel2: #1b1f2a; --line: #262b36;
-  --ink: #e8ebf1; --dim: #8b93a4; --faint: #5d6575;
+  --ink: #e8ebf1; --dim: #8b93a4; --faint: #818793;
   --accent: #6f9bff; --warm: #e0813d; --good: #4fbf7f; --grey: #4a5160;
   --radius: 14px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --thai: "Noto Sans Thai", "Sukhumvit Set", "Thonburi", sans-serif;
 }
 /* Dark is the default and light is the explicit choice, so the page looks the same on every
-   machine until somebody presses the toggle on that machine. */
+   machine until somebody presses the toggle on that machine.
+   🐛 [2026-09-25] (R141, 2026-09-25) Every colour used for text reaches 4.5:1 (WCAG AA) on every
+   panel in both themes. `--faint`, the colour of every 11-12px note, measured 2.81 on dark and
+   2.40 on light. The light theme also inherited the dark theme's warm (the note text, 2.63 on
+   white) and accent (the active tab and a focused field, 2.48 where 3:1 is asked of an indicator).
+   Each was moved the least distance that reaches 4.5. */
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #f4f6f9; --panel: #fff; --panel2: #f7f9fc; --line: #e4e8ef;
-  --ink: #161924; --dim: #5f6879; --faint: #98a1b2; --grey: #c6ccd8;
+  --ink: #161924; --dim: #5f6879; --faint: #6a717d; --grey: #c6ccd8;
+  --accent: #4f6eb5; --warm: #a65f2d; --good: #347e54;
 }
 * { box-sizing: border-box; }
 body {
