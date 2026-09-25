@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Dashboard history outlives Claude Code's transcript cleanup.** Claude Code deletes a session's
+  transcript after 30 days by default. When it did, that session's tokens and commands disappeared
+  from the dashboard, though the dashboard is meant to keep a year. What was read from a deleted
+  transcript is now kept until it passes the dashboard's own one-year window.
 - **Piping a command into `head` no longer ends in an error.** `chamnan-where check | head -1`
   printed `BrokenPipeError` and exited with status 120. Every command now exits quietly when the
   reader stops early, and prints its full output as before when read to the end.

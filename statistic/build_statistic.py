@@ -234,6 +234,26 @@ def _cached_scan(paths, reader, tag):
             got = _merge_usage(base, got)
         out[str(p)] = got
         fresh[key] = {"at": at, "value": got}
+    # 🐛 [2026-09-25] (R102, 2026-09-25) Claude Code deletes a transcript 30 days after its session by
+    # default (`cleanupPeriodDays`), and this cache kept only the files still on disk, so every
+    # figure drawn from a deleted transcript left the page with it: the months the dashboard
+    # promises to keep for a year lasted thirty days. A summary whose file is GONE is kept as it
+    # was last read. One that still exists but is no longer listed (another project, a script
+    # session) is not, because that is a decision about the file, not the file disappearing. A
+    # kept summary leaves once every day it holds is older than the dashboard keeps.
+    listed = {f"{tag}:{p}" for p in paths}
+    oldest = time.strftime("%Y-%m-%d", time.localtime(time.time() - KEEP_DAYS * 86400))
+    for key, hit in cache.items():
+        if not key.startswith(tag + ":") or key in listed or key in fresh:
+            continue
+        path = key[len(tag) + 1:]
+        value = hit.get("value") if isinstance(hit, dict) else None
+        if not isinstance(value, dict) or os.path.exists(path):
+            continue
+        if max((value.get("days") or {"": 0}).keys(), default="") < oldest:
+            continue
+        out[path] = value
+        fresh[key] = hit
     try:
         SCAN_CACHE.parent.mkdir(parents=True, exist_ok=True)
         SCAN_CACHE.write_text(json.dumps(fresh), encoding="utf-8")
