@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Subagent costs are recorded on older Claude Code too.** Claude Code 2.1.63 renamed the tool
+  that starts a subagent from `Task` to `Agent`. chamnan listened only for `Agent`, so on an older
+  Claude Code it never recorded what a subagent cost or which model it ran on. It now listens for
+  both names.
 - **The `.env` warning reads `.gitignore` the way git does outside a repository.** When git
   cannot answer, chamnan reads the `.gitignore` files itself. It knew that git cannot bring back a
   file inside an ignored folder only when the rule ended in `/`. With `build` and then
