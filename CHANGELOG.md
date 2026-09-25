@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A rule check can no longer stall a session start on a minified file.** Checks from `**Check:**`
+  lines run at every session start, and searching one very long line could take tens of seconds
+  (34 s measured, for a pattern the checker allowed). A file with a line over 2,000 characters is
+  now reported as "not checked", the same as a file that is too large.
 - **chamnan's git reads no longer make your own git commands fail.** A hook's `git status`
   briefly takes `index.lock`, and a `git add` or `git commit` you run at the same moment would fail
   with "index.lock: File exists". In a measured loop, 68 of 150 `git add` runs failed; with this fix,

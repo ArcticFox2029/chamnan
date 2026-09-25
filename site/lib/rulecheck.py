@@ -68,6 +68,14 @@ _CHECK_LIKE = re.compile(r"^\*\*check:\*\*.*$", re.M | re.I)
 # would turn a health report into a reason to uninstall.
 MAX_FILES = 400
 MAX_BYTES = 400_000
+# 🐛 [2026-09-25] (R111, 2026-09-25) Bounding the file bounded the wrong thing. A backtracking search pays
+# for the length of a LINE: `\s*:` took 21.2 s on one 80,000-character line and `a.*z` 5.1 s, both
+# inside the quantifier budget, and a rule checked at session start over a bundled or minified file
+# is exactly that. A file with a line longer than this is not searched and counts as not read,
+# like a file over MAX_BYTES: the verdict becomes "not checked", never a guess. 2,000 is the line
+# length The Silver Searcher stops at for minified code; the worst allowed pattern measured 12 ms
+# on a line that long.
+MAX_LINE = 2_000
 # 🐛 [2026-09-06] The two above bound ONE check. Nothing bounded the SUM, and the sum is what a
 # session start actually pays: measured ~90-100 ms per check at those caps' own worst case, so 50
 # ordinary non-adversarial trailers cost 4.5 s -- whether spread over 50 rule files or written into
@@ -487,7 +495,11 @@ def _matches(root, pattern, glob, why=None):
                 # at. Skips are carried out of here so the caller can refuse to answer.
                 skipped.append(p)
                 continue
-            if rx.search(p.read_text(encoding="utf-8-sig", errors="replace")):
+            _text = p.read_text(encoding="utf-8-sig", errors="replace")
+            if max(map(len, _text.split("\n")), default=0) > MAX_LINE:
+                skipped.append(p)
+                continue
+            if rx.search(_text):
                 hits += 1
             else:
                 missing.append(p)
@@ -544,7 +556,8 @@ def run(root, rules):
                 _big = ", ".join(f"`{q.name}`" for q in sorted(skipped)[:3])
                 out.append((title, "unverifiable",
                             f"not checked: {len(skipped)} of {scanned} file(s) are larger than "
-                            f"{MAX_BYTES:,} bytes and were not read ({_big}) — `{pattern}` in "
+                            f"{MAX_BYTES:,} bytes or carry a line over {MAX_LINE:,} characters, "
+                            f"and were not read ({_big}) — `{pattern}` in "
                             f"{where}"))
                 continue
             if ok:
