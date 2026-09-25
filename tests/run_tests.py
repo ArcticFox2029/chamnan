@@ -41342,6 +41342,375 @@ _t_missed281 = [p for p in _t_tests281 if not _im281.is_test(p)]
 _t_wrong281 = [p for p in _t_plain281 if _im281.is_test(p)]
 check("EVERY FRAMEWORK'S DEFAULT TEST NAME IS A TEST, AND NO ORDINARY NAME IS",
       not _t_missed281 and not _t_wrong281, saw=(_t_missed281, _t_wrong281))
+# ---- 282_the_windows_path_step_in_the_readme_is_safe_to_paste.py
+# ------------------ the Windows PATH step in the README is safe to paste
+# 🐛 [2026-09-25] (R149, 2026-09-25) README examples fail most often on the first command a reader
+# pastes. Ours had three faults in four lines: `setx PATH "$bin;$env:PATH"` writes the combined
+# machine and user PATH into the user PATH and cuts it at 1,024 characters (Microsoft documents
+# both); the first line was a `::` comment, which is cmd syntax and not a PowerShell comment; and
+# `Sort-Object Name` sorts versions as text, so 1.9.0 would be picked over 1.32.0. Asserted on the
+# block itself; where PowerShell exists the version pick is run for real against a scratch profile.
+import re as _re282, shutil as _sh282, subprocess as _sp282, tempfile as _tf282            # noqa: E402
+from pathlib import Path as _P282                                                        # noqa: E402
+
+_t_readme282 = (ROOT / "README.md").read_text(encoding="utf-8")
+# Fences are paired by walking lines: a regex over the text pairs the closing fence of one block
+# with the opening fence of the next, and read the prose between them as code.
+_t_blocks282, _t_cur282 = [], None
+for _t_l282 in _t_readme282.splitlines():
+    if _t_l282.startswith("```"):
+        if _t_cur282 is None:
+            _t_cur282 = []
+        else:
+            _t_blocks282.append("\n".join(_t_cur282))
+            _t_cur282 = None
+    elif _t_cur282 is not None:
+        _t_cur282.append(_t_l282)
+_t_ps282 = next((b for b in _t_blocks282 if "Get-ChildItem" in b and "chamnan" in b), "")
+check("THE README HAS A POWERSHELL BLOCK FOR PUTTING bin/ ON PATH", bool(_t_ps282))
+_t_cmds282 = [l for l in _t_ps282.splitlines() if l.strip() and not l.strip().startswith("#")]
+check("...THAT DOES NOT RUN setx ON PATH, WHICH TRUNCATES IT AND COPIES THE MACHINE PATH IN",
+      not any(_re282.match(r"\s*setx\b", l, _re282.I) for l in _t_cmds282), saw=_t_cmds282)
+check("...WHOSE COMMENTS ARE POWERSHELL COMMENTS, NOT cmd's `::`",
+      not any(l.lstrip().startswith("::") for l in _t_ps282.splitlines()),
+      saw=[l for l in _t_ps282.splitlines() if l.lstrip().startswith("::")])
+check("...AND WHICH SORTS THE INSTALLED VERSIONS AS VERSIONS, NOT AS TEXT",
+      "[version]" in _t_ps282 and "Sort-Object Name" not in _t_ps282, saw=_t_ps282[:300])
+
+_t_pwsh282 = _sh282.which("pwsh") or _sh282.which("powershell")
+if not _t_pwsh282:
+    print("  · PowerShell is not installed here, so the version pick was read, not run")
+else:
+    _t_home282 = _P282(_tf282.mkdtemp(prefix="chamnan-pspath-"))
+    try:
+        for _t_v282 in ("1.9.0", "1.10.0", "1.32.0", "1.4.1"):
+            (_t_home282 / ".claude" / "plugins" / "cache" / "chamnan" / "chamnan" / _t_v282
+             / "bin").mkdir(parents=True)
+        _t_pick282 = next(l for l in _t_ps282.splitlines() if l.startswith("$bin"))
+        _t_pick282 = _t_pick282 + "\n" + _t_ps282.splitlines()[_t_ps282.splitlines().index(_t_pick282) + 1]
+        _t_run282 = _sp282.run([_t_pwsh282, "-NoProfile", "-NonInteractive", "-Command",
+                                _t_pick282 + "\nWrite-Output $bin"],
+                               env=dict(os.environ, USERPROFILE=str(_t_home282)),
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               stdin=_sp282.DEVNULL, timeout=120)
+        check("...AND RUN IN POWERSHELL IT PICKS 1.32.0 OVER 1.9.0 AND 1.10.0",
+              _t_run282.stdout.strip().replace("/", "\\").endswith("1.32.0\\bin"),
+              saw=(_t_run282.returncode, _t_run282.stdout[-200:], _t_run282.stderr[-300:]))
+    finally:
+        _sh282.rmtree(_t_home282, ignore_errors=True)
+
+# (R193, 2026-09-25) The same for the other shell step: the README's bash line, run as written by
+# `sh` against a scratch home holding 1.9.0, 1.10.0 and 1.32.0, must put 1.32.0's bin/ first on PATH.
+_t_sh282 = next((l for b in _t_blocks282 for l in b.splitlines()
+                 if l.startswith("export PATH=") and "plugins/cache/chamnan" in l), "")
+check("THE README HAS A POSIX PATH LINE FOR bin/", bool(_t_sh282))
+if os.name == "nt" or not _sh282.which("sh"):
+    print("  · no POSIX shell here, so the README's PATH line was read, not run")
+elif _t_sh282:
+    _t_home282b = _P282(_tf282.mkdtemp(prefix="chamnan-shpath-"))
+    try:
+        for _t_v282 in ("1.9.0", "1.10.0", "1.32.0"):
+            (_t_home282b / ".claude" / "plugins" / "cache" / "chamnan" / "chamnan" / _t_v282
+             / "bin").mkdir(parents=True)
+        _t_out282 = _sp282.run(["sh", "-c", _t_sh282 + '\nprintf "%s" "${PATH%%:*}"'],
+                               env=dict(os.environ, HOME=str(_t_home282b)), capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               stdin=_sp282.DEVNULL, timeout=60)
+        check("...AND RUN BY sh IT PUTS 1.32.0 AHEAD OF 1.9.0 AND 1.10.0",
+              _t_out282.stdout.endswith("/1.32.0/bin"), saw=(_t_out282.stdout, _t_out282.stderr[-200:]))
+    finally:
+        _sh282.rmtree(_t_home282b, ignore_errors=True)
+# ---- 283_every_dashboard_text_colour_is_readable_in_both_themes.py
+# ------------------ every dashboard text colour is readable in both themes
+# 🐛 [2026-09-25] (R141, 2026-09-25) WebAIM's audit of a million rendered pages found low-contrast
+# text on 79%, the commonest failure. Ours: `--faint`, used for every 11-12px note, measured 2.81:1
+# on the dark panels and 2.40:1 on the light ones, and the light theme inherited the dark warm
+# (note text, 2.63:1) and accent (the active tab and a focused field, 2.48:1). WCAG AA asks 4.5:1
+# of text this size and 3:1 of an indicator a person needs to see.
+# The set is derived from the stylesheet: every token a `color:` uses, and every token an SVG
+# `fill:` uses in a rule that sets a font, checked against every panel colour of each theme.
+import re as _re283                                                                 # noqa: E402
+
+_t_css283 = (ROOT / "statistic" / "report" / "app.css").read_text(encoding="utf-8")
+
+
+def _t_block283(selector):
+    _m = _re283.search(_re283.escape(selector) + r"\s*\{([^}]*)\}", _t_css283)
+    return dict(_re283.findall(r"--([a-z0-9]+)\s*:\s*(#[0-9a-fA-F]{3,6})\b", _m.group(1))) if _m else {}
+
+
+def _t_hex283(h):
+    h = h.lstrip("#")
+    h = "".join(c * 2 for c in h) if len(h) == 3 else h
+    return [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+
+
+def _t_ratio283(a, b):
+    def _lum(h):
+        return sum(w * (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+                   for w, c in zip((0.2126, 0.7152, 0.0722), _t_hex283(h)))
+    hi, lo = sorted((_lum(a), _lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+_t_dark283 = _t_block283(":root")
+_t_light283 = dict(_t_dark283, **_t_block283(':root[data-theme="light"]'))
+_t_text283 = set(_re283.findall(r"(?<![-\w])color\s*:\s*var\(--([a-z0-9]+)\)", _t_css283))
+for _t_rule283 in _re283.findall(r"\{([^}]*)\}", _t_css283):
+    if "font" in _t_rule283:
+        _t_text283 |= set(_re283.findall(r"(?<![-\w])fill\s*:\s*var\(--([a-z0-9]+)\)", _t_rule283))
+check("THE STYLESHEET NAMES ITS TEXT COLOURS AND ITS PANELS — %d text token(s)" % len(_t_text283),
+      len(_t_text283) >= 3 and {"bg", "panel", "panel2"} <= set(_t_dark283),
+      saw=(sorted(_t_text283), sorted(_t_dark283)))
+_t_low283 = []
+for _t_theme283, _t_tok283 in (("dark", _t_dark283), ("light", _t_light283)):
+    for _t_fg283 in sorted(_t_text283):
+        for _t_bg283 in ("bg", "panel", "panel2"):
+            _t_r283 = _t_ratio283(_t_tok283[_t_fg283], _t_tok283[_t_bg283])
+            if _t_r283 < 4.5:
+                _t_low283.append("%s --%s on --%s: %.2f" % (_t_theme283, _t_fg283, _t_bg283, _t_r283))
+check("EVERY TEXT COLOUR REACHES 4.5:1 ON EVERY PANEL, IN BOTH THEMES", _t_low283 == [],
+      saw=_t_low283[:6])
+_t_ind283 = ["%s: %.2f" % (_t_th283, _t_ratio283(_t_tk283["accent"], _t_tk283[_t_b283]))
+             for _t_th283, _t_tk283 in (("dark", _t_dark283), ("light", _t_light283))
+             for _t_b283 in ("bg", "panel", "panel2")
+             if _t_ratio283(_t_tk283["accent"], _t_tk283[_t_b283]) < 3.0]
+check("THE ACCENT THAT MARKS THE ACTIVE TAB AND A FOCUSED FIELD REACHES 3:1 IN BOTH THEMES",
+      _t_ind283 == [], saw=_t_ind283)
+
+# The measure page (site/index.html) is the other page this project publishes, and had the same
+# fault: its --faint captions measured 2.95:1 light and 3.51:1 dark. Same rule, its own tokens.
+_t_site283 = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+_t_css283 = _t_site283
+_t_sl283 = _t_block283(":root")
+_t_sd283 = dict(_t_sl283, **_t_block283(':root[data-theme="dark"]'))
+_t_stext283 = set(_re283.findall(r"(?<![-\w])color\s*:\s*var\(--([a-z0-9]+)\)", _t_site283)) & set(_t_sl283)
+# --ground as a text colour is the button label, which sits on --accent, not on a panel.
+_t_stext283 -= {"ground", "surface", "sunk"}
+_t_btn283 = [(_t_th283, round(_t_ratio283(_t_tk283["ground"], _t_tk283["accent"]), 2))
+             for _t_th283, _t_tk283 in (("light", _t_sl283), ("dark", _t_sd283))]
+check("THE MEASURE PAGE'S BUTTON LABEL REACHES 4.5:1 ON ITS ACCENT FILL, IN BOTH THEMES",
+      all(r >= 4.5 for _t, r in _t_btn283), saw=_t_btn283)
+_t_slow283 = ["%s --%s on --%s: %.2f" % (_t_th283, _t_fg283, _t_bg283, _t_ratio283(_t_tk283[_t_fg283], _t_tk283[_t_bg283]))
+              for _t_th283, _t_tk283 in (("light", _t_sl283), ("dark", _t_sd283))
+              for _t_fg283 in sorted(_t_stext283) for _t_bg283 in ("ground", "surface", "sunk")
+              if _t_ratio283(_t_tk283[_t_fg283], _t_tk283[_t_bg283]) < 4.5]
+check("THE MEASURE PAGE'S TEXT COLOURS REACH 4.5:1 IN BOTH THEMES — %d token(s)" % len(_t_stext283),
+      len(_t_stext283) >= 3 and _t_slow283 == [], saw=(sorted(_t_stext283), _t_slow283[:6]))
+# ---- 284_a_dashboard_chart_works_without_a_mouse.py
+# ------------------ a dashboard chart can be used without a mouse and read without eyes
+# 🐛 [2026-09-25] (R141, 2026-09-25) The accessibility audits in that round found interactive charts
+# whose controls existed but could not be reached from the keyboard, and charts exposed to a screen
+# reader as nothing. Ours had both: a bar that drills into its day took a click and nothing else --
+# no focus, no key -- and a sparkline carried no role, label or text. `app.js` is run under node with
+# a minimal DOM; a bar must be a focusable, named button that Enter opens, and a sparkline an image
+# with a label. Without node (a machine that has none) this says so rather than passing.
+import shutil as _sh284, subprocess as _sp284, tempfile as _tf284, json as _js284        # noqa: E402
+from pathlib import Path as _P284                                                        # noqa: E402
+
+_T_HARNESS284 = 'const fs = require("fs"), vm = require("vm");\nclass Node_ { constructor(tag) { this.tag = tag; this.attrs = {}; this.kids = []; this.on = {}; this.nodeType = 1; this.style = {}; this.classList = { add() {}, remove() {}, toggle() {} }; }\n  setAttribute(k, v) { this.attrs[k] = String(v); } getAttribute(k) { return this.attrs[k] ?? null; }\n  append(...k) { this.kids.push(...k); } appendChild(k) { this.kids.push(k); return k; }\n  addEventListener(t, f) { (this.on[t] = this.on[t] || []).push(f); }\n  querySelector() { return null; } querySelectorAll() { return []; } }\nconst document = { createElement: (t) => new Node_(t), createElementNS: (_, t) => new Node_(t),\n  createTextNode: (s) => ({ nodeType: 3, text: s }), querySelector: () => null, querySelectorAll: () => [],\n  getElementById: () => null, addEventListener() {}, documentElement: new Node_("html"), body: new Node_("body") };\nconst ctx = { document, window: {}, localStorage: { getItem: () => null, setItem() {} }, console,\n  navigator: {}, Intl, URLSearchParams, location: { search: "" }, Date, Math, JSON, matchMedia: () => ({ matches: false, addEventListener() {} }) };\nctx.window = ctx; vm.createContext(ctx);\nvm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);\nconst picked = [];\nconst svg = vm.runInContext("bars", ctx)([{ label: "d1", value: 3 }, { label: "d2", value: 7 }], { onPick: (r) => picked.push(r.label) });\nconst g = svg.kids.find((k) => k.tag === "g");\n(g.on.keydown || []).forEach((f) => f({ key: "Enter", preventDefault() {} }));\nconst sp = vm.runInContext("spark", ctx)([1, 5, 2], {});\nconsole.log(JSON.stringify({ tabindex: g.attrs.tabindex ?? null, role: g.attrs.role ?? null, label: g.attrs["aria-label"] ?? null,\n  picked, sparkRole: sp.attrs.role ?? null, sparkLabel: sp.attrs["aria-label"] ?? null }));\n'
+_t_node284 = _sh284.which("node")
+if not _t_node284:
+    print("  · node is not installed here, so the dashboard's charts were not driven")
+else:
+    _t_dir284 = _P284(_tf284.mkdtemp(prefix="chamnan-charts-"))
+    try:
+        (_t_dir284 / "h.js").write_text(_T_HARNESS284, encoding="utf-8")
+        _t_run284 = _sp284.run([_t_node284, str(_t_dir284 / "h.js"),
+                                str(ROOT / "statistic" / "report" / "app.js")],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               stdin=_sp284.DEVNULL, timeout=60)
+        try:
+            _t_got284 = _js284.loads(_t_run284.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            _t_got284 = {}
+        check("A BAR THAT DRILLS INTO ITS DAY IS A FOCUSABLE, NAMED BUTTON THAT ENTER OPENS",
+              _t_got284.get("tabindex") == "0" and _t_got284.get("role") == "button"
+              and _t_got284.get("label") == "d1 \u00b7 3" and _t_got284.get("picked") == ["d1"],
+              saw=(_t_got284, _t_run284.stderr[-300:]))
+        check("...AND A SPARKLINE READS AS AN IMAGE WITH ITS COUNT, LATEST AND HIGHEST VALUE",
+              _t_got284.get("sparkRole") == "img"
+              and _t_got284.get("sparkLabel") == "3 values, latest 2, highest 5", saw=_t_got284)
+    finally:
+        _sh284.rmtree(_t_dir284, ignore_errors=True)
+# ---- 285_every_decoded_subprocess_outside_lib_names_its_encoding.py
+# ------------------ every decoded subprocess outside lib/ names its encoding too
+# 🐛 [2026-09-25] (R142, 2026-09-25) pre-commit crashed decoding a Windows tool's localized output, and
+# CI's Windows legs logged the same thing from this suite: `UnicodeDecodeError: 'charmap' codec
+# can't decode byte 0x90` in a subprocess reader thread. `text=True` alone decodes in the ANSI code
+# page there. The invariant above (EVERY DECODED SUBPROCESS NAMES ITS ENCODING) walks lib/, hooks/
+# and bin/ and matches `subprocess.<fn>` by that name only, so it could not see the dashboard
+# builder, the release tools, or this suite, which calls subprocess under aliases (`_sp282.run`).
+# 28 such calls were found, 27 of them here. This walks the rest, by call shape, not module name.
+import ast as _ast285                                                                  # noqa: E402
+
+_t_files285 = sorted((ROOT / "statistic").rglob("*.py")) + sorted((ROOT / "tools").rglob("*.py")) \
+    + [ROOT / "tests" / "run_tests.py"]
+_t_bad285 = []
+for _t_f285 in _t_files285:
+    try:
+        _t_tree285 = _ast285.parse(_t_f285.read_text(encoding="utf-8"))
+    except (SyntaxError, OSError):
+        continue
+    for _t_n285 in _ast285.walk(_t_tree285):
+        if not isinstance(_t_n285, _ast285.Call):
+            continue
+        _t_fn285 = getattr(_t_n285.func, "attr", getattr(_t_n285.func, "id", ""))
+        if _t_fn285 not in {"run", "check_output", "Popen", "call", "check_call"}:
+            continue
+        _t_kw285 = {k.arg: k.value for k in _t_n285.keywords}
+        if None in _t_kw285:
+            continue
+        if any(isinstance(_t_kw285.get(a), _ast285.Constant) and _t_kw285[a].value is True
+               for a in ("text", "universal_newlines")) and "encoding" not in _t_kw285:
+            _t_bad285.append("%s:%d" % (_t_f285.relative_to(ROOT), _t_n285.lineno))
+check("EVERY TEXT-MODE SUBPROCESS IN THE DASHBOARD, THE TOOLS AND THE SUITE NAMES ITS ENCODING "
+      "— %d file(s) walked" % len(_t_files285),
+      len(_t_files285) >= 3 and _t_bad285 == [], saw=_t_bad285[:8])
+# ---- 286_a_separator_inside_a_quoted_script_does_not_cut_it.py
+# ------------------ a separator inside a quoted script does not cut it into a path
+# 🐛 [2026-09-25] (self-measured) Found while releasing 1.32.0: a two-expression `sed -i` on
+# CITATION.cff, inside the checkout, raised the red "this writes to `/version:`, outside this
+# checkout" notice. The writer's arguments ran to the first `;`, which sat inside the quoted sed
+# script, so half a quote was read as a path. Beside it, the writes the notice exists for must
+# still be caught: a sed on /etc, and an rm or cp followed by a quoted `;`.
+sys.path.insert(0, str(ROOT / "lib"))
+import boundary as _bd286                                                          # noqa: E402
+
+_t_root286 = str(ROOT)
+_t_q286 = chr(39)
+_t_release286 = ("sed -i %s%s %ss/^version: \"1.31.2\"/version: \"1.32.0\"/; "
+                 "s/^date-released: \"2026-09-24\"/date-released: \"2026-09-25\"/%s CITATION.cff"
+                 % (_t_q286, _t_q286, _t_q286, _t_q286))
+check("A TWO-EXPRESSION sed -i ON A FILE IN THE CHECKOUT RAISES NO OUTSIDE-WRITE NOTICE",
+      _bd286.advice("Bash", {"command": _t_release286}, _t_root286) == "",
+      saw=_bd286.advice("Bash", {"command": _t_release286}, _t_root286))
+_t_real286 = ["sed -i %s%s %ss/a/b/%s /etc/hosts" % (_t_q286, _t_q286, _t_q286, _t_q286),
+              "rm -rf /opt/thing; echo %sa;b%s" % (_t_q286, _t_q286),
+              "cp x /usr/local/bin/y && echo %sdone; ok%s" % (_t_q286, _t_q286)]
+check("...WHILE A sed ON /etc, AND AN rm OR cp FOLLOWED BY A QUOTED `;`, ARE STILL REPORTED",
+      all(_bd286.advice("Bash", {"command": c}, _t_root286) for c in _t_real286),
+      saw=[c for c in _t_real286 if not _bd286.advice("Bash", {"command": c}, _t_root286)])
+# ---- 287_every_measure_page_language_carries_every_string.py
+# ------------------ every language on the measure page carries every string it uses
+# 🎯 [2026-09-25] (R147, 2026-09-25) Translation drift shows up as the wrong language or a raw key
+# on screen, and nobody reads all five languages to notice. The README translations already have
+# this check (EVERY LANGUAGE CARRIES EVERY ROW); the measure page's own table did not, though it is
+# the same invariant on a sibling population. Measured when written: 5 languages x 101 strings,
+# identical key sets, every `t("...")` key present in English. The table is evaluated under node.
+import json as _js287, shutil as _sh287, subprocess as _sp287                           # noqa: E402
+
+_t_node287 = _sh287.which("node")
+if not _t_node287:
+    print("  · node is not installed here, so the measure page's strings were not compared")
+else:
+    _t_js287 = r'''
+const fs = require("fs"); const s = fs.readFileSync(process.argv[1], "utf8");
+const a = s.indexOf("const T = {"); const b = s.indexOf("\n};", a) + 3;
+const T = eval("(() => {" + s.slice(a, b) + "; return T; })()");
+const en = Object.keys(T.en);
+const ragged = {};
+for (const L of Object.keys(T)) {
+  const k = new Set(Object.keys(T[L]));
+  const miss = en.filter((x) => !k.has(x)), extra = [...k].filter((x) => !(x in T.en));
+  if (miss.length || extra.length) ragged[L] = { miss, extra };
+}
+const used = [...new Set([...s.matchAll(/\bt\(\s*["'`]([A-Za-z_]\w*)["'`]/g)].map((m) => m[1]))];
+console.log(JSON.stringify({ langs: Object.keys(T), strings: en.length, ragged,
+  unknown: used.filter((k) => !(k in T.en)) }));
+'''
+    _t_run287 = _sp287.run([_t_node287, "-e", _t_js287, str(ROOT / "site" / "index.html")],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           stdin=_sp287.DEVNULL, timeout=60)
+    try:
+        _t_got287 = _js287.loads(_t_run287.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        _t_got287 = {}
+    check("THE MEASURE PAGE HAS ITS FIVE LANGUAGES AND A REAL STRING TABLE",
+          len(_t_got287.get("langs", [])) >= 5 and _t_got287.get("strings", 0) >= 50,
+          saw=(_t_got287, _t_run287.stderr[-300:]))
+    check("...EVERY LANGUAGE CARRIES EVERY STRING, AND EVERY t() KEY EXISTS",
+          _t_got287.get("ragged") == {} and _t_got287.get("unknown") == [], saw=_t_got287)
+# ---- 288_a_hook_that_crashes_is_recorded_and_reported.py
+# ------------------ a hook that crashes is recorded, and said on the next session line
+# 🐛 [2026-09-25] (R145, 2026-09-25) `never_fail` keeps a crashed hook from taking the session down, and
+# a hook that exits 0 has its stderr sent only to the host's debug log -- so a hook could fail on
+# every call and nothing would ever say so. Driven for real: a process that runs a crashing main
+# through `never_fail` in a scratch repository must exit 0, leave one record naming the error and
+# the line, and the ledger line and `chamnan-doctor` must both report it. The record must not
+# carry the exception's message, which can hold a path or a value from the person's repository.
+import json as _js288, shutil as _sh288, subprocess as _sp288, tempfile as _tf288      # noqa: E402
+from pathlib import Path as _P288                                                     # noqa: E402
+
+_t_repo288 = _P288(_tf288.mkdtemp(prefix="chamnan-hookcrash-"))
+try:
+    (_t_repo288 / ".chamnan" / "logs").mkdir(parents=True)
+    _t_env288 = dict(os.environ, CLAUDE_PROJECT_DIR=str(_t_repo288))
+    _t_env288.pop("CHAMNAN_READ_ONLY", None)
+    _t_code288 = ("import sys; sys.path.insert(0, %r); import workspace as ws\n"
+                  "def main():\n    raise ValueError('secret-looking detail /home/someone/x')\n"
+                  "sys.exit(ws.never_fail(main))\n" % str(ROOT / "lib"))
+    _t_run288 = _sp288.run([sys.executable, "-c", _t_code288], env=_t_env288, cwd=str(_t_repo288),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           stdin=_sp288.DEVNULL, timeout=60)
+    _t_log288 = _t_repo288 / ".chamnan" / "logs" / "hook_errors.jsonl"
+    _t_rows288 = [_js288.loads(l) for l in _t_log288.read_text(encoding="utf-8").splitlines()] \
+        if _t_log288.is_file() else []
+    check("A HOOK THAT CRASHES STILL EXITS 0, AND LEAVES ONE RECORD OF WHAT IT RAISED AND WHERE",
+          _t_run288.returncode == 0 and len(_t_rows288) == 1
+          and _t_rows288[0].get("error") == "ValueError" and ":" in _t_rows288[0].get("where", ""),
+          saw=(_t_run288.returncode, _t_rows288, _t_run288.stderr[-200:]))
+    check("...WITHOUT THE EXCEPTION'S MESSAGE, WHICH CAN CARRY THE PERSON'S PATHS OR VALUES",
+          "someone" not in _t_log288.read_text(encoding="utf-8") if _t_log288.is_file() else False)
+    sys.path.insert(0, str(ROOT / "lib"))
+    import ledger as _lg288                                                               # noqa: E402
+    _t_line288 = _lg288.line(_t_repo288)
+    check("...THE SESSION'S LEDGER LINE SAYS A HOOK CRASHED TODAY AND WHERE TO LOOK",
+          "1 hook crash today" in _t_line288 and "chamnan-doctor" in _t_line288, saw=_t_line288)
+    _t_doc288 = _sp288.run([sys.executable, str(ROOT / "bin" / "chamnan-doctor")], env=_t_env288,
+                           cwd=str(_t_repo288), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", stdin=_sp288.DEVNULL, timeout=120)
+    check("...AND chamnan-doctor NAMES THE ERROR AND ITS LINE",
+          "hook crash(es) in the last 7 days" in _t_doc288.stdout and "ValueError" in _t_doc288.stdout,
+          saw=[l for l in _t_doc288.stdout.splitlines() if "crash" in l][:2] or _t_doc288.stdout[-300:])
+finally:
+    _sh288.rmtree(_t_repo288, ignore_errors=True)
+# ---- 289_a_cache_written_by_older_code_is_not_served.py
+# ------------------ a churn cache written by older code is not served after an upgrade
+# 🐛 [2026-09-25] (R159, 2026-09-25) The stored churn ranking was keyed on HEAD alone, so after an
+# upgrade that changed how churn is counted, the old counts were served until enough commits had
+# passed. Mypy and ESLint document the same hole. Built in a scratch repository: a cache at the
+# current HEAD whose producer is not this code must be recomputed, and one this code wrote must be
+# served as it was.
+import json as _js289, shutil as _sh289, subprocess as _sp289, tempfile as _tf289     # noqa: E402
+from pathlib import Path as _P289                                                    # noqa: E402
+
+sys.path.insert(0, str(ROOT / "lib"))
+import rollup as _ru289                                                              # noqa: E402
+
+_t_repo289 = _P289(_tf289.mkdtemp(prefix="chamnan-churncache-"))
+try:
+    _t_env289 = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                     GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    (_t_repo289 / ".chamnan" / "state").mkdir(parents=True)
+    (_t_repo289 / "a.py").write_text("x = 1\n", encoding="utf-8")
+    for _t_a289 in (["init", "-q"], ["add", "a.py"], ["commit", "-qm", "a"]):
+        _sp289.run(["git", "-C", str(_t_repo289), *_t_a289], env=_t_env289, capture_output=True,
+                   stdin=_sp289.DEVNULL)
+    _t_head289 = _sp289.run(["git", "-C", str(_t_repo289), "rev-parse", "HEAD"], capture_output=True,
+                            text=True, encoding="utf-8", errors="replace").stdout.strip()
+    _t_path289 = _ru289._disk_cache_path(_t_repo289, _ru289.CHURN_WINDOW)
+    _t_path289.write_text(_js289.dumps({"head": _t_head289, "producer": "older-code",
+                                        "counts": {"a.py": 999}}), encoding="utf-8")
+    check("A CACHE AT THIS HEAD WRITTEN BY OTHER CODE IS NOT SERVED",
+          _ru289._read_disk_cache(_t_path289, _t_head289, _t_repo289) is None,
+          saw=_ru289._read_disk_cache(_t_path289, _t_head289, _t_repo289))
+    _t_path289.write_text(_js289.dumps({"head": _t_head289, "producer": _ru289._producer(),
+                                        "counts": {"a.py": 7}}), encoding="utf-8")
+    check("...WHILE ONE THIS CODE WROTE IS SERVED AS IT WAS",
+          _ru289._read_disk_cache(_t_path289, _t_head289, _t_repo289) == {"a.py": 7})
+finally:
+    _sh289.rmtree(_t_repo289, ignore_errors=True)
 # ---- 28_registering_a_tool_twice_keeps_one_entry.py
 # ------------------------------------------- the newer description, frozen at zero runs forever
 # 🐛 [2026-09-09] `_register_locked` appends unconditionally, with no check for an entry already
@@ -41419,6 +41788,109 @@ try:
           _names == ["alpha.py", "beta.py", "gamma.sh"], saw=repr(_names))
 finally:
     shutil.rmtree(_d_28, ignore_errors=True)
+# ---- 290_a_shallow_clone_is_not_told_a_false_map_age.py
+# ------------------ a shallow clone is not told a false age for its map
+# 🐛 [2026-09-25] (R182, 2026-09-25) CI checkouts are shallow by default (GitHub: depth 1). The map's
+# build commit is then missing, the commit count is unknown, and the fallback compared file times
+# -- all equal in a fresh checkout -- so the session said "built 0 seconds behind" about a map 26
+# commits old. Built for real: a map built at commit 6 of 31, cloned at depth 1; the shallow clone
+# must say its build commit is not here, and the full repository must still count the commits.
+import shutil as _sh290, subprocess as _sp290, tempfile as _tf290                     # noqa: E402
+from pathlib import Path as _P290                                                    # noqa: E402
+
+_t_base290 = _P290(_tf290.mkdtemp(prefix="chamnan-shallow-"))
+try:
+    _t_deep290, _t_shal290 = _t_base290 / "deep", _t_base290 / "shallow"
+    _t_deep290.mkdir()
+    _t_env290 = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                     GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+    def _t_g290(*a, cwd=_t_deep290):
+        return _sp290.run(["git", *a], cwd=str(cwd), env=_t_env290, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", stdin=_sp290.DEVNULL)
+
+    _t_g290("init", "-q")
+    for _t_i290 in range(1, 31):
+        (_t_deep290 / ("m%d.py" % _t_i290)).write_text(
+            'def f%d():\n    """F%d."""\n' % (_t_i290, _t_i290), encoding="utf-8")
+        _t_g290("add", "-A")
+        _t_g290("commit", "-qm", "c%d" % _t_i290)
+        if _t_i290 == 5:
+            _sp290.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_t_deep290),
+                       env=_t_env290, capture_output=True, stdin=_sp290.DEVNULL, timeout=120)
+            _t_g290("add", "-A")
+            _t_g290("commit", "-qm", "map")
+    _t_g290("clone", "-q", "--depth", "1", _t_deep290.as_uri(), str(_t_shal290), cwd=_t_base290)
+
+    def _t_line290(repo):
+        out = _sp290.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                         input='{"hook_event_name":"SessionStart","source":"startup","session_id":"s"}',
+                         env=dict(_t_env290, CLAUDE_PROJECT_DIR=str(repo)), cwd=str(repo),
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         timeout=120).stdout
+        return next((l for l in out.splitlines() if "Source has changed" in l), "")
+
+    _t_s290, _t_d290 = _t_line290(_t_shal290), _t_line290(_t_deep290)
+    check("A SHALLOW CLONE IS TOLD ITS MAP'S BUILD COMMIT IS NOT HERE, NOT A MADE-UP AGE",
+          "shallow clone does not have" in _t_s290 and "seconds behind" not in _t_s290,
+          saw=_t_s290[:200])
+    check("...WHILE THE FULL REPOSITORY STILL COUNTS THE COMMITS", "26 commits ago" in _t_d290,
+          saw=_t_d290[:200])
+finally:
+    _sh290.rmtree(_t_base290, ignore_errors=True)
+# ---- 291_the_suite_runs_git_without_the_persons_config.py
+# ------------------ the suite runs git without the person's own configuration
+# 🐛 [2026-09-25] (R188, 2026-09-25) Fixture repositories were built with the person's ~/.gitconfig in
+# effect, so `commit.gpgsign = true` there failed checks 56, 279 and 290 on that machine while CI,
+# which has no global config, stayed green -- and verify_release.py hands this suite to readers to
+# run on their own machines. The suite now points git at an empty config file of its own before
+# any check runs. Asserted on the source (set in the head, before the first check) and on git
+# itself: in this process, git reports no global and no system configuration at all.
+import subprocess as _sp291                                                            # noqa: E402
+
+_t_src291 = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+_t_first291 = _t_src291.find("\ncheck(")
+_t_set291 = _t_src291.find('os.environ["GIT_CONFIG_GLOBAL"]')
+check("THE SUITE POINTS GIT AT ITS OWN EMPTY CONFIG BEFORE ITS FIRST CHECK",
+      0 < _t_set291 < _t_first291 and 'os.environ["GIT_CONFIG_NOSYSTEM"] = "1"' in _t_src291[:_t_first291],
+      saw=(_t_set291, _t_first291))
+_t_cfg291 = _sp291.run(["git", "config", "--global", "--list"], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", stdin=_sp291.DEVNULL)
+check("...SO GIT, RUN FROM A CHECK, SEES NO GLOBAL SETTING OF THE PERSON'S",
+      _t_cfg291.stdout.strip() == "", saw=_t_cfg291.stdout[:200])
+# ---- 292_one_malformed_log_line_does_not_freeze_the_dashboard.py
+# ------------------ one malformed log line does not freeze the dashboard
+# 🐛 [2026-09-25] (R196, 2026-09-25) Agent tools that read append-only logs have been reported freezing
+# on one record they could not read. Ours did: a line that parses but is not an object reached
+# `.get()` and the dashboard build stopped -- and it runs quietly at session end, so the page just
+# never updated again. A count field holding text stopped it the same way. Built for real: every
+# log the dashboard reads, plus the local model's daily file, seeded with a list, a bare number, an
+# empty object, text where a count belongs and a line that is not JSON; the build must finish.
+import shutil as _sh292, subprocess as _sp292, tempfile as _tf292                     # noqa: E402
+from pathlib import Path as _P292                                                    # noqa: E402
+
+_t_repo292 = _P292(_tf292.mkdtemp(prefix="chamnan-badlogs-"))
+try:
+    _t_bad292 = "\n".join(['{"at":"2026-09-25T01:00:00+00:00","kind":"x","saved_chars":"lots"}',
+                           "not json at all", '["a","list"]', "42", "{}",
+                           '{"at":"not a date","n":"NaN","checks":"many"}']) + "\n"
+    (_t_repo292 / ".chamnan" / "logs").mkdir(parents=True)
+    (_t_repo292 / ".chamnan" / "state" / "local_assist" / "daily").mkdir(parents=True)
+    for _t_n292 in ("commands", "pointer", "edits", "failures", "scratch", "long_reads",
+                    "subagent_start", "block_shape", "gate_runs", "hook_errors", "agent_results"):
+        (_t_repo292 / ".chamnan" / "logs" / (_t_n292 + ".jsonl")).write_text(_t_bad292, encoding="utf-8")
+    (_t_repo292 / ".chamnan" / "state" / "local_assist" / "daily" / "2026-09-25.jsonl").write_text(
+        _t_bad292, encoding="utf-8")
+    _sp292.run(["git", "init", "-q"], cwd=str(_t_repo292), capture_output=True, stdin=_sp292.DEVNULL)
+    _t_run292 = _sp292.run([sys.executable, str(ROOT / "statistic" / "build_statistic.py"),
+                            "--root", str(_t_repo292)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", stdin=_sp292.DEVNULL, timeout=300)
+    check("THE DASHBOARD BUILDS FROM LOGS HOLDING LISTS, NUMBERS AND TEXT WHERE COUNTS BELONG",
+          _t_run292.returncode == 0 and "Traceback" not in _t_run292.stderr
+          and (_t_repo292 / ".chamnan" / "statistic" / "report" / "data.js").is_file(),
+          saw=(_t_run292.returncode, _t_run292.stderr[-300:]))
+finally:
+    _sh292.rmtree(_t_repo292, ignore_errors=True)
 # ---- 29_the_gate_reads_both_streams.py
 # ------------------------------------------- "0 tracebacks" over a run that crashed
 # 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
@@ -43347,7 +43819,10 @@ _t_marker56 = {"SENTINEL_NOT_FROM_GIT": 999}
 
 
 def _served56(stored_head):
-    _t_cache56.write_text(_js56.dumps({"head": stored_head, "counts": _t_marker56}),
+    # Written the way rollup writes it, producer included (R159, 2026-09-25): a cache from other
+    # code is refused by design, which check 289 holds.
+    _t_cache56.write_text(_js56.dumps({"head": stored_head, "producer": _t_ro56._producer(),
+                                       "counts": _t_marker56}),
                           encoding="utf-8")
     return _t_ro56._read_disk_cache(_t_cache56, _t_live56, _t_r56)
 
