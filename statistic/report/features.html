@@ -80,7 +80,9 @@ M.append(panel("what the gate finds", "ด่านตรวจเจออะ�
         // successful ones, as though a number were merely absent. It is a run that CRASHED
         // before it could count — `exit` says so — and this workspace's own rule is that the
         // absence of a failure line is not success. The row says which happened.
-        { t: g.finished ? n(g.checks) : T("did not finish", "รันไม่จบ"), n: 1 },
+        { t: !g.finished ? T("did not finish", "รันไม่จบ")
+             : (g.checks === null || g.checks === undefined) ? T("passed · not counted", "ผ่าน · ไม่ได้นับ")
+             : n(g.checks), n: 1 },
         { t: !g.finished ? (g.exit === undefined || g.exit === null ? "—" : `exit ${g.exit}`)
              : String(g.failing ?? 0), n: 1 },
         { t: g.seconds ? (g.seconds >= 90 ? `${Math.round(g.seconds / 60)} min`

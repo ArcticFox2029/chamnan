@@ -811,10 +811,14 @@ def found():
     # count is a run that CRASHED before it could finish counting \u2014 one of them four seconds in.
     # This workspace's own rule says it out loud, "absence of FAIL is not success", and the page
     # was showing exactly that shape as a blank. `exit` is carried so the table can say which.
+    # 🐛 [2026-09-25] (owner) gate.sh writes `failing` as the list of names and, until today, no `checks`; a run
+    # that exits 0 reached the suite's last line, so it FINISHED even when no count was recorded.
     return {"gate_runs": [{"day": d, "checks": g.get("checks"),
-                           "failing": g.get("failing"), "seconds": g.get("seconds"),
+                           "failing": (len(g["failing"]) if isinstance(g.get("failing"), list)
+                                       else g.get("failing")),
+                           "seconds": g.get("seconds"),
                            "exit": g.get("exit"),
-                           "finished": g.get("checks") is not None,
+                           "finished": g.get("checks") is not None or g.get("exit") == 0,
                            "runs": sum(1 for x in gates if day_of(x) == d)}
                           for d, g in sorted(by_day.items())[-20:]][::-1],
             "mutation_proved": len({v.get("check") for v in proofs.values()

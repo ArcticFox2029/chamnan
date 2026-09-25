@@ -107,8 +107,14 @@ HOOK_BODY = """{marker}
 #
 # It WARNS and never blocks: `chamnan-guard` returns 0 unless a project asked for `--strict`, and a
 # hook that stops somebody committing is a hook they delete.
+# 🐛 [2026-09-25] (R23, 2026-09-25) `command -v` finds these only where the plugin is on PATH -- inside a
+# Claude Code session. A commit from a terminal or an IDE found neither, skipped the secret check
+# and the refresh, and said nothing: a hook installed and unreachable, the state the finding names
+# as the one that must never pass as "no problems". It still never blocks; it now says so.
 if command -v chamnan-guard >/dev/null 2>&1; then
   chamnan-guard || true
+else
+  echo "chamnan: chamnan-guard is not on PATH here, so this commit was not checked for secrets." >&2
 fi
 if command -v chamnan-map >/dev/null 2>&1; then
   if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
