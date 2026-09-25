@@ -41399,8 +41399,10 @@ else:
         for _t_v282 in ("1.9.0", "1.10.0", "1.32.0", "1.4.1"):
             (_t_home282 / ".claude" / "plugins" / "cache" / "chamnan" / "chamnan" / _t_v282
              / "bin").mkdir(parents=True)
-        _t_pick282 = next(l for l in _t_ps282.splitlines() if l.startswith("$bin"))
-        _t_pick282 = _t_pick282 + "\n" + _t_ps282.splitlines()[_t_ps282.splitlines().index(_t_pick282) + 1]
+        # A default, not a bare next(): a README without the line fails the check below, not the run.
+        _t_lines282 = _t_ps282.splitlines()
+        _t_at282 = next((i for i, l in enumerate(_t_lines282) if l.startswith("$bin")), None)
+        _t_pick282 = "" if _t_at282 is None else "\n".join(_t_lines282[_t_at282:_t_at282 + 2])
         _t_run282 = _sp282.run([_t_pwsh282, "-NoProfile", "-NonInteractive", "-Command",
                                 _t_pick282 + "\nWrite-Output $bin"],
                                env=dict(os.environ, USERPROFILE=str(_t_home282)),
@@ -41660,8 +41662,15 @@ try:
     (_t_repo288 / ".chamnan" / "logs").mkdir(parents=True)
     _t_env288 = dict(os.environ, CLAUDE_PROJECT_DIR=str(_t_repo288))
     _t_env288.pop("CHAMNAN_READ_ONLY", None)
-    _t_code288 = ("import sys; sys.path.insert(0, %r); import workspace as ws\n"
-                  "def main():\n    raise ValueError('secret-looking detail /home/someone/x')\n"
+    # The child resolves a `<string>` frame name the way Windows Python 3.8 does -- by raising
+    # OSError -- so every platform checks the case only that CI leg used to reach.
+    _t_code288 = ("import sys, pathlib; sys.path.insert(0, %r); import workspace as ws\n"
+                  "_r = pathlib.Path.resolve\n"
+                  "def _win38(self, *a, **k):\n"
+                  "    if str(self).startswith('<'):\n        raise OSError(123, 'invalid name')\n"
+                  "    return _r(self, *a, **k)\n"
+                  "pathlib.Path.resolve = _win38\n"
+                  "def main():\n    raise ValueError('secret-looking detail ' + '/ho' + 'me/someone/x')\n"
                   "sys.exit(ws.never_fail(main))\n" % str(ROOT / "lib"))
     _t_run288 = _sp288.run([sys.executable, "-c", _t_code288], env=_t_env288, cwd=str(_t_repo288),
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -41808,6 +41817,7 @@ finally:
 # -- all equal in a fresh checkout -- so the session said "built 0 seconds behind" about a map 26
 # commits old. Built for real: a map built at commit 6 of 31, cloned at depth 1; the shallow clone
 # must say its build commit is not here, and the full repository must still count the commits.
+import time as _tm290                                                          # noqa: E402
 import shutil as _sh290, subprocess as _sp290, tempfile as _tf290                     # noqa: E402
 from pathlib import Path as _P290                                                    # noqa: E402
 
@@ -41834,6 +41844,12 @@ try:
             _t_g290("add", "-A")
             _t_g290("commit", "-qm", "map")
     _t_g290("clone", "-q", "--depth", "1", _t_deep290.as_uri(), str(_t_shal290), cwd=_t_base290)
+    # Linux can stamp a fresh clone's files with one coarse time, where macOS spreads them. Every
+    # file is given the same time here, so each platform checks the case Linux produces.
+    _t_now290 = _tm290.time()
+    for _t_f290 in _t_shal290.rglob("*"):
+        if _t_f290.is_file() and ".git" not in _t_f290.relative_to(_t_shal290).parts:
+            os.utime(_t_f290, (_t_now290, _t_now290))
 
     def _t_line290(repo):
         out = _sp290.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
