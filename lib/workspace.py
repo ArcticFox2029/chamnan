@@ -56,6 +56,18 @@ def _flush_or_let_go():
         pass
 
 
+# 🐛 [2026-09-25] (R108, 2026-09-25) Hooks run `git status` while the person, an editor or another
+# session may be running git in the same repository. A read-only status still takes `index.lock`
+# for a moment to write refreshed stat data back, and anyone else's `git add` in that moment fails
+# with "index.lock: File exists". Measured with a status loop beside 150 `git add`s: 68 failed with
+# the optional lock, 0 without it, and status took the same time either way. Every chamnan command
+# and hook imports this module, and every git it starts inherits this. Only the OPTIONAL lock is
+# waived; a command that writes still takes the lock it needs. A value the person set is kept.
+OPTIONAL_LOCKS_WAIVED = "GIT_OPTIONAL_LOCKS" not in os.environ
+if OPTIONAL_LOCKS_WAIVED:
+    os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+
+
 if getattr(sys.excepthook, "__name__", "") != "_quiet_broken_pipe":
     sys.excepthook = _quiet_broken_pipe
     import atexit as _atexit

@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **chamnan's git reads no longer make your own git commands fail.** A hook's `git status`
+  briefly takes `index.lock`, and a `git add` or `git commit` you run at the same moment would fail
+  with "index.lock: File exists". In a measured loop, 68 of 150 `git add` runs failed; with this fix,
+  none did. Commands you schedule with `chamnan-schedule` keep your own git settings.
 - **Dashboard history outlives Claude Code's transcript cleanup.** Claude Code deletes a session's
   transcript after 30 days by default. When it did, that session's tokens and commands disappeared
   from the dashboard, though the dashboard is meant to keep a year. What was read from a deleted

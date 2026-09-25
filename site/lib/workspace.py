@@ -18,6 +18,61 @@ from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
+
+# 🐛 [2026-09-25] (R98, 2026-09-25) `chamnan-where check | head -1` ended with `BrokenPipeError` on stderr
+# and exit 120: the reader closed the pipe, the next write raised, and the flush at shutdown raised
+# again. Every command in `bin/` imports this module, so the handling lives here once rather than in
+# twenty mains. It is the pattern the Python documentation gives (signal module, "Note on SIGPIPE"):
+# point stdout at devnull so the shutdown flush has somewhere to go, and leave with status 1. Every
+# other exception goes to whatever hook was installed before, unchanged. SIGPIPE is not set to
+# SIG_DFL, which the same documentation warns against.
+def _quiet_broken_pipe(kind, value, tb, _previous=sys.excepthook):
+    if isinstance(kind, type) and issubclass(kind, BrokenPipeError):
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+        return
+    _previous(kind, value, tb)
+
+
+def _flush_or_let_go():
+    """At exit, flush stdout; if the reader has gone, point stdout at devnull instead.
+
+    The case above is an exception nobody caught. The commoner one is none at all: the writes land
+    in the stream's buffer, and only the interpreter's own final flush meets the closed pipe, after
+    every handler has run -- "Exception ignored while flushing sys.stdout" and exit 120. atexit
+    runs before that flush, so the flush happens here, where it can be answered. The command's own
+    exit status is left as it was: the reader stopping early is not the command failing.
+    """
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+# 🐛 [2026-09-25] (R108, 2026-09-25) Hooks run `git status` while the person, an editor or another
+# session may be running git in the same repository. A read-only status still takes `index.lock`
+# for a moment to write refreshed stat data back, and anyone else's `git add` in that moment fails
+# with "index.lock: File exists". Measured with a status loop beside 150 `git add`s: 68 failed with
+# the optional lock, 0 without it, and status took the same time either way. Every chamnan command
+# and hook imports this module, and every git it starts inherits this. Only the OPTIONAL lock is
+# waived; a command that writes still takes the lock it needs. A value the person set is kept.
+OPTIONAL_LOCKS_WAIVED = "GIT_OPTIONAL_LOCKS" not in os.environ
+if OPTIONAL_LOCKS_WAIVED:
+    os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+
+
+if getattr(sys.excepthook, "__name__", "") != "_quiet_broken_pipe":
+    sys.excepthook = _quiet_broken_pipe
+    import atexit as _atexit
+    _atexit.register(_flush_or_let_go)
+
 # \U0001f41b [2026-09-15] R6.7. On Windows, CreateProcess searches the CURRENT DIRECTORY before PATH,
 # and the current directory is the repository the user just opened. This package runs
 # `subprocess.run(["git", ...])` twenty-six times, so a cloned repository carrying `git.exe` at its

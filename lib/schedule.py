@@ -696,6 +696,11 @@ def fire(root, rec, run=None, now=None):
     logdir.mkdir(parents=True, exist_ok=True)
     log = logdir / ("%s.log" % rec.get("id"))
     env = dict(os.environ)
+    # The person's own command runs with their git as they left it: the lock waiver is chamnan's,
+    # for chamnan's reads (see workspace.OPTIONAL_LOCKS_WAIVED), not something to hand on.
+    import workspace as _ws
+    if getattr(_ws, "OPTIONAL_LOCKS_WAIVED", False):
+        env.pop("GIT_OPTIONAL_LOCKS", None)
     # The account is the one that SET the schedule. A job that resumed on a different account would
     # spend tokens nobody intended and would not see the history the work depends on.
     if rec.get("account"):
