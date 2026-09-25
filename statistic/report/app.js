@@ -237,8 +237,12 @@ function spark(values, opts) {
   const line = values.map(pt).map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
   const area = `${pad},${h - pad} ${line} ${(pad + (values.length - 1) * step).toFixed(1)},${h - pad}`;
   const [lx, ly] = pt(values[values.length - 1] ?? 0, values.length - 1);
+  /* 🐛 [2026-09-25] (R141, 2026-09-25) A sparkline said nothing to a screen reader: no role, no
+     label, no text. It now reads as one image with its count, latest and highest value. */
+  const said = o.label || `${values.length} values, latest ${n(values[values.length - 1] ?? 0)}, `
+    + `highest ${n(Math.max(0, ...values))}`;
   return el("svg", { viewBox: `0 0 ${w} ${h}`, class: "chart spark",
-    preserveAspectRatio: "none" },
+    preserveAspectRatio: "none", role: "img", "aria-label": said },
     el("polyline", { points: area, fill: o.colour || PAL[0], "fill-opacity": .16, stroke: "none" }),
     el("polyline", { points: line, fill: "none", stroke: o.colour || PAL[0], "stroke-width": 1.8,
       "stroke-linejoin": "round", "stroke-linecap": "round" }),
@@ -326,8 +330,17 @@ function bars(rows, opts) {
         short(r.value)));
     }
     if (o.onPick) {
+      /* 🐛 [2026-09-25] (R141, 2026-09-25) Drilling into a day worked only with a mouse: the bar
+         could not take focus and ignored the keyboard. It is now a focusable button that Enter
+         and Space open, named with its day and value. */
       g.setAttribute("class", g.getAttribute("class") + " pick");
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.setAttribute("aria-label", `${r.label} · ${n(r.value)}`);
       g.addEventListener("click", () => o.onPick(r));
+      g.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); o.onPick(r); }
+      });
     }
     kids.push(g);
     if (rows.length <= 14 || i % Math.ceil(rows.length / 10) === 0) {

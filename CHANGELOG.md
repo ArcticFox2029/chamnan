@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard's day bars work from the keyboard, and its sparklines can be heard.** Opening a
+  day from a bar chart took a mouse click: the bar could not take focus and ignored every key.
+  Each bar is now a button you can Tab to and open with Enter or Space, named with its day and
+  value. A sparkline was silent to a screen reader; it now reads as an image with its number of
+  values, the latest and the highest.
 - **Small text on the dashboard is readable in both themes.** The grey used for every note under
   a chart measured 2.81:1 against the dark panels and 2.40:1 against the light ones, below the
   4.5:1 that WCAG asks of text that size. The light theme also kept the dark theme's orange note

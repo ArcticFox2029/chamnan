@@ -214,6 +214,8 @@ code { font-family: var(--mono); font-size: 11.5px; color: var(--dim); word-brea
 .barg.peak rect { fill-opacity: 1; }
 .barg:hover rect { fill-opacity: 1; }
 .barg.pick { cursor: pointer; }
+.barg.pick:focus { outline: none; }
+.barg.pick:focus-visible rect { stroke: var(--ink); stroke-width: 2; }
 .peaklab { fill: var(--ink); font-size: 11.5px; font-family: var(--mono); font-weight: 600; }
 
 /* ---- the calendar */
