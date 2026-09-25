@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Source files saved as UTF-16 are indexed.** The map treated any file with a zero byte near its
+  start as binary before looking for a byte-order mark, so a UTF-16 file (which has a zero byte
+  beside every ASCII character) was listed as "binary despite a source suffix" and left out.
+  Windows PowerShell 5.1 saves `.ps1` files this way by default. A file with a UTF-16 or UTF-32
+  mark is now decoded and indexed; a zero byte with no mark still means binary.
 - **One unreadable log line no longer stops the dashboard from updating.** A line that was valid
   JSON but not a record, or a count field holding text, stopped the dashboard's build. It runs
   quietly at the end of each session, so the page simply stayed at its last good build. Such
