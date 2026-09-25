@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **4,114 of 4,114** <!-- live: map_claim_check -->; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **4,205 of 4,205** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
@@ -122,7 +122,7 @@ fails when it and the code disagree.</sub>
 **Start here** — [Features, by what you are trying to do](#features-by-what-you-are-trying-to-do) ·
 [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.31.2](#whats-new-in-1312) ·
+[What's new in 1.32.0](#whats-new-in-1320) ·
 [The dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
@@ -630,34 +630,32 @@ own numbers.
 No money and no model names appear on any page, because the plugin does not know which model you
 run and a price printed against the wrong one is worse than no price at all.
 
-## What's new in 1.31.2
+## What's new in 1.32.0
 
-_Fixes and measured improvements on top of 1.31.1 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
+_Fixes and measured improvements on top of 1.31.2 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
 
-**This release is about counting honestly, and about research that had to earn its way into the
-code.**
+**This release is about behaving well in other people's setups, and showing numbers that are
+true.**
 
-**The dashboard was counting every token about twice.** Claude Code writes one transcript record
-per content block, each repeating the response's usage, and the page added them all. It now counts
-each response once, reads only the sessions a person worked on the account in use — including
-sessions started in a subdirectory, which it used to miss, and leaving out sessions a script
-started — and every panel on the first page describes the same period in the same unit. A new
-panel ranks the five things that filled the context, and it adds up, to the token, to what was
-actually written: on the repository it was built on, the largest row turned out to be context
-rewritten after the cache expired, which no transcript shows.
+**chamnan is a guest in your repository, and now it behaves like one.** For its own reads it turns
+off repository-supplied programs — hooks, credential helpers, ssh commands, signing — and sessions
+it started for you with `chamnan-open` and `chamnan-schedule` inherited all of that, so `git push`
+could not log in and signed commits failed. They now start with your environment exactly as it
+was. Its reads also skip git's optional index lock: beside 150 `git add` runs, 68 failed with
+"index.lock: File exists" before and none after.
 
-**Every finding from outside research now leaves with a verdict — test it, already there, or not
-worth it — and the tests found real defects.** A property test (scrubbing twice must equal
-scrubbing once) found the redactor damaging an ordinary line of code that followed a line ending
-in `..._key:`. The pointer was naming a thread closed weeks earlier — the most-named entry in its
-log, and in 35 of 56 appearances the only thing named. A config value of the wrong type was
-silently replaced by the default on the next session, which could start deleting logs. A new
-session now hears which files were committed after the old one stopped, and `/chamnan:review`
-names a change too large, or too tangled, to review whole.
+**The dashboard is right, and it speaks your time zone.** An audit recomputed every figure from
+the raw logs and found three panels drawing a log's daily cap, a UTC offset or a double count
+instead of the thing they were named for. Commands are now counted from the transcripts (1,623 on
+a day that showed 316), each request once, on your local day, in the zone you pick — your
+browser's by default, with half- and quarter-hour zones handled. The lesson panels fill in on
+every build, and history survives Claude Code deleting old transcripts.
 
-**The plugin carries no key-shaped test data.** The checks that need a credential's shape, and the
-recall benchmark with its tables, moved to [chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus),
-where key-shaped data belongs; the checks that stay here use plain values.
+**Unusual inputs stop costing time.** A rule check over one minified 80,000-character line took
+34 seconds at session start and then reported success; it now takes 11 ms and says "not
+checked". Redacting a 200 KB base64url value went from 16.0 s to 3.2 s, and scheduled resumes keep
+their time when the machine changes time zone. An `AGENTS.md` made on Windows keeps its line
+endings and byte-order mark.
 
 ## Bootstrap does not rewrite your code
 
@@ -1254,7 +1252,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **4,114 of 4,114** <!-- live: map_claim_check --> rather than asserted.
+claims about the tree are checked at **4,205 of 4,205** <!-- live: map_claim_check --> rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1515,7 +1513,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **4,114 of 4,114** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
+searched for, and its claims about the tree check out at **4,205 of 4,205** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.

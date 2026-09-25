@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1312), and every one of these is on the
+[README](README.md#whats-new-in-1320), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -20,6 +20,16 @@ already reports the last released number while running newer code.
 ---
 
 ## Unreleased
+
+_Nothing yet._
+
+---
+
+## What's new in 1.32.0
+
+_Behaving well in other people's setups — your git, your time zone, your platform — and showing numbers that are true._
+
+### Fixed and improved
 
 - **Scheduled resumes keep their time when you travel or the clocks change.** `chamnan-schedule`
   used to store a plain local time without a time zone. A resume set for two hours later in Bangkok
@@ -49,6 +59,8 @@ already reports the last released number while running newer code.
 - **Piping a command into `head` no longer ends in an error.** `chamnan-where check | head -1`
   printed `BrokenPipeError` and exited with status 120. Every command now exits quietly when the
   reader stops early, and prints its full output as before when read to the end.
+  That includes Windows with Python 3.8, where a closed pipe is reported as `Errno 22` rather
+  than as a broken pipe.
 - **The dashboard has a time-zone menu.** Days, months and the hour calendar were always counted
   in the zone of the machine that built the page. They are now counted in the zone you pick, and
   the default is your browser's zone. Zones offset by a half or a quarter hour work too. The
@@ -117,6 +129,40 @@ already reports the last released number while running newer code.
 - **The redactor no longer slows down sharply on long dotted text.** A long run like `a.b.c…`
   with no `://` in it made one URL pattern re-scan from every dot: 50,000 characters took 99
   seconds, and they now take 0.23. Output is unchanged on every tracked file and on the corpus.
+
+- **A hook run by hand in a terminal says what it expects instead of waiting forever.** Every
+  hook read its event from standard input, so a person trying one in a terminal waited on input
+  that never came. On a terminal it now prints one line saying what it reads and how to try it;
+  an event piped in by Claude Code is read exactly as before.
+- **A commit made outside a Claude Code session says it was not checked for secrets.** The
+  pre-commit hook finds the secret guard on `PATH`, which only a session provides, so a commit
+  from a plain shell skipped the check and said nothing. It still never blocks the commit, but it
+  now says so in one line. Inside a session the guard runs once per commit, not twice.
+- **A redirect to `/dev/null` followed by `;` no longer raises the "outside this checkout"
+  notice.** The redirect target was read up to the next space, so `>/dev/null; cat f` was read as
+  `/dev/null;`. It now ends at a shell separator, and a real path outside is still reported, under
+  its own name.
+- **An atomic write is on disk before its name is.** The temporary file is now synced before it
+  is renamed, so a power cut can no longer leave the new name pointing at an empty file. Measured:
+  2.06 ms to 2.27 ms median per small write.
+- **`*TestCase.java` is recognised as a test**, Maven Surefire's fourth default pattern. No
+  ordinary name that merely contains "test" is misread.
+- **The measure page escapes an error message before it shows it.** An error could quote a file
+  name from the repository being measured, and a name containing `<` was rendered as HTML.
+- **The two CI actions are pinned to commit SHAs**, not version tags, which a compromised action
+  can rewrite. A check fails on any action pinned by tag.
+- **Importing the redactor takes 15.9 ms instead of 41.7.** Most hooks import it on every tool
+  call; its widest pattern is now compiled on first use, and one pattern nothing read is gone.
+
+### Verification
+
+**6055/6055** checks on the release gate (macOS, with the live workspace), and CI green on all five
+legs — macOS · Linux · Windows on Python 3.8 and 3.13 — on the same code. The count moved from
+5,024 to 4,983 `check(` calls in the source: 21 sections that tested this project's own
+development tools, which do not ship, moved out of the plugin's suite (-99), and 26 sections were
+added (+61). Recorded lessons: **+16 since v1.31.2 / 2,039 total**. The check branch caught one
+thing on the way, fixed before this: on Windows with Python 3.8 a closed pipe is reported as
+`Errno 22`, and a command piped into `head` still exited 120 there.
 
 ---
 
