@@ -42,6 +42,9 @@ already reports the last released number while running newer code.
 - **Commands chamnan suggests now work on paths with spaces.** A notice that said to run
   `chamnan-peek <path>` printed the path unquoted, so `my dir/long notes.md` named the wrong
   files. Paths and search terms in suggested commands are now quoted.
+- **The dashboard no longer drops the record a running session is still writing.** It reads each
+  transcript from where the last build stopped, and that point could fall inside a half-written
+  line, which was then never counted. It now stops at the last complete line.
 - **The redactor no longer slows down sharply on long dotted text.** A long run like `a.b.c…`
   with no `://` in it made one URL pattern re-scan from every dot: 50,000 characters took 99
   seconds, and they now take 0.23. Output is unchanged on every tracked file and on the corpus.

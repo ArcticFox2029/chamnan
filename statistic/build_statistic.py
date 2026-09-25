@@ -275,11 +275,21 @@ def _usage_of(path, start=0, prev=None):
     n, at = 0, start
     last = (prev or {}).get("last")
     pending = dict((prev or {}).get("pending") or {})
+    # 🐛 [2026-09-25] (R75, 2026-09-25) The offset kept for the next read was `tell()` at end of file, and the
+    # transcript of the session still running always ends in a line being written. The next read
+    # began after that half line, the rest of it could not parse, and the record was lost for
+    # good: measured, a whole-file read saw 3 records and two incremental reads saw 2. Bytes now,
+    # the offset advances only past a line that has its newline, and a trailing half line is left
+    # for the next build. Decoding per line also keeps a byte offset from landing mid-character.
     try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
+        with path.open("rb") as fh:
             if start:
                 fh.seek(start)
-            for line in fh:
+            for raw in fh:
+                if not raw.endswith(b"\n"):
+                    break
+                at += len(raw)
+                line = raw.decode("utf-8", errors="replace")
                 if not any(m in line for m in _SPEND_MARKS):
                     continue
                 try:
@@ -309,7 +319,6 @@ def _usage_of(path, start=0, prev=None):
                         per_day[day][kind] += v
                 if day:
                     per_day[day]["requests"] += 1
-            at = fh.tell()
     except OSError:
         return {"n": 0, "tot": {}, "days": {}, "last": last, "pending": pending}, start
     # Only the calls still waiting for a result carry over, so the map stays a handful of ids.
