@@ -3571,7 +3571,15 @@ def _record_swallowed():
         exc = sys.exc_info()[1]
         frames = traceback.extract_tb(exc.__traceback__) if exc is not None else []
         pkg = str(Path(__file__).resolve().parent.parent)
-        ours = [f for f in frames if str(Path(f.filename).resolve()).startswith(pkg)] or frames
+        # Per frame, and guarded: a frame from `python -c` or from importlib is named `<string>`
+        # or `<frozen ...>`, and on Windows Python 3.8 resolving that name raises OSError
+        # (WinError 123) -- unguarded, one such frame would drop the whole record.
+        def _ours(frame):
+            try:
+                return str(Path(frame.filename).resolve()).startswith(pkg)
+            except (OSError, ValueError):
+                return False
+        ours = [f for f in frames if _ours(f)] or frames
         root = hook_root(None)
         if root is None or read_only() or not workspace(root).is_dir():
             return
