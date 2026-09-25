@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A merge conflict in `MAP.md` now tells you how to fix it.** When two branches each rebuild the
+  map, merging them always conflicts in it. Because the map is generated, the fix is to rebuild it,
+  and the session start now says so: run `chamnan-map`, then `git add .chamnan/MAP.md`.
 - **Sessions chamnan starts for you run with your git settings, not chamnan's.** For its own reads of a
   repository, chamnan turns off git hooks, credential helpers, ssh commands and signing programs.
   Sessions started by `chamnan-schedule` and `chamnan-open` inherited all of those, so a `git push`
