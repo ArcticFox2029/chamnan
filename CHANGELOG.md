@@ -21,7 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-_Nothing yet._
+- **The README's Windows step no longer damages your PATH.** It told PowerShell users to run
+  `setx PATH "$bin;$env:PATH"`, which copies the machine PATH into your user PATH and cuts the
+  result at 1,024 characters. Its first line was a `::` comment, which PowerShell does not accept,
+  and it sorted installed versions as text, so 1.9 would be picked over 1.32. The step now adds
+  `bin/` to your user PATH only, sorts by version, and uses PowerShell comments.
 
 ---
 

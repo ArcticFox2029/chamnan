@@ -468,11 +468,13 @@ plugin cache, one directory per version:
 export PATH="$(ls -d "$HOME"/.claude/plugins/cache/chamnan/chamnan/*/bin | sort -V | tail -1):$PATH"
 ```
 
-```
-:: Windows PowerShell
+```powershell
+# Windows PowerShell. Sorted as versions, so 1.10 comes after 1.9.
 $bin = (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\chamnan\chamnan\*\bin" |
-        Sort-Object Name | Select-Object -Last 1).FullName
-setx PATH "$bin;$env:PATH"
+        Sort-Object { [version]$_.Parent.Name } | Select-Object -Last 1).FullName
+# Your user PATH only: `setx PATH` would write the machine PATH into it and cut it at 1,024 characters.
+[Environment]::SetEnvironmentVariable("Path", "$bin;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+$env:Path = "$bin;$env:Path"   # this window too; new windows read the saved value
 ```
 
 Or skip `PATH` entirely: clone this repository anywhere and run `bin/chamnan-map` from the
