@@ -1020,6 +1020,12 @@ const $ = id => document.getElementById(id);
 const statusEl = $("status"), out = $("out");
 let pyodide = null, EXT = null, booting = null, CHAMNAN_VERSION = null;
 
+// 🐛 [2026-09-25] (R15, 2026-09-25) Text that did not come from this page -- an exception's message, which
+// can quote a path from the repository being measured -- is escaped before it reaches innerHTML. A file
+// name may hold `<`, and on this page that would be markup.
+const esc = s => String(s).replace(/[&<>"']/g,
+  c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+
 function say(msg, pct){
   stopTicking();
   statusEl.innerHTML = msg + (pct === undefined ? "" :
@@ -1427,7 +1433,7 @@ async function run(){
     say(t("doneMsg", {repo: r.slug, n: num(r.indexed)}));
   }catch(e){
     out.innerHTML = "";
-    say(t("stopped") + (e && (e.message || e.toString()) || "unknown error"));
+    say(t("stopped") + esc(e && (e.message || e.toString()) || "unknown error"));
     console.error(e);
   }finally{
     forgetTheSource();
