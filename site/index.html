@@ -113,9 +113,12 @@
 }
 </style>
 <style>
+/* 🐛 [2026-09-25] (R141, 2026-09-25) --faint carries every small caption and card heading here, and
+   measured 2.95:1 (light) and 3.51:1 (dark), under the 4.5:1 WCAG asks of text that size. Both
+   themes now reach it; check 283 holds this page and the dashboard to it. */
 :root{
   --ground:#FBFBF8; --surface:#FFFFFF; --sunk:#F4F4EF;
-  --ink:#15181C; --muted:#5C6169; --faint:#8A8F96;
+  --ink:#15181C; --muted:#5C6169; --faint:#6C7075;
   --rule:#E4E3DD; --accent:#0F6E5C; --accent-soft:#E4F0EC;
   --warn:#A2600C; --warn-soft:#F8EEDD;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -124,14 +127,14 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --ground:#0E1013; --surface:#15181C; --sunk:#1B1F24;
-    --ink:#E9E9E3; --muted:#9AA0A6; --faint:#6E747B;
+    --ink:#E9E9E3; --muted:#9AA0A6; --faint:#81868C;
     --rule:#262A2F; --accent:#4FCFAE; --accent-soft:#16302A;
     --warn:#E0A857; --warn-soft:#2E2416;
   }
 }
 :root[data-theme="dark"]{
   --ground:#0E1013; --surface:#15181C; --sunk:#1B1F24;
-  --ink:#E9E9E3; --muted:#9AA0A6; --faint:#6E747B;
+  --ink:#E9E9E3; --muted:#9AA0A6; --faint:#81868C;
   --rule:#262A2F; --accent:#4FCFAE; --accent-soft:#16302A;
   --warn:#E0A857; --warn-soft:#2E2416;
 }
