@@ -124,7 +124,11 @@ def main(argv):
         # execvp, not subprocess: the terminal belongs to Claude Code after this, and an extra
         # Python process sitting between the user's TTY and an interactive program is how signal
         # handling and resize events get lost.
-        os.execvp(cmd[0], cmd)
+        # 🐛 [2026-09-25] (self-measured) `execvp` hands on THIS process's environment, and importing
+        # workspace had narrowed git in it for chamnan's own reads -- hooks at /dev/null, credential
+        # helper and ssh refused -- so the whole interactive session opened here ran every git
+        # command that way: no push, no hooks, no signing. The person's own environment instead.
+        os.execvpe(cmd[0], cmd, ws.env_for_the_persons_command())
     except OSError as exc:
         print(f"chamnan-open: could not run `{cmd[0]}`: {exc}", file=sys.stderr)
         return 127

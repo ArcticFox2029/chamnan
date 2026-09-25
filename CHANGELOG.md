@@ -21,11 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-- **A scheduled resume runs with your git settings, not chamnan's.** For its own reads of a
+- **Sessions chamnan starts for you run with your git settings, not chamnan's.** For its own reads of a
   repository, chamnan turns off git hooks, credential helpers, ssh commands and signing programs.
-  The session that `chamnan-schedule` resumes inherited all of those, so a `git push` in it could
-  not log in, the repository's hooks did not run, and signed commits failed. It now starts with
-  your environment exactly as it was.
+  Sessions started by `chamnan-schedule` and `chamnan-open` inherited all of those, so a `git push`
+  in them could not log in, the repository's hooks did not run, and signed commits failed. Both
+  now start with your environment exactly as it was.
 - **A rule check can no longer stall a session start on a minified file.** Checks from `**Check:**`
   lines run at every session start, and searching one very long line could take tens of seconds
   (34 s measured, for a pattern the checker allowed). A file with a line over 2,000 characters is
