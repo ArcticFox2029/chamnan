@@ -960,6 +960,8 @@ def append_jsonl(root, rel, row, keep):
 SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl",
                     "subagent_start.jsonl", "block_shape.jsonl", "gate_runs.jsonl",
                     "failures.jsonl",
+                    # One row per hook crash that `never_fail` kept from taking a session down.
+                    "hook_errors.jsonl",
                     # One row per subagent run, bounded by record like the rest: what it cost and
                     # whether it ran on the model its own file declares. A cost history is worth
                     # having only if it is long enough to compare against, which an age sweep would
@@ -3518,7 +3520,42 @@ def never_fail(main):
     try:
         return main()
     except Exception:      # noqa: BLE001 — the whole point: a hook must not take a session down
+        _record_swallowed()
         return 0
+
+
+HOOK_ERRORS = "logs/hook_errors.jsonl"
+
+
+def _record_swallowed():
+    """Leave one line saying a hook crashed: which hook, what was raised, and at which line.
+
+    🐛 [2026-09-25] (R145, 2026-09-25) `never_fail` kept a crashed hook from taking the session
+    down, and in doing so hid it for good: stderr of a hook that exits 0 goes only to the host's
+    debug log, and nothing in the workspace recorded it, so a hook could fail on every call for
+    weeks and nobody would know. JetBrains' answer to the same problem is to attribute the error
+    to the plugin that raised it and say so. Here the crash is recorded, and the session line and
+    `chamnan-doctor` report it. The exception's message is not kept: it can carry a path or a
+    value from the person's repository, and the type and line are enough to find the bug.
+    Recording must never become a second failure, so every error in here is dropped.
+    """
+    try:
+        import traceback
+        exc = sys.exc_info()[1]
+        frames = traceback.extract_tb(exc.__traceback__) if exc is not None else []
+        pkg = str(Path(__file__).resolve().parent.parent)
+        ours = [f for f in frames if str(Path(f.filename).resolve()).startswith(pkg)] or frames
+        root = hook_root(None)
+        if root is None or read_only() or not workspace(root).is_dir():
+            return
+        append_jsonl(root, HOOK_ERRORS, {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "hook": Path(sys.argv[0]).name,
+            "error": type(exc).__name__ if exc is not None else "",
+            "where": ("%s:%d" % (Path(ours[-1].filename).name, ours[-1].lineno)) if ours else "",
+        }, 200)
+    except Exception:      # noqa: BLE001 — recording a crash must not be a second one
+        pass
 
 
 def version_line():

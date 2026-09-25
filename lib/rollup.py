@@ -5,6 +5,7 @@ the folding at session start, and chamnan-map, which has to tell the user what t
 separate estimate in the reporting path was wrong by 2.4x the first time it was tried — close enough
 to look plausible, far enough to make the decision on bad numbers. One implementation, called twice.
 """
+import hashlib
 import re
 import json
 import mdblock
@@ -215,6 +216,19 @@ def _commits_between(root, old_head, head):
         return None
 
 
+_PRODUCER = []
+
+
+def _producer():
+    """A short digest of this module's own source: the identity of the code that counted churn."""
+    if not _PRODUCER:
+        try:
+            _PRODUCER.append(hashlib.blake2b(Path(__file__).read_bytes(), digest_size=6).hexdigest())
+        except OSError:
+            _PRODUCER.append("")
+    return _PRODUCER[0]
+
+
 def _read_disk_cache(path, head, root=None):
     """The stored counts when they are close enough to this commit to still rank the same, else None.
 
@@ -229,6 +243,13 @@ def _read_disk_cache(path, head, root=None):
         return None
     counts = data.get("counts")
     if not isinstance(counts, dict):
+        return None
+    # 🐛 [2026-09-25] (R159, 2026-09-25) Keyed on HEAD alone, counts written by an OLDER chamnan were
+    # served after an upgrade that changed how churn is counted (rename detection, --no-merges
+    # and quoted paths all changed it), until enough commits had passed to force a rebuild. Mypy
+    # and ESLint document the same hole: a cache keyed on its inputs but not on the code that
+    # produced it. The producer is this file, so its own bytes are part of the key.
+    if data.get("producer") != _producer():
         return None
     stored = data.get("head")
     if stored == head:
@@ -246,7 +267,8 @@ def _remember(path, head, key, counts):
     if path and head:
         try:
             import workspace as ws_mod
-            ws_mod.atomic_write_text(path, json.dumps({"head": head, "counts": counts}))
+            ws_mod.atomic_write_text(path, json.dumps({"head": head, "producer": _producer(),
+                                                       "counts": counts}))
         except Exception:
             pass
     return _CHURN_CACHE.setdefault(key, counts)

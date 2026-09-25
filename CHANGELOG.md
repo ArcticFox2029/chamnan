@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **After an upgrade, the file ranking is recounted by the new code.** The session start ranks files
+  by how often they change, and keeps that count between sessions. The stored count was matched
+  to the commit alone, so after an upgrade that changed how changes are counted, the old count
+  was reused until enough new commits had passed. It is now also matched to the code that
+  produced it.
 - **A hook that crashes is no longer invisible.** chamnan's hooks are wrapped so that a crash
   never stops your session, and Claude Code sends a quiet hook's error output only to its debug
   log, so a hook could fail on every call without anyone knowing. A crash is now recorded (the hook,
