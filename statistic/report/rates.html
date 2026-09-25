@@ -85,9 +85,10 @@ M.append(panel("how much of it would have been read anyway",
     el("p", { class: "note" },
       T("1.00 means every character a local model read would have been read anyway — the most "
         + "generous reading of the plugin. 0.00 means none of it would, and the plugin saved "
-        + "nothing at all. The shipped 0.25 is the owner's own estimate, and it is a judgement.",
+        + "nothing at all. The shipped 0.25 is a starting value, not a measurement: set the one "
+        + "that matches how you work.",
         "1.00 = ทุกตัวอักษรจะถูกอ่านอยู่ดี (เข้าข้างปลั๊กอินที่สุด) · 0.00 = ไม่มีอะไรถูกอ่านเลย ปลั๊กอินไม่ได้ช่วยอะไร · "
-        + "ค่าที่ให้มา 0.25 เป็นการประเมินของเจ้าของเอง")),
+        + "0.25 เป็นค่าเริ่มต้น ไม่ใช่ค่าที่วัดได้ · ตั้งให้ตรงกับการใช้งานของคุณ")),
   ], { wide: true }));
 
 M.append(panel("what that does to the headline", "ผลต่อตัวเลขหน้าแรก",

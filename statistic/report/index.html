@@ -63,9 +63,10 @@ M.append(hero(
     T(`In ${row[key] || "—"}, a local model read ${n(row.local_chars || 0)} characters instead `
       + `of the session — about ${n(readTok)} tokens.`,
       `ใน ${row[key] || "—"} โมเดลในเครื่องอ่านแทน session ไป ${n(row.local_chars || 0)} ตัวอักษร ≈ ${n(readTok)} โทเค็น`),
-    T(`Only ${(CF * 100).toFixed(0)}% of that would really have been read without the plugin, so `
-      + `only that part counts as saved.`,
-      `ถ้าไม่มีปลั๊กอิน จะมีแค่ ${(CF * 100).toFixed(0)}% ของเท่านั้นที่ถูกอ่านจริง จึงนับเฉพาะส่วนนั้น`),
+    /* 🎯 [2026-09-25] (owner) A sentence here said that only 25% of what the local model read
+       would really have been read without the plugin. How much a person would have read differs
+       from one person to the next, so the page does not state a share as fact. The value is still
+       applied, and page 4 is where it is set. */
     T(`Weighted the way a cache write is weighted, that is ${n(avoidedWeight)} tokens saved.`,
       `ถ่วงน้ำหนักแบบ cache write แล้ว เท่ากับประหยัดได้ ${n(avoidedWeight)} โทเค็น`),
     /* 🐛 [2026-09-24, owner] the bars are WEIGHTED

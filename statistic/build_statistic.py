@@ -666,11 +666,15 @@ def hero():
         # the one shipped here: **about a quarter of it would really have happened.** It is a
         # judgement, it is stated as one, and page 4 lets a reader move it.
         "counterfactual": COUNTERFACTUAL,
-        "counterfactual_note": ("only about a quarter of what a local model read would really "
-                                "have been read without the plugin — the rest would never have "
-                                "been asked for. A judgement, not a measurement, yours to change."),
-        "counterfactual_note_th": ("ประมาณหนึ่งในสี่ของสิ่งที่โมเดลในเครื่องอ่าน จะถูกอ่านจริงถ้าไม่มีปลั๊กอิน "
-                                   "ที่เหลือคงไม่มีใครไปเรียกดู · เป็นการประเมิน ไม่ใช่การวัด และปรับได้เอง"),
+        # 🎯 [2026-09-25] (owner) How much of it a person would have read differs from one person
+        # to the next, so the note no longer states a share as fact; it says what the number is
+        # for and that the shipped value is a starting point, not a finding.
+        "counterfactual_note": ("the share of what a local model read that the session would "
+                                "otherwise have read itself. It depends on how you work, so it is "
+                                "not measured here — the shipped 0.25 is a starting value; set "
+                                "yours on page 4."),
+        "counterfactual_note_th": ("สัดส่วนของสิ่งที่โมเดลในเครื่องอ่าน ที่ session จะต้องอ่านเองถ้าไม่มีมัน "
+                                   "ขึ้นกับการใช้งานของแต่ละคน จึงไม่ได้วัดที่นี่ · 0.25 เป็นค่าเริ่มต้น ปรับเป็นของคุณได้ที่หน้า 4"),
         # 🎯 [owner, 2026-09-23] was
         # accurate and unreadable — it describes the WEIGHT of a period, which is a notion this
         # page invented. A reader knows what "saved" means without being taught anything first.

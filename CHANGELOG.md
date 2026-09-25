@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard no longer states, as fact, things that differ from person to person.** Its
+  headline said that only 25% of what a local model read would really have been read without
+  the plugin, and its bar note said the two totals differed by less than a fifth of a percent.
+  How much a person would have read depends on how they work, and the note's figure was also
+  wrong: the bars are zoomed below a 20% gap. The headline sentence is gone, the 25% is described
+  as a starting value you set on page 4, and the note says only that the bars do not start at
+  zero.
 - **A `sed` script with two expressions no longer sets off the "outside this checkout" warning.**
   A `;` inside the quoted script was read as the end of the command, so part of the script looked
   like a path, and an edit inside the repository was reported in red as a write outside it. Quoted

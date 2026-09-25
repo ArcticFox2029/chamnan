@@ -417,11 +417,12 @@ function hero(big, sentence, bars2) {
           el("div", { class: "herofill", style: `width:${Math.max(at(b.value), 0.6)}%;`
             + `background:${b.colour}` })))),
       tight ? el("p", { class: "src", style: "margin:11px 0 0" },
-        T(`the bars start at ${n(Math.round(floor))}, not at zero — the two totals differ by less `
-          + `than a fifth of a percent and would otherwise draw as one length. The figures above `
-          + `them are the real ones.`,
-          `แท่งเริ่มที่ ${n(Math.round(floor))} ไม่ได้เริ่มที่ศูนย์ · สองค่าต่างกันไม่ถึงเศษหนึ่งส่วนห้าของเปอร์เซ็นต์ `
-          + `ถ้าเริ่มที่ศูนย์จะยาวเท่ากันพอดี · ตัวเลขด้านบนคือค่าจริง`)) : null));
+        /* 🎯 [2026-09-25] (owner) The note also said how far apart the two totals were, and that
+           is different for every person's use -- it was also wrong, since the zoom starts below a
+           20% gap, not a fifth of a percent. It now says only what the drawing does. */
+        T(`the bars start at ${n(Math.round(floor))}, not at zero. The figures above them are the `
+          + `real ones.`,
+          `แท่งเริ่มที่ ${n(Math.round(floor))} ไม่ได้เริ่มที่ศูนย์ · ตัวเลขด้านบนคือค่าจริง`)) : null));
 }
 
 
