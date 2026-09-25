@@ -18,6 +18,13 @@ from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
+# The environment exactly as the person's process had it, before this module changes anything below
+# for its OWN git reads (the lock waiver, lazy fetch, and the eleven repository-settable programs it
+# refuses). Those are safeguards for chamnan reading a repository. They are not the person's
+# settings, and a program chamnan starts ON THEIR BEHALF must not inherit them -- see
+# `env_for_the_persons_command`.
+_PERSONS_ENV = dict(os.environ)
+
 
 # 🐛 [2026-09-25] (R98, 2026-09-25) `chamnan-where check | head -1` ended with `BrokenPipeError` on stderr
 # and exit 120: the reader closed the pipe, the next write raised, and the flush at shutdown raised
@@ -63,6 +70,27 @@ def _flush_or_let_go():
 # the optional lock, 0 without it, and status took the same time either way. Every chamnan command
 # and hook imports this module, and every git it starts inherits this. Only the OPTIONAL lock is
 # waived; a command that writes still takes the lock it needs. A value the person set is kept.
+def env_for_the_persons_command(env=None):
+    """`env` (default: this process's) with every variable this module changed put back as it was.
+
+    🐛 [2026-09-25] (self-measured) `chamnan-schedule` started the person's own command -- by default a
+    resumed Claude session -- with `dict(os.environ)`, and that carried every safeguard this module
+    sets for its own reads: `credential.helper` and `core.sshCommand` refused, `core.hooksPath` at
+    /dev/null, `gpg.program` set to `true`, 24 GIT_* variables in all. A resumed session that ran
+    `git push` could not authenticate, the repository's hooks did not run, and signing failed.
+    Variables the caller adds afterwards (the account to resume on) are the caller's to add.
+    """
+    out = dict(os.environ if env is None else env)
+    for key in set(out) | set(_PERSONS_ENV):
+        was = _PERSONS_ENV.get(key)
+        if out.get(key) == os.environ.get(key) and out.get(key) != was:
+            if was is None:
+                out.pop(key, None)
+            else:
+                out[key] = was
+    return out
+
+
 OPTIONAL_LOCKS_WAIVED = "GIT_OPTIONAL_LOCKS" not in os.environ
 if OPTIONAL_LOCKS_WAIVED:
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
