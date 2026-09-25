@@ -11227,13 +11227,28 @@ _rmtree(_rn, ignore_errors=True)
 _readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
 
-def _slug(h):
-    h = re.sub(r"`", "", h)
-    h = re.sub(r"[^\w\s-]", "", h, flags=re.U)
-    return re.sub(r"\s+", "-", h.strip()).lower()
+# 🐛 [2026-09-25] (R96, 2026-09-25) Both slug functions in this suite collapsed a run of spaces into
+# one hyphen. GitHub does not: it drops the punctuation and turns EACH space into a hyphen, so
+# "Understand — what exists" is `#understand--what-exists`, and twelve README headings carry an em
+# dash. A link written the collapsed way passed here and went nowhere on GitHub. A repeated
+# heading also gets `-1`, `-2` there, which this never produced. One rule now, the one GitHub uses
+# (github-slugger): keep letters, marks, digits, `_`, `-` and spaces, lowercase, space -> hyphen.
+def _github_slugs(headings):
+    import unicodedata as _ud
+    seen, out = {}, set()
+    for h in headings:
+        s = "".join(c for c in h.strip().lower().replace("`", "")
+                    if c in "-_ " or _ud.category(c)[0] in "LMN").replace(" ", "-")
+        n = seen.get(s, 0)
+        seen[s] = n + 1
+        out.add(s if n == 0 else "%s-%d" % (s, n))
+    return out
 
 
-_heads = {_slug(m.group(2)) for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", _readme, re.M)}
+# A `#` line inside a code fence is a shell comment, not a heading, and counting it would shift
+# the `-1` numbering of a real repeated heading.
+_readme_prose = re.sub(r"^```.*?^```", "", _readme, flags=re.M | re.S)
+_heads = _github_slugs(m.group(2) for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", _readme_prose, re.M))
 _broken = sorted({a for a in re.findall(r"\]\(#([^)]+)\)", _readme) if a not in _heads})
 check("EVERY IN-PAGE LINK IN THE README RESOLVES TO A HEADING: " + str(_broken), not _broken)
 _relpaths = [t for t in re.findall(r"\]\((?!https?:|#)([^)\s]+)\)", _readme)]
@@ -20618,12 +20633,11 @@ if _missing_ad:
 
 # 🐛 A link into a page anchor that does not exist sends the reader nowhere and reads as a broken
 # project. Checked against README.md's real headings, using GitHub's own slug rule.
-_heads = set()
-for _line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines():
-    _m = re.match(r"^#{2,6}\s+(.*)$", _line)
-    if _m:
-        _t = re.sub(r"[^\w\s-]", "", _m.group(1).strip().lower().replace("`", ""))
-        _heads.add(re.sub(r"\s+", "-", _t).strip("-"))
+# The same GitHub rule as the README check above (`_github_slugs`), not a second copy of it.
+_heads = _github_slugs(_m.group(1) for _m in re.finditer(
+    r"^#{1,6}\s+(.*?)\s*$",
+    re.sub(r"^```.*?^```", "", (ROOT / "README.md").read_text(encoding="utf-8"), flags=re.M | re.S),
+    re.M))
 _used = re.findall(r"chamnan#([a-z0-9-]+)", _llms_text)
 check("...and every anchor it points at is a real heading in the README",
       bool(_used) and all(a in _heads for a in _used))
