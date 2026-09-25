@@ -29,6 +29,7 @@ import subprocess
 import importlib.util as _ilu
 import sys
 import tempfile
+import time
 import hashlib
 from pathlib import Path
 
@@ -39,10 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # config -- stayed green. pip and Git LFS isolate their suites the same way. One empty file for the
 # whole run, not /dev/null: Git 2.53 on Windows rejects NUL as a config path (R188 #10). A check
 # that needs a particular setting still passes it itself.
-_SUITE_GITCONFIG = Path(tempfile.mkdtemp(prefix="chamnan-suite-gitconfig-")) / "config"
-_SUITE_GITCONFIG.write_text("", encoding="utf-8")
-os.environ["GIT_CONFIG_GLOBAL"] = str(_SUITE_GITCONFIG)
-os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+# The file itself is made inside the run's own temp root, below, so it goes with it at exit.
 # 🐛 [2026-09-25] (self-measured) The same isolation for colour. Python 3.14's argparse colours
 # its usage and help when FORCE_COLOR is set, even into a pipe, and a session that exported
 # FORCE_COLOR=3 failed three checks (escape bytes from two commands' usage text, and a --help parse) that CI, with no
@@ -92,9 +90,28 @@ def legal_name(text):
 # and on a `SystemExit` too, which is exactly when a fixture is most likely to be left behind.
 #
 # Set BEFORE anything else runs, because a module imported later may make its own at import time.
+# 🐛 [2026-09-26] (R4, 2026-09-26) Three gaps let fixtures escape anyway, measured at 1,327
+# leftover `chamnan-*` directories (128 MB): the git-config file above was made BEFORE this
+# redirect, 170 of them; a run that is killed never reaches `atexit`, 34 whole roots; and a child
+# process does not inherit `tempfile.tempdir`, only the environment. So the config is made inside
+# the root, children are pointed at it through TMPDIR/TEMP/TMP, and a root a killed run left more
+# than a day ago is removed at the start of the next -- pytest keeps its last three the same way.
+_SYS_TMP = tempfile.gettempdir()
+for _old in Path(_SYS_TMP).glob("chamnan-suite-*"):
+    try:
+        if _old.is_dir() and time.time() - _old.stat().st_mtime > 86400:
+            shutil.rmtree(_old, ignore_errors=True)
+    except OSError:
+        pass
 _TMP_ROOT = tempfile.mkdtemp(prefix="chamnan-suite-")
 tempfile.tempdir = _TMP_ROOT
 atexit.register(lambda: shutil.rmtree(_TMP_ROOT, ignore_errors=True))
+for _tv in ("TMPDIR", "TEMP", "TMP"):
+    os.environ[_tv] = _TMP_ROOT
+_SUITE_GITCONFIG = Path(_TMP_ROOT) / "gitconfig"
+_SUITE_GITCONFIG.write_text("", encoding="utf-8")
+os.environ["GIT_CONFIG_GLOBAL"] = str(_SUITE_GITCONFIG)
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
 
 
 def _rmtree(path, ignore_errors=False):

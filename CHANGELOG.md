@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Running the test suite no longer leaves folders in your temp directory.** A few of its
+  temporary files were made outside the folder the suite cleans up, and programs it started used
+  the system temp directory directly. Everything now goes in one folder that is removed when the
+  run ends. A folder left by a run that was killed is removed by the next run after a day.
 - **Skills saved with a byte-order mark are read correctly.** Some Windows editors and PowerShell
   5.1 add an invisible mark at the start of a file. The skill-overlap check read that mark as
   part of the text, so the skill lost its description and did not match an identical copy
