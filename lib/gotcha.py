@@ -157,3 +157,139 @@ def about_to_repeat(wsdir, tool, subject):
             if best is None or count > best[0]:
                 best = (count, err, when)
     return best
+
+
+# ---------------------------------------------------------------- the lessons already written down
+#
+# 🐛 [2026-09-25] (owner) The dashboard's lesson panels read an index that only a script in the
+# developer's own workspace wrote, run by hand. It ran once, so the panels stopped at that day's
+# count and showed none of the marks written in the two days after; on any other machine the
+# index never existed and the panels stayed empty. It is built here now, by the dashboard build
+# itself, from the repository as it stands.
+MARK = "\U0001F41B"
+_DATED = re.compile(re.escape(MARK) + r"\s*\[([0-9]{4}-[0-9]{2}-[0-9]{2})")
+_LESSON_SUFFIX = {".py", ".md", ".js", ".ts", ".html", ".css", ".sh", ".command"}
+# A generated file QUOTES the comments it indexes, and the workspace's logs and state hold copies
+# written by tools; counting either counts a lesson twice. The lesson lives where it was written.
+_GENERATED_NAMES = {"MAP.md"}
+_WORKSPACE_COPIES = ("logs", "state", "statistic")
+# A test suite in this very package is 3.1 MB and carries 935 lessons, so the cap is for data files
+# that happen to share a suffix, not for large source.
+_MAX_FILE = 16_000_000
+_TEXT = 160
+_RECENT = 60
+
+
+def _git_files(root, depth=0):
+    """Files git would show for `root`: tracked plus untracked-not-ignored, as paths under root.
+
+    A repository kept inside another one is listed by the outer one as a bare directory, or not at
+    all when the outer one ignores it; its files are its own repository's to list, so they are
+    asked of it. None when `root` is not a repository, so the caller can say so rather than guess.
+    """
+    import pathlib
+    import subprocess
+    root = pathlib.Path(root)
+
+    def ls(*args):
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", *args],
+                             capture_output=True, timeout=60)
+        if out.returncode != 0:
+            return None
+        return [p for p in out.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+
+    listed = ls("-co", "--exclude-standard")
+    if listed is None:
+        return None
+    ignored_dirs = ls("-oi", "--exclude-standard", "--directory") or []
+    out = []
+    for rel in listed + [d for d in ignored_dirs if d.endswith("/")]:
+        p = root / rel
+        if rel.endswith("/"):
+            if depth < 3 and (p / ".git").exists():
+                out.extend(_git_files(p, depth + 1) or [])
+            continue
+        if rel in listed:
+            out.append(p)
+    return out
+
+
+def _is_lesson_source(path, root):
+    parts = path.relative_to(root).parts
+    if path.name in _GENERATED_NAMES:
+        return False
+    for i, part in enumerate(parts[:-1]):
+        if part == ".chamnan" and i + 1 < len(parts) - 1 and parts[i + 1] in _WORKSPACE_COPIES:
+            return False
+    if path.suffix in _LESSON_SUFFIX:
+        return True
+    if path.suffix:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+def _marks_in(text):
+    """Every mark in one file's text, as (line number, date or None, the claim)."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines, 1):
+        if MARK not in line:
+            continue
+        m = _DATED.search(line)
+        tail = line.split(MARK, 1)[1].strip()
+        if m:
+            tail = tail.split("]", 1)[1].strip() if "]" in tail else tail
+        tail = tail.lstrip("#/*- ").strip()
+        # A mark at the end of a line is a pointer; the claim is on the next line.
+        if len(tail) < 12 and i < len(lines):
+            tail = (tail + " " + lines[i].strip().lstrip("#/*- ").strip()).strip()
+        yield i, (m.group(1) if m else None), tail[:_TEXT]
+
+
+def index(root):
+    """Every recorded lesson in the repository: counts, per file, per month, and the newest ones.
+
+    A file whose bytes are identical to one already read is skipped, so a published copy of a
+    source tree does not count its lessons a second time.
+    """
+    import collections
+    import hashlib
+    import pathlib
+    root = pathlib.Path(root).resolve()
+    paths = _git_files(root)
+    if paths is None:
+        return {"marks": 0, "dated": 0, "files": 0, "by_file": [], "by_month": [], "recent": [],
+                "note": "not a git repository -- lessons are indexed from the files git lists"}
+    per_file, per_month, rows, seen = collections.Counter(), collections.Counter(), [], set()
+    for p in sorted(paths):
+        try:
+            if not p.is_file() or p.stat().st_size > _MAX_FILE or not _is_lesson_source(p, root):
+                continue
+            raw = p.read_bytes()
+        except (OSError, ValueError):
+            continue
+        if MARK.encode("utf-8") not in raw:
+            continue
+        digest = hashlib.sha1(raw).digest()
+        if digest in seen:
+            continue
+        seen.add(digest)
+        rel = p.relative_to(root).as_posix()
+        for line, when, text in _marks_in(raw.decode("utf-8", "replace")):
+            per_file[rel] += 1
+            if when:
+                per_month[when[:7]] += 1
+            rows.append({"file": rel, "line": line, "at": when, "text": text})
+    rows.sort(key=lambda r: (r["at"] or "", r["file"], r["line"]), reverse=True)
+    dated = sum(1 for r in rows if r["at"])
+    return {
+        "marks": len(rows), "dated": dated, "files": len(per_file),
+        "note": (f"{dated} of {len(rows)} marks carry a date; the rest are counted in the total "
+                 f"but not in the timeline"),
+        "by_file": per_file.most_common(40),
+        "by_month": sorted(per_month.items()),
+        "recent": rows[:_RECENT],
+    }

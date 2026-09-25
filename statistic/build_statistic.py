@@ -863,15 +863,17 @@ def files_total():
 def lessons():
     """The recorded-lesson index, so the page can SHOW lessons rather than count them.
 
-    🎯 [owner, 2026-09-23] "ต้องบอกว่า ตัวไหน โดน บ่อย โดนซ้ำ". Built by `tools/gotcha_index.py`
-    rather than here, because scanning 533 files is not the dashboard's job — the dashboard reads.
-    Absent index is said, never guessed.
+    🎯 [owner, 2026-09-23] "ต้องบอกว่า ตัวไหน โดน บ่อย โดนซ้ำ".
+    🐛 [2026-09-25] (owner) This read an index that only a script in the developer's own workspace
+    wrote, by hand; it ran once, so the panels froze at that day's count, and on every other machine
+    they were empty. Built here now, from the repository as it stands, on every build.
     """
     try:
-        return json.loads((WS / "state" / "gotcha_index.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        import gotcha
+        return gotcha.index(ROOT)
+    except Exception as exc:                # noqa: BLE001 -- a panel is never worth a failed build
         return {"marks": 0, "by_file": [], "by_month": [], "recent": [],
-                "note": "run tools/gotcha_index.py — nothing has indexed the marks yet"}
+                "note": "the lesson index could not be built: %s" % type(exc).__name__}
 
 
 def busiest_files():

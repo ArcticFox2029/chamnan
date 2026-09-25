@@ -106,9 +106,9 @@ const ms = S.mistakes || {};
 const ls = S.lessons || {};
 M.append(panel("the model's own mistakes, and what they became",
   "ความผิดพลาดของโมเดลเอง และบทเรียนที่เขียนไว้",
-  "logs/failures.jsonl via lib/gotcha.py · state/gotcha_index.json",
+  "logs/failures.jsonl and the repository's own 🐛 comments, via lib/gotcha.py",
   [
-    /* ð [2026-09-23, owner] "à¹à¸¡à¹à¸à¸§à¸£à¸¡à¸µ repeat à¸à¸° à¸¡à¸±à¸à¸à¸³à¹à¸«à¹à¹à¸à¸¥à¸à¹". "0 of them a repeat" beside
+    /* 🐛 [2026-09-23] The repeat tile appears only when a repeat is possible. "0 of them a repeat" beside
        "1 failure recorded" is arithmetic nobody needed: with one failure a repeat is impossible,
        so the tile reports the shape of the data rather than anything about the work. It appears
        only once a repeat is a thing that could have happened, and could be counted. */
@@ -129,7 +129,7 @@ M.append(panel("the model's own mistakes, and what they became",
    keeps being made, which is the one thing a count of 3,114 could never say. */
 M.append(panel("which files keep earning a lesson",
   "ไฟล์ไหนโดนซ้ำบ่อยที่สุด",
-  `state/gotcha_index.json · the 10 heaviest of ${n(ls.files)} file(s) carrying a lesson`,
+  `lib/gotcha.py · the 10 heaviest of ${n(ls.files)} file(s) carrying a lesson`,
   [
     hbars((ls.by_file || []).slice(0, 10).map((r, i) => ({
       label: r[0], value: r[1], text: `${n(r[1])} ${T("lessons", "บทเรียน")}`,
@@ -140,7 +140,7 @@ M.append(panel("which files keep earning a lesson",
 /* The lessons themselves, newest first — the half a number can never carry. */
 M.append(panel("the most recent lessons, in their own words",
   "บทเรียนล่าสุด ตามที่มันเขียนไว้จริง",
-  "state/gotcha_index.json — the newest 12 of " + n(ls.marks || 0),
+  "lib/gotcha.py — the newest 12 of " + n(ls.marks || 0),
   table([{ t: "when" }, { t: "where" }, { t: "what went wrong" }],
     (ls.recent || []).slice(0, 12).map((r) => [
       r.at || "—",

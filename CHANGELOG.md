@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard's lesson panels now fill in on every build.** They read an index that nothing
+  in the plugin ever wrote, so on a fresh install they stayed empty. The dashboard now builds the
+  index from the repository's `🐛` comments each time it is rebuilt at the end of a session, adding
+  about a second to that background build. It counts scripts with no file extension and large
+  files, reads nested repositories, and skips generated indexes, workspace logs, git-ignored
+  files and identical copies.
 - **`chamnan-context --write` keeps an `AGENTS.md` made on Windows as it was.** A file with `\r\n`
   line endings came back with `\n` on every line, and a byte-order mark was dropped, so updating
   chamnan's region showed as a change to the whole file. The text outside the region is now
