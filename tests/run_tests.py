@@ -49064,7 +49064,7 @@ _rmtree(_gt_ws.parent, ignore_errors=True)
 
 
 # ---------------------------------- the command that SUCCEEDS while doing less than it should
-# 🎯 [owner 2026-09-23] "ขอโทษแล้ว มันไม่มีอะไรดีขึ้น ฉันเสียเวลา เสียเงิน". Three commands in one
+# 🎯 [owner 2026-09-23] Three commands in one
 # hour exited 0 and produced nothing: a research round dispatched around the script that files the
 # report, and `read_agent_report.py` run twice without the flag that writes the extract to disk.
 # `gotcha.py` reads what FAILED and could not see any of them — by construction, because none of
@@ -49444,7 +49444,7 @@ else:
 
 # ---------------------------------- 4,144 lessons nobody could reach
 # ENFORCES: memory/rules/a-bad-result-earns-a-gotcha.md
-# 🎯 [owner 2026-09-23] "ให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ". Measured that day in this repository: 4,144
+# 🎯 [owner 2026-09-23] Measured that day in this repository: 4,144
 # gotchas recorded in 478 files, and NOTHING read one of them. They are written above the line they
 # are about, by sessions that had just paid for the lesson, and the only way a later session saw
 # one was by happening to read that part of the file — which the rest of this plugin exists to
@@ -49709,7 +49709,7 @@ check("...while the command actually being RUN still is, even beside a commit",
 
 
 # ---------------------------------- a mistake nobody had to type in, so a new workspace has some
-# 🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ" — then the correction that
+# 🎯 [owner 2026-09-23] then the correction that
 # decided the design: the system has to work for somebody else's repository and somebody else's
 # kind of work, not for the pile this one has accumulated.
 #

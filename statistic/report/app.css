@@ -89,7 +89,7 @@ tbody tr:hover td { background: var(--panel2); }
 .htrack { height: 9px; background: var(--panel2); border: 1px solid var(--line); border-radius: 5px;
   overflow: hidden; }
 .hfill { display: block; height: 100%; border-radius: 5px; }
-/* 🐛 [2026-09-23, owner] "3 shapes ปรับให้ มันลงท้ายเหมือนกัน". The column was left-aligned, so a
+/* 🐛 [2026-09-23, owner] The column was left-aligned, so a
    row whose unit is longer than the others ran past them and the right edge came out ragged. The
    units legitimately differ — one family is counted in credential WORDS and the rest in regex
    shapes — so they are not flattened into one word; the column is right-aligned instead and every
@@ -106,7 +106,7 @@ tbody tr:hover td { background: var(--panel2); }
 .hlabel { display: flex; justify-content: space-between; color: var(--faint); font-size: 11px;
   margin-top: 6px; font-family: var(--mono); }
 
-/* 🎯 [owner, 2026-09-23] "ตัวเลขชิดซ้าย มันควรตรงกลางของห้องมัน" — a tile is a cell in a grid whose
+/* 🎯 [owner, 2026-09-23] a tile is a cell in a grid whose
    columns are equal, so a figure pinned to the left edge reads as ragged rather than as a set.
    Centred, the row balances whatever the numbers' widths turn out to be. */
 .stat { padding: 2px 0 6px; text-align: center; }
@@ -174,14 +174,14 @@ code { font-family: var(--mono); font-size: 11.5px; color: var(--dim); word-brea
 .herobig { font-size: 56px; line-height: 1.02; margin: 0; letter-spacing: -.035em;
   font-family: var(--mono); font-weight: 600; }
 .herolab { color: var(--dim); font-size: 13px; margin: 8px 0 0; max-width: 30ch; }
-/* 🎯 [owner, 2026-09-23] "ตัวหนังสือ หล่น" — a last line carrying one orphaned Thai word, which
+/* 🎯 [owner, 2026-09-23] a last line carrying one orphaned Thai word, which
    reads as the sentence having broken rather than wrapped. `text-wrap: pretty` is what stops it:
    the browser balances the final lines instead of filling greedily. It applies to every long
    line on the page, not only the hero, because Thai writes without spaces between words and a
    greedy fill orphans a word here exactly as easily as it does there.
 
    🎯 And the supporting text is a LIST now, one short fact per row — the owner's own reading of
-   why the single sentence was unreadable: "ควรเพิ่ม การแบ่งบรรทัด แบ่งคำ ให้อ่านง่าย". */
+   why the single sentence was unreadable. */
 .herosent { margin: 0 0 18px; padding: 0; list-style: none; font-size: 13.5px;
   color: var(--ink); max-width: 66ch; display: grid; gap: 7px; }
 .herosent li { position: relative; padding-left: 15px; }

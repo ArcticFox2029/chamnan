@@ -240,7 +240,7 @@ DEFAULT_RUNNER = ("claude", "-p")
 # A scheduler that hardcoded one of them would fire the wrong binary at the wrong agent — and
 # silently, because both accept a trailing string without complaining.
 #
-# 🎯 [owner 2026-09-12] "ครอบคลุมทุก llm ที่เราวางไว้": chamnan writes context for twenty-two hosts,
+# 🎯 [owner 2026-09-12] chamnan writes context for twenty-two hosts,
 # but only some of those have a CLI that can be handed a prompt from a script at all. The honest
 # split is this table for the ones that do, and `--runner` for everything else — an agent framework,
 # a router, an HTTP wrapper somebody writes themselves. Adding a vendor here is four values, and the

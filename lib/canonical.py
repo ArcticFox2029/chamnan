@@ -1,6 +1,6 @@
 """Was this command run in the shape its own script says is right? — asked BEFORE it runs.
 
-🎯 [owner 2026-09-23] "ขอโทษแล้ว มันไม่มีอะไรดีขึ้น ฉันเสียเวลา เสียเงิน". Three failures in one
+🎯 [owner 2026-09-23] Three failures in one
 hour, none of which any existing guard could see:
 
   * a report was dispatched around `research-on-account.sh`, so `round_report.py` never ran and no

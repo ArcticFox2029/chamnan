@@ -67,10 +67,7 @@ M.append(panel("which part of the repository",
 
 /* ---- the local model.
 
-   🎯 [owner, 2026-09-23] "ตรง local model แน่ใจนะ ว่ามันตรวจจับได้ และ วัดค่าได้แม่นจริงๆ ฉันว่า
-   น่าจะยากอยู่นะ เพราะว่า ไม่รู้ตัวแปรว่า เค้าจะเรียก model อะไร ต่ออะไรยังไง จะ call ยังไง มันไม่เหมือนเรา
-   ที่ใช้จริงแต่วางระบบไว้" — and the doubt is correct. 🔴 This panel is NOT a plugin feature. It
-   reads `state/local_assist/`, which THIS repository's own tooling writes when it hands a long
+   🎯 [owner, 2026-09-23] The doubt was whether a local model's work can be measured at all, and it is correct. 🔴 This panel is NOT a plugin feature. It reads `state/local_assist/`, which THIS repository's own tooling writes when it hands a long
    document to a local model before a session reads it. chamnan ships no such caller: it cannot
    know which model a reader runs, how it is invoked, or whether one exists at all, so it cannot
    measure this for anybody but us.
@@ -106,9 +103,7 @@ M.append(panel("the local model — this repository's own tooling",
 
 /* ---- what is caught before anything leaves this machine.
 
-   🎯 [owner, 2026-09-23] "เพิ่ม การตรวจจับ security … กองได้มีประเภทไหนบ้าง เช่น รหัส, api key,
-   credit card, บัตรประชาชน และหมวดอื่นๆ … แต่ เราทำ ให้มองง่าย", and — the half that matters —
-   "ข้อสุดท้าย คือกรองไม่ได้เพราะไม่มี pattern … ต้องใส่เป็น remark". A list of what a
+   🎯 [owner, 2026-09-23] What cannot be caught is the half that matters. A list of what a
    filter catches, with no list of what it cannot, reads as a promise to catch everything. */
 const sec = S.security || {};
 const mm = sec.measured || null;

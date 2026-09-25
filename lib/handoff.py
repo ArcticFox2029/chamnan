@@ -227,7 +227,7 @@ def newest_session(repo, config_dir=None):
 
 
 # ------------------------------------------------------------------ the handoff a fresh session gets
-# 🎯 [owner 2026-09-24] "เริ่มใหม่เองได้ โดยดึงค่า idle + ข้ามวัน มาวาง handoff แล้วเริ่มใหม่" — and
+# 🎯 [owner 2026-09-24] and
 # a fresh command that really starts a new session, not a /clear. Before this, `chamnan-open`
 # decided FRESH correctly and then launched a session that knew nothing of the one it replaced: the
 # workspace block carries STATE.md and git's view, and neither says what the person last ASKED.

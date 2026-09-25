@@ -18,7 +18,7 @@ const M = document.getElementById("main");
    never omitted: an empty row that explains itself is how the missing recorder gets built, and
    leaving it out would make the page claim a coverage it does not have. */
 const feats = S.features || [];
-/* 🐛 [2026-09-23, owner] "ยังไม่มี sort เรียง ข้อมูลเยอะ อยู่บน". It WAS sorted — by the rate
+/* 🐛 [2026-09-23, owner] It WAS sorted — by the rate
    `fired/chances`, while the label printed the count. So a row reading "300 / 6.4k" sat below one
    reading "191 / 246", and the chart looked unranked to anybody reading the numbers rather than
    the bars. A chart ranks by the quantity it shows: the bar length and the order are both the
@@ -69,7 +69,7 @@ M.append(panel("guards that have proved they can fail",
   ]));
 
 /* ---- the gate */
-/* 🎯 [owner, 2026-09-23] "ข้อมูลมันชวนงง … แก้นิยาม failing sec คืออะไร". Four rows all
+/* 🎯 [owner, 2026-09-23] Four rows all
    reading 2026-09-10 made a reader decode the table before using it, and two of its four column
    headings were abbreviations of words that were never written out anywhere. One row per day —
    the LAST run of that day, because the gate is run repeatedly while a failure is chased and
@@ -104,8 +104,7 @@ M.append(panel("what the gate finds", "ด่านตรวจเจออะ�
 
 /* ---- the model's own mistakes, and the lessons they turned into.
 
-   🎯 [owner, 2026-09-23] "อาจต้องปรับจากการ์ดสั้น สามแถว เป็นแบบยาว เพราะมันต้องบอกว่า ตัวไหน
-   โดนบ่อย โดนซ้ำ" — three tiles could say 3,114 and nothing else. A lesson is a sentence
+   🎯 [owner, 2026-09-23] three tiles could say 3,114 and nothing else. A lesson is a sentence
    attached to a line of code, and until now the only thing stored about all 3,114 of them was
    how many there were. */
 const ms = S.mistakes || {};

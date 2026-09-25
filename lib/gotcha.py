@@ -1,6 +1,6 @@
 """Has this exact thing failed here before? — read from what failed, not from what anybody wrote.
 
-🎯 [owner 2026-09-23] "จดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ". `chamnan_tool_failed.py`
+🎯 [owner 2026-09-23] `chamnan_tool_failed.py`
 does the remembering; this is the part that acts on it.
 
 **The key starts at its TIGHTEST setting, deliberately.** What counts as "the same failure" cannot

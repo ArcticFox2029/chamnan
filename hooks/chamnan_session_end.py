@@ -123,7 +123,7 @@ def main():
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
         return 0
-    # 🎯 [owner, 2026-09-23] "dashboard ต้องอัปเดตด้วย … มันไม่ควรมีการรัน py script อะไรเพื่อ gen report".
+    # 🎯 [owner, 2026-09-23] The dashboard stays current without anyone running a script to build it.
     # Session end is where the day's numbers are final, and the rebuild reads only the bytes
     # written since the last one: 35s when that was a full scan of 1 GB of transcripts, 1.6s now.
     #

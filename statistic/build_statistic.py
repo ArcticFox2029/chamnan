@@ -40,8 +40,7 @@ TEMPLATE_FILES = ("index.html", "features.html", "usage.html", "rates.html", "ap
 
 sys.path.insert(0, str(PLUGIN / "lib"))
 
-# 🐛 [2026-09-24] (owner) "chamnan คือต้นฉบับที่คนอื่นจะไปใช้ ดังนั้น dashboard ต้องคลีน เป็นของ repo
-# นั้นๆ". The repository used to be found by walking two directories up from the plugin and the
+# 🐛 [2026-09-24] (owner) The repository used to be found by walking two directories up from the plugin and the
 # data written beside this file: that assumed the plugin sits two directories inside it — true of the one machine it was
 # built on, false for every install from the marketplace — and every build wrote that repository's
 # activity INTO the plugin's own directory, which is shared by every repository that uses it and is
@@ -151,7 +150,7 @@ def transcripts():
     """The sessions a person worked in this repository, on the account in use.
 
     \U0001F3AF [owner, 2026-09-24] Three things the denominator had wrong, all found by measuring
-    it: *"คนปกติใช้บัญชีเดียวในการทำงาน"* — so only the config directory in use is read, never
+    it: a person works in one account, so only the config directory in use is read, never
     the other accounts a dispatcher may run on. Sessions started by a script (`claude -p`,
     entrypoint `sdk-cli`) are left out: on Lumin-App in September they were a third of this
     account's tokens, research dispatches and batch jobs the plugin never serves. And a session
@@ -183,8 +182,7 @@ def transcripts():
     return sorted(out)
 
 
-# 🎯 [owner, 2026-09-23] "dashboard ต้องอัปเดตด้วยนะ … มันไม่ควรมีการรัน py script อะไรเพื่อ gen
-# report" — and the thing standing in the way was 35 seconds, 31.6 of them spent re-reading every
+# 🎯 [owner, 2026-09-23] and the thing standing in the way was 35 seconds, 31.6 of them spent re-reading every
 # transcript on the machine on every build. A page that costs half a minute to refresh is a page
 # somebody refreshes by hand, which is what it was.
 #
@@ -288,7 +286,7 @@ def _merge_days(a, b):
 
 # ---------------------------------------------------------------- the panels
 
-# 🎯 [2026-09-25] (owner) "ควรมีเมนูปรับ timezone … คนใช้ repo อาจเป็นคนประเทศอื่น". A day or an hour
+# 🎯 [2026-09-25] (owner) A day or an hour
 # bucketed here is bucketed in THIS machine's zone and cannot be moved afterwards. So every count is
 # also kept in fifteen-minute slots of UTC -- fine enough for the zones that sit on a half or a
 # quarter hour -- and the page adds the slots up into days, months and hours in whatever zone the
@@ -444,7 +442,7 @@ def _usage_of(path, start=0, prev=None):
                              for s, c in spent_slot.items() if c}}, at)
 
 
-# 🎯 [owner, 2026-09-24] "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร". What each thing put into the
+# 🎯 [owner, 2026-09-24] What each thing put into the
 # context, counted ONCE, when it entered: a tool's result under that tool, what the person typed,
 # what the host and the hooks injected, and the model's own output (from its usage, exact). A long
 # session re-reads all of it on every later turn, and that multiplier is not applied here; the
@@ -520,7 +518,7 @@ def token_kinds():
     is local, or what any of it is charged at, and a page that implies one vendor's economics is
     wrong for every reader who uses another. What is true everywhere is the SPLIT: a cached read
     is the cheapest kind of token on every host that has caching at all, and the share is the
-    number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
+    number. (owner, 2026-09-23)
     """
     scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v6")
     tot = collections.Counter()
@@ -609,18 +607,16 @@ KEEP_MONTHS = 12
 KEEP_DAYS = 370
 
 
-# 🎯 [owner, 2026-09-23] "เน้น rate write read out ต่างๆ เป็นค่ากลาง" — a token is not a token:
+# 🎯 [owner, 2026-09-23] a token is not a token:
 # an output token costs several times an ordinary input one, and a cached read a fraction of it.
 #
-# 🔴 [owner, 2026-09-23, and this is the settled shape] "เรทเราจะไม่ปรับ แยกตามค่าย แต่ เอาค่า
-# เรทมาตรฐานกลางๆ ถ้าคนอยากปรับ ก็มาปรับเอง" — ONE standard set, not a per-provider table. An
+# 🔴 [owner, 2026-09-23, and this is the settled shape] ONE standard set, not a per-provider table. An
 # intermediate version averaged seven rate cards and was dropped: it made the page argue a
 # methodology at a reader who only wanted a number they could change. The shipped ratios are one
 # widely-used provider's (Claude's), used as the worked example, and page 4 is the answer for
 # anybody whose own are different.
 #
-# Ratios, never money — and that is the owner's own reason for one fixed set: "ถ้าเราฟิก
-# ตามโมเดลหรือค่าย เหนื่อยไล่แก้แน่ๆ". A table of vendors is a maintenance burden that
+# Ratios, never money — and that is the owner's own reason for one fixed set: chasing every vendor's rates would never end. A table of vendors is a maintenance burden that
 # goes stale the week after it ships; a ratio moves far more slowly than a price, and a vendor
 # halving its prices leaves all three numbers below untouched.
 RATES = {
@@ -637,7 +633,7 @@ RATES_NOTE_TH = ("ค่ามาตรฐานกลางๆ ชุดเด�
                  "คิดเทียบ input ธรรมดา 1 โทเค็น ไม่ใช่หน่วยเงิน · "
                  "cached read 0.1 เท่า, cache write 1.25 เท่า, output 5 เท่า · ปรับเองได้ที่หน้า 4")
 
-# 🎯 [owner, 2026-09-23] "ถ้าไม่มี มันก็อาจไม่ read เยอะก็เป็นได้" — the honest objection to
+# 🎯 [owner, 2026-09-23] the honest objection to
 # every counterfactual on this page. Their own estimate, shipped: about a quarter of it.
 COUNTERFACTUAL = 0.25
 
@@ -663,7 +659,7 @@ def hero():
         # weight, is the conservative floor: in a long session it is then re-read on every later
         # turn, and none of that is claimed here.
         "avoided_weight": RATES["t_write"],
-        # 🎯 [owner, 2026-09-23] "ถ้าไม่มี มันก็อาจไม่ read เยอะก็เป็นได้" — and that is the honest
+        # 🎯 [owner, 2026-09-23] and that is the honest
         # objection to every counterfactual on this page. Without the plugin a session would not
         # have read all of it: some of those reads would never have been attempted, and a reader
         # who has other tooling might have had part of it answered anyway. Their own estimate, and
@@ -675,7 +671,7 @@ def hero():
                                 "been asked for. A judgement, not a measurement, yours to change."),
         "counterfactual_note_th": ("ประมาณหนึ่งในสี่ของสิ่งที่โมเดลในเครื่องอ่าน จะถูกอ่านจริงถ้าไม่มีปลั๊กอิน "
                                    "ที่เหลือคงไม่มีใครไปเรียกดู · เป็นการประเมิน ไม่ใช่การวัด และปรับได้เอง"),
-        # 🎯 [owner, 2026-09-23] "มันควรใช้คำที่เข้าใจง่าย เช่น เมื่อมีปลั๊กอินประหยัดกว่า". "เบากว่า" was
+        # 🎯 [owner, 2026-09-23] was
         # accurate and unreadable — it describes the WEIGHT of a period, which is a notion this
         # page invented. A reader knows what "saved" means without being taught anything first.
         "en": "tokens saved by having the plugin",
@@ -776,7 +772,7 @@ def series():
     # 🎯 One row per day, one cell per hour — the calendar the owner asked for, which reads at a
     # glance in a way twenty-four bars never do.
     grid = hour_grid
-    # 🎯 [owner, 2026-09-23] "when the work happened 7 วันล่าสุด" — three weeks of rows
+    # 🎯 [owner, 2026-09-23] three weeks of rows
     # made the calendar a wall; a week is what a reader actually compares against today.
     recent = [d["day"] for d in days][-7:]
     cutoff = _slot(time.time() - KEEP_DAYS * 86400)
@@ -863,7 +859,7 @@ def by_kind_and_place():
                 rel = str(pathlib.PurePath(p).relative_to(ROOT)) if p.startswith("/") else p
             except ValueError:
                 rel = pathlib.PurePath(p).name          # outside the repo: keep the leaf, not ""
-            # \U0001F41B [2026-09-23, owner: "none คืออะไร"] A file with no extension was labelled
+            # \U0001F41B [2026-09-23, owner] A file with no extension was labelled
             # "(none)", which is accurate and says nothing. Measured: 55 such opens, and the
             # commonest by far are this plugin's OWN commands — `chamnan-report` 24 times,
             # `chamnan-map` 10 — because a command in `bin/` carries no suffix. A chart that
@@ -1017,7 +1013,7 @@ def files_total():
 def lessons():
     """The recorded-lesson index, so the page can SHOW lessons rather than count them.
 
-    🎯 [owner, 2026-09-23] "ต้องบอกว่า ตัวไหน โดน บ่อย โดนซ้ำ".
+    🎯 [owner, 2026-09-23] Say which files keep earning a lesson, not only how many.
     🐛 [2026-09-25] (owner) This read an index that only a script in the developer's own workspace
     wrote, by hand; it ran once, so the panels froze at that day's count, and on every other machine
     they were empty. Built here now, from the repository as it stands, on every build.
@@ -1086,8 +1082,7 @@ def local_model():
 
 # ---------------------------------------------------------------- what the redactor covers
 
-# 🎯 [owner, 2026-09-23] "เพิ่ม การตรวจจับ security ด้วย … เช่น รหัส, api key, credit card, บัตรประชาชน
-# และหมวดอื่นๆ … แต่ เราทำ ให้มองง่าย" — the shapes chamnan recognises before anything it
+# 🎯 [owner, 2026-09-23] the shapes chamnan recognises before anything it
 # assembles leaves this machine, grouped so a reader can scan them.
 #
 # 🔴 The families are matched against the REGEX SOURCE of every pattern the module actually
@@ -1224,7 +1219,7 @@ def security():
         if have:
             fams.append({"family": label, "th": th, "shapes": have})
 
-    # 🎯 [owner, 2026-09-23] "แต่ เราเคยตรวจเจอนิ แล้ว ทำการ์ด check ไว้แล้ว" — and they are right: a
+    # 🎯 [owner, 2026-09-23] and they are right: a
     # secret with no recognisable shape is not helpless, because a file whose NAME says what it
     # holds is never opened at all. That is a detection category, not a footnote, so it is counted
     # beside the pattern families rather than left out of the list.
@@ -1233,7 +1228,7 @@ def security():
         fams.append({"family": "files refused by name, never opened", "shapes": names,
                      "th": "ไฟล์ที่ปฏิเสธจากชื่อ — ไม่เปิดอ่านเลย"})
 
-    # 🔴 [owner, 2026-09-23] "ข้อสุดท้าย คือกรองไม่ได้เพราะไม่มี pattern … ต้องใส่เป็น remark".
+    # 🔴 [owner, 2026-09-23] What no pattern can catch goes on the page as a remark.
     # A coverage list that stops at what IS covered reads as a claim to cover everything. These
     # are the shapes nothing here can reach, each with the reason it cannot — and the first is
     # not a guess: it is the one case out of 99 the measured run below still misses.
@@ -1279,7 +1274,7 @@ def build():
         "found": found(),
         "mistakes": mistakes(),
         "files": busiest_files(),
-        # 🎯 [owner, 2026-09-23] "ต้องมีจำนวนเต็มบอก … เพราะไม่มีใครบ้ามานั่งไล่ทุกเคส". A top
+        # 🎯 [owner, 2026-09-23] A top
         # ten with no denominator reads as the whole list. The number beside it is what tells a
         # reader they are looking at a sample, and roughly how big a sample it is.
         "files_total": files_total(),

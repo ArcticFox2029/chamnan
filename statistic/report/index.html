@@ -23,7 +23,7 @@ const key = P.grain === "day" ? "day" : "month";
    denominator that is mostly the same prompt re-sent every turn. The second showed one bare count
    and answered nothing. The third said "lighter than the same period would have been without the
    plugin" — accurate, and the owner's reply was that it made things harder to understand, not
-   easier: "มันยิ่งพางง · มันควรใช้คำที่เข้าใจง่าย เช่น เมื่อมีปลั๊กอินประหยัดกว่า". So: SAVED, and the
+   easier. So: SAVED, and the
    supporting sentence is broken into one short line per fact rather than a Thai run-on.
 
    🔴 A token is not a token: an output costs several times an ordinary input and a cached read a
@@ -50,7 +50,7 @@ const saved = pct(avoidedWeight, without || 1);
    ไม่วัดที่จำนวน".
 
    A share (100% / 99.98%) was tried next and the owner's answer was that the real figure is
-   clearer: "ปรับ percent เป็น ตัวเลขจริง คนจะเห็นชัดกว่า". 🔴 The label was never the problem — the
+   clearer. 🔴 The label was never the problem — the
    TRACK was, and `hero()` now zooms its baseline when the gap is too small to draw, and says so
    on the panel. So the label is the real number again. */
 M.append(hero(
@@ -68,7 +68,7 @@ M.append(hero(
       `ถ้าไม่มีปลั๊กอิน จะมีแค่ ${(CF * 100).toFixed(0)}% ของเท่านั้นที่ถูกอ่านจริง จึงนับเฉพาะส่วนนั้น`),
     T(`Weighted the way a cache write is weighted, that is ${n(avoidedWeight)} tokens saved.`,
       `ถ่วงน้ำหนักแบบ cache write แล้ว เท่ากับประหยัดได้ ${n(avoidedWeight)} โทเค็น`),
-    /* 🐛 [2026-09-24, owner] "135,445,944 กับค่าข้อมูล เหมือนไม่สัมพันธ์กัน" — the bars are WEIGHTED
+    /* 🐛 [2026-09-24, owner] the bars are WEIGHTED
        totals and nothing on the page said so, while the panels below printed raw and lifetime
        counts. This sentence is the bridge from one to the other. */
     T(`The bars are weighted: ${row[key] || "—"} carried ${n(rawTotal)} tokens, and weighting each `
@@ -76,7 +76,7 @@ M.append(hero(
       `แท่งด้านล่างคิดแบบถ่วงน้ำหนัก · ${row[key] || "—"} ใช้ไปจริง ${n(rawTotal)} โทเค็น `
       + `ถ่วงตามชนิด (cached read 0.1 เท่า, cache write 1.25 เท่า, output 5 เท่า) ได้ ${n(withPlugin)}`),
   ],
-  /* 🎯 [owner, 2026-09-23] "สลับ เอา มีไว้ข้างบน และ ไม่มีไว้ข้างล่าง มันจะทำให้เทียบง่าย" — the
+  /* 🎯 [owner, 2026-09-23] the
      row the page is about goes first, and the baseline sits under it to be measured against. */
   [
     { label: T("with the plugin", "เมื่อมีปลั๊กอิน"), value: withPlugin, colour: PAL[2],
@@ -87,7 +87,7 @@ M.append(hero(
 
 /* ---- what kind of tokens, and what each kind is weighted at.
 
-   🐛 [2026-09-23, owner] "หน้าแรก ข้อมูล ซ้อน". These were two panels — a donut of the four kinds
+   🐛 [2026-09-23, owner] These were two panels — a donut of the four kinds
    and a bar chart of the same four kinds' weights — which listed the same four labels twice and,
    because each chart coloured its rows in its own order, gave the same kind two different colours
    on one screen. One panel now: one colour per kind, share and weight in the same row. */
@@ -143,7 +143,7 @@ M.append(panel("what this repository puts in front of a session",
         "ส่วนของโฮสต์ไม่ได้อยู่บนดิสก์ จึงไม่ถูกนับ")) : null,
   ]));
 
-/* ---- 🎯 [owner, 2026-09-24] "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร" — what filled the context in
+/* ---- 🎯 [owner, 2026-09-24] what filled the context in
    this period, ranked. Each thing is counted once, when it entered; a long session re-reads it on
    every later turn and that multiplier is not applied, so this ranks what the context was MADE of,
    which is the part a person can change. */

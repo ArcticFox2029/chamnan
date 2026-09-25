@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """PostToolUseFailure — write down what failed, so a second attempt at it can be recognised.
 
-🎯 [owner 2026-09-23] *"ให้มันจดข้อผิดพลาด แล้วต้องให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ"*, and then the
-correction that decided the design: *"ไม่ใช่มุมมองแค่ repo นี้ แต่ต้องมองดึง user ที่ใช้จริง repo
-อื่นๆ งานอื่นๆ ด้วย"*.
+🎯 [owner 2026-09-23] Write down what went wrong so it is not done again; the design below
+follows from that.
 
 **Why the obvious design does not work for a real user.** This repository has accumulated 1,843
 `🐛` records in its source, 243 folded checks and 232 dead ends. Somebody who installed chamnan this

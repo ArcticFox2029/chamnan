@@ -1220,10 +1220,8 @@ def _own_process_started():
     return _OWN_PROCESS_STARTED[0]
 
 
-# 🎯 [owner, 2026-09-23] "chamnan ก็ควรมีระบบเคลียร์ได้เองนะ เพราะ repo คนใช้งานคนอื่น มันก็ควรมี
-# ระบบเคลียร์ให้ แต่จะวางระบบยังไงให้ปลอดภัยกับคนใช้ทั่วไป" — and the scope they set: "เราไม่แตะพื้นที่นอก repo
-# chamnan เคลียแค่ log ใน repo กับ stage ทันปิด แต่ลืมลบ".
-#
+# 🎯 [owner, 2026-09-23] A plugin other people install has to clean up after itself, safely, and the
+# scope is the repository: its own logs, and working stages that finished but were never removed.
 # `prune_orphaned_temps` covers a killed atomic WRITE, which leaves a `.tmp` file. It does not
 # cover the other half: a tool that made itself a working DIRECTORY inside the workspace and
 # finished without removing it. That is not hypothetical — `corpus_coverage.py` cleaned its copy

@@ -182,7 +182,7 @@ function weighted(row, r) {
 
 /* ---------------------------------------------------------------- charts, all inline SVG */
 
-/* 🎯 [owner, 2026-09-23] "ปรับการเรียงใหม่ ทุกกราฟ ให้เรียงจากจำนวนเยอะอยู่บน" — a chart whose
+/* 🎯 [owner, 2026-09-23] a chart whose
    rows sit in the order somebody declared them makes a reader do the ranking themselves, and the
    whole job of a bar is to rank. Descending is the default for every chart on the page, and a
    caller whose order carries its own meaning (a sequence, a fixed set of weights) passes
@@ -246,7 +246,7 @@ function spark(values, opts) {
 }
 
 /* Bars with the label inside the row, so a long feature name never squeezes the bar. */
-/* 🎯 [owner, 2026-09-23] "ปรับความยาวของแท่ง … แต่ 4 แท่งนั้น มันสั้นไป ดูไม่ออก ควรให้มีมิติ".
+/* 🎯 [owner, 2026-09-23] The short bars could not be read.
    One row at 10.1M beside rows at 191, 40 and 1 draws four invisible stubs on a linear scale: the
    panel then says nothing about the four, which are the rows a reader is there to compare.
 
@@ -370,14 +370,13 @@ function calendar(rowsIn) {
 }
 
 /* The opening panel: one number, the sentence that explains it, and two bars to the same scale. */
-/* 🎯 [owner, 2026-09-23] "ควรเพิ่ม การแบ่งบรรทัด แบ่งคำ ให้อ่านง่าย แต่ในรูป มันดันติดกัน" — Thai
+/* 🎯 [owner, 2026-09-23] Thai
    writes without spaces between words, so a long sentence wraps into an unbroken wall that a
    reader has to parse character by character. `sentence` is now a LIST of short lines, each one
    a single fact, and the page breaks them rather than leaving it to the browser. */
 function hero(big, sentence, bars2) {
   const lines = [].concat(sentence).filter(Boolean);
-  /* 🎯 [owner, 2026-09-23] "ปรับ percent เป็นตัวเลขจริง คนจะเห็นชัดกว่า แต่ ปรับหลอดให้ยาวไม่เท่ากัน
-     ค่าของ with มันต้องใช้งานน้อยกว่า".
+  /* 🎯 [owner, 2026-09-23] Show the real figure, not a percentage, and let bars differ in length.
 
      Two totals that differ by hundredths of a percent draw as one length from a zero baseline,
      whatever is printed beside them. So when the gap is too small to see, the TRACK starts below
@@ -423,7 +422,7 @@ function stat(big, en, th) {
 
 const SERIES = S.series || { days: [], months: [], fields: [] };
 
-/* 🎯 [2026-09-25] (owner) "ควรมีเมนูปรับ timezone … ไม่ใช่ +7 เสมอไป". The build buckets days in the
+/* 🎯 [2026-09-25] (owner) The build buckets days in the
    zone of the machine it ran on, which is right for nobody reading the page from elsewhere. It also
    ships every count in fifteen-minute UTC slots, and this adds them up into days, months, the hour
    calendar and reading-against-writing in the zone chosen here -- the browser's own by default.

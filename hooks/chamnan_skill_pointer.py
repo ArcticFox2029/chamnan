@@ -635,7 +635,7 @@ def main():
     # does both jobs by CALLING the other module rather than copying it: the long-read notice lives
     # in `chamnan_bulk_read_notice.py` and stays there, which is the difference between reusing a
     # guard and forking one.
-    # 🎯 [owner 2026-09-23] "ไม่ทำผิดซ้ำๆ" — said BEFORE the command runs, which is the only moment
+    # 🎯 [owner 2026-09-23] A repeat is named BEFORE the command runs, which is the only moment
     # it can change anything. `chamnan_tool_failed.py` does the remembering; `lib/gotcha.py` decides
     # what counts as a repeat, and its key is at its tightest setting on purpose: the same tool, the
     # same command, the same error, twice. A first failure says nothing, because a first failure is

@@ -2,7 +2,7 @@
 
 ENFORCES: memory/rules/a-bad-result-earns-a-gotcha.md
 
-🎯 [owner 2026-09-23] "ให้มันเรียนรู้ ไม่ทำผิดซ้ำๆ". Measured in this repository the day this was
+🎯 [owner 2026-09-23] Measured in this repository the day this was
 written: **4,144 gotchas recorded in 478 files, and nothing read a single one of them.** They were
 written into the code, above the line they are about, by sessions that had just paid for the
 lesson — and the only way a later session saw one was by happening to read that part of the file,
