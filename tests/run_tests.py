@@ -40944,7 +40944,7 @@ check("...AND READ TO THE END IT STILL WRITES ALL OF ITS OUTPUT, LARGER THAN A P
       _t_full274.returncode == 0 and len(_t_full274.stdout) > 65536,
       saw=(_t_full274.returncode, len(_t_full274.stdout)))
 
-# 🐛 [2026-09-25] (self-measured, CI) Windows under Python 3.8 reports a closed pipe as
+# 🐛 [2026-09-25] (self-measured) Windows under Python 3.8 reports a closed pipe as
 # `OSError: [Errno 22] Invalid argument`, not `BrokenPipeError`; the check above failed there with
 # exit 120. That platform is simulated here: stdout's raw stream raises EINVAL until fd 1 has been
 # pointed somewhere that is not the closed pipe -- which is what the exit handler must do.

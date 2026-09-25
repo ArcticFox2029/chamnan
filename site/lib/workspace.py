@@ -37,7 +37,7 @@ _PERSONS_ENV = dict(os.environ)
 def _stdout_is_gone():
     """Whether stdout's reader has gone, asked of stdout itself rather than of an exception's type.
 
-    🐛 [2026-09-25] (self-measured, CI) On Windows under Python 3.8 a write into a closed pipe raises
+    🐛 [2026-09-25] (self-measured) On Windows under Python 3.8 a write into a closed pipe raises
     `OSError: [Errno 22] Invalid argument`, not `BrokenPipeError`, so a check on the type alone
     missed it there and the command still exited 120. A flush that fails is the one answer that
     holds on every platform.
