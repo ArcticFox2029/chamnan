@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **More environment variables are found.** The map's environment section now also lists
+  variables read with `getenv("X")` after `from os import getenv`, and with
+  `os.environ.setdefault` or `os.environ.pop`. A plain `environ["X"]` is still left out on
+  purpose: in web apps that name is usually the request's data, not the environment.
 - **Running the test suite no longer leaves folders in your temp directory.** A few of its
   temporary files were made outside the folder the suite cleans up, and programs it started used
   the system temp directory directly. Everything now goes in one folder that is removed when the
