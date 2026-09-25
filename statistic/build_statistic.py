@@ -24,6 +24,7 @@ is a dashboard nobody opens.
 """
 import argparse
 import collections
+import hashlib
 import json
 import os
 import pathlib
@@ -252,6 +253,7 @@ def _merge_usage(a, b):
             "tot": dict(tot), "days": {d: dict(c) for d, c in days.items()},
             "spent": _merge_days(a.get("spent"), b.get("spent")),
             "last": b.get("last") or a.get("last"),
+            "seen": sorted(set(a.get("seen") or ()) | set(b.get("seen") or ())),
             "pending": b.get("pending") if b.get("pending") is not None else a.get("pending")}
 
 
@@ -263,6 +265,18 @@ def _merge_days(a, b):
 
 
 # ---------------------------------------------------------------- the panels
+
+def _local_day_hour(stamp):
+    """(YYYY-MM-DD, hour) on this machine's clock for a transcript stamp, or ("", 0)."""
+    try:
+        import datetime as _dt
+        d = _dt.datetime.fromisoformat(str(stamp).strip().replace("Z", "+00:00"))
+        d = d.astimezone() if d.tzinfo else d
+        return d.strftime("%Y-%m-%d"), d.hour
+    except (ValueError, TypeError):
+        s = str(stamp or "")
+        return (s[:10], 0) if len(s) >= 10 else ("", 0)
+
 
 def _usage_of(path, start=0, prev=None):
     """One transcript, summarised: totals by kind, and the same totals per calendar day.
@@ -285,6 +299,20 @@ def _usage_of(path, start=0, prev=None):
     n, at = 0, start
     last = (prev or {}).get("last")
     pending = dict((prev or {}).get("pending") or {})
+    # 🐛 [2026-09-25] (self-measured) A transcript can write an earlier record AGAIN, thousands of lines
+    # later in the same file, after a rewind or a restore; only a record repeating the one right
+    # before it was skipped. On this repository 571 of 19,171 counted requests were such second
+    # copies, 3.1% of every token total, and their Bash calls were counted twice as well. Every
+    # key seen in this file is kept, hashed short, and a key seen before is not counted again.
+    seen = set((prev or {}).get("seen") or ())
+
+    def _once(*parts):
+        h = hashlib.blake2b("|".join(str(x) for x in parts).encode("utf-8", "replace"),
+                            digest_size=6).hexdigest()
+        if h in seen:
+            return False
+        seen.add(h)
+        return True
     # 🐛 [2026-09-25] (R75, 2026-09-25) The offset kept for the next read was `tell()` at end of file, and the
     # transcript of the session still running always ends in a line being written. The next read
     # began after that half line, the rest of it could not parse, and the record was lost for
@@ -306,14 +334,27 @@ def _usage_of(path, start=0, prev=None):
                     rec = json.loads(line)
                 except ValueError:
                     continue
-                day = str(rec.get("timestamp") or "")[:10]
+                # 🐛 [2026-09-25] (self-measured) The day was the first ten characters of a UTC stamp,
+                # so everything done before 07:00 at +07:00 was booked to the day before. The
+                # stamp is turned into this machine's local day and hour, like every log beside it.
+                day, hour = _local_day_hour(rec.get("timestamp"))
                 _spent_on(rec, pending, spent[day] if day else collections.Counter())
+                # 🐛 [2026-09-25] (self-measured) The command series was drawn from `commands.jsonl`,
+                # which keeps 300 ordinary commands a day for the workflow detector, so every busy
+                # day read ~300: 316 on a day with 1,671 Bash calls. Counted here, from the
+                # transcript, once per tool call.
+                if day and rec.get("type") == "assistant":
+                    for b in (rec.get("message") or {}).get("content") or []:
+                        if isinstance(b, dict) and b.get("type") == "tool_use" \
+                                and b.get("name") == "Bash" and _once("t", b.get("id")):
+                            per_day[day]["bash"] += 1
+                            per_day[day]["bash_h%02d" % hour] += 1
                 u = (rec.get("message") or {}).get("usage")
                 if not isinstance(u, dict):
                     continue
                 key = [rec.get("requestId"), (rec.get("message") or {}).get("id")]
                 if key != [None, None]:
-                    if key == last:
+                    if key == last or not _once("r", *key):
                         continue
                     last = key
                 n += 1
@@ -330,11 +371,13 @@ def _usage_of(path, start=0, prev=None):
                 if day:
                     per_day[day]["requests"] += 1
     except OSError:
-        return {"n": 0, "tot": {}, "days": {}, "last": last, "pending": pending}, start
+        return {"n": 0, "tot": {}, "days": {}, "last": last, "pending": pending,
+                "seen": sorted(seen)}, start
     # Only the calls still waiting for a result carry over, so the map stays a handful of ids.
     return ({"n": n, "tot": dict(tot), "days": {d: dict(c) for d, c in per_day.items()},
              "spent": {d: {k: int(v) for k, v in c.items() if v} for d, c in spent.items() if c},
-             "last": last, "pending": dict(list(pending.items())[-200:])}, at)
+             "last": last, "pending": dict(list(pending.items())[-200:]),
+             "seen": sorted(seen)}, at)
 
 
 # 🎯 [owner, 2026-09-24] "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร". What each thing put into the
@@ -412,7 +455,7 @@ def token_kinds():
     is the cheapest kind of token on every host that has caching at all, and the share is the
     number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
     """
-    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v3")
+    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v5")
     tot = collections.Counter()
     n = 0
     for row in scanned.values():
@@ -584,7 +627,7 @@ CHARS_PER_TOKEN = 3.8
 def series():
     """One row per day and per month: the counts every page's chart is drawn from."""
     day = collections.defaultdict(lambda: collections.Counter())
-    for name, field in (("commands.jsonl", "commands"), ("pointer.jsonl", "opens"),
+    for name, field in (("pointer.jsonl", "opens"),
                         ("edits.jsonl", "edits"), ("long_reads.jsonl", "long_reads"),
                         ("scratch.jsonl", "scratch"), ("subagent_start.jsonl", "agents"),
                         ("failures.jsonl", "failures")):
@@ -615,8 +658,9 @@ def series():
     # PER DAY now, so the picker drives a comparison over one window instead of two.
     # \U0001F534 The same cached scan `token_kinds` uses, so the two panels cannot disagree about a
     # transcript: one reader, one cache, two views of the result.
-    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v3")
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v5")
     spent = collections.defaultdict(collections.Counter)
+    hour_grid = collections.defaultdict(lambda: [0] * 24)
     for row in scanned.values():
         if not isinstance(row, dict):
             continue
@@ -628,6 +672,9 @@ def series():
             day[d]["t_new"] += int(c.get("new_input") or 0)
             day[d]["t_out"] += int(c.get("output") or 0)
             day[d]["requests"] += int(c.get("requests") or 0)
+            day[d]["commands"] += int(c.get("bash") or 0)
+            for h in range(24):
+                hour_grid[d][h] += int(c.get("bash_h%02d" % h) or 0)
             day[d]["carried"] = (day[d]["t_read"] + day[d]["t_write"] + day[d]["t_new"])
 
     fields = ("commands", "opens", "edits", "named", "long_reads", "scratch", "agents",
@@ -649,11 +696,7 @@ def series():
                "days": month[m]["days"]} for m in sorted(month)][-KEEP_MONTHS:]
     # 🎯 One row per day, one cell per hour — the calendar the owner asked for, which reads at a
     # glance in a way twenty-four bars never do.
-    grid = collections.defaultdict(lambda: [0] * 24)
-    for r in rows("commands.jsonl"):
-        d, w = day_of(r), when_of(r)
-        if d and w:
-            grid[d][time.localtime(w).tm_hour] += 1
+    grid = hour_grid
     # 🎯 [owner, 2026-09-23] "when the work happened 7 วันล่าสุด" — three weeks of rows
     # made the calendar a wall; a week is what a reader actually compares against today.
     recent = [d["day"] for d in days][-7:]
@@ -700,8 +743,13 @@ def context_parts():
 def by_hour():
     """When the work happens. Bash is one series; opens and edits are their own — never added."""
     hours = {"commands": [0] * 24, "opens": [0] * 24, "edits": [0] * 24}
-    for name, key in (("commands.jsonl", "commands"), ("pointer.jsonl", "opens"),
-                      ("edits.jsonl", "edits")):
+    # Commands come from the transcripts, as in `series`: `commands.jsonl` keeps 300 a day.
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v5")
+    for row in scanned.values():
+        for c in ((row or {}).get("days") or {}).values() if isinstance(row, dict) else ():
+            for h in range(24):
+                hours["commands"][h] += int(c.get("bash_h%02d" % h) or 0)
+    for name, key in (("pointer.jsonl", "opens"), ("edits.jsonl", "edits")):
         for r in rows(name):
             w = when_of(r)
             if w:

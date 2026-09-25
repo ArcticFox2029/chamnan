@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard's command counts are real now.** The command charts were drawn from a log that
+  keeps 300 ordinary commands a day, so any busy day showed about 300. On one measured day the
+  chart showed 316 when there were 1,623 Bash calls. Commands are now counted from the session
+  transcripts. Two other fixes land with it:
+  - token and command totals were booked by UTC day, not local day;
+  - a request written twice into a transcript (after a rewind) was counted twice, which added
+    3.1% to the token totals measured here.
 - **Dashboard charts put failures and subagent starts on the right day.** Those two logs record
   time in UTC, and the dashboard read them as local time. Anywhere outside UTC, each entry moved by
   the local offset. At +07:00, 42 of 315 entries were drawn on the previous day.
