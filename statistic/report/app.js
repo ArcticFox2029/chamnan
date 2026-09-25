@@ -242,7 +242,8 @@ function spark(values, opts) {
 function hbars(rowsIn, opts) {
   const o = opts || {};
   const rows = ranked(rowsIn, o);
-  const max = Math.max(1, ...rows.map((r) => r.value));
+  // `o.max` fixes the scale: a percentage is drawn against 100, not against the largest row.
+  const max = o.max ?? Math.max(1, ...rows.map((r) => r.value));
   const small = Math.min(...rows.map((r) => r.value).filter((v) => v > 0), max);
   const log = o.log ?? (max / small > 100);
   const at = (v) => log

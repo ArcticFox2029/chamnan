@@ -224,7 +224,7 @@ const dayRows = P.grain === "month" && row.month
   ? SERIES.days.filter((d) => d.day.startsWith(row.month))
   : SERIES.days.slice(-30);
 M.append(panel("commands per day", "คำสั่งรายวัน",
-  "logs/commands.jsonl",
+  "Bash calls in this account's session transcripts",
   [
     dayRows.length > 1
       ? bars(dayRows.map((r) => ({ label: r.day, tick: r.day.slice(8),
@@ -239,7 +239,7 @@ M.append(panel("commands per day", "คำสั่งรายวัน",
 
 /* ---- the three headline counts for the chosen period */
 M.append(panel(`activity in ${row[key] || "—"}`, `กิจกรรมใน ${row[key] || "—"}`,
-  "logs/commands.jsonl · logs/pointer.jsonl · logs/edits.jsonl",
+  "session transcripts (Bash) · logs/pointer.jsonl · logs/edits.jsonl",
   [
     el("div", { class: "grid2" },
       stat(short(row.commands || 0), "commands", "คำสั่ง"),

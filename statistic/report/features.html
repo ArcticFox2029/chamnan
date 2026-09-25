@@ -32,12 +32,15 @@ M.append(panel("which features actually fire",
   "ฟีเจอร์ไหนทำงานจริง และมีโอกาสกี่ครั้ง",
   "logs/*.jsonl, one per feature",
   [
+    /* 🐛 [2026-09-25] (owner) Since each feature is now counted over its own window, raw counts
+       from different windows are not comparable, and a bar of counts put 265/265 below 300/675.
+       The bar, the order and the leading number are the RATE now; the counts follow it. */
     hbars(live.map((x, i) => ({
-      label: x.feature, value: x.fired,
-      text: `${short(x.fired)} / ${short(x.chances)} · ${pct(x.fired, x.chances).toFixed(1)}%`
+      label: x.feature, value: pct(x.fired, x.chances),
+      text: `${pct(x.fired, x.chances).toFixed(1)}% · ${short(x.fired)} / ${short(x.chances)}`
         + (x.since ? ` · ${T("since", "ตั้งแต่")} ${x.since}` : ""),
       colour: PAL[i % PAL.length], dim: !x.fired,
-    }))),
+    })), { max: 100, log: false }),
     dark.length ? el("p", { class: "note" },
       T(`${dark.length} guard(s) have no recorder at all — they print and forget: `
         + dark.map((x) => x.feature).join(", ")

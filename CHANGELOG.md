@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Bar charts on the dashboard line up.** Each bar's length and starting point depended on how
+  long the number beside it was, so rows of one chart did not share a scale. All rows of a chart
+  now share one track. The features chart now draws each feature's rate out of 100%, and sorts by
+  that rate, instead of raw counts that cover different spans of time.
 - **Feature rates on the dashboard compare like with like.** Each log keeps only its newest rows,
   so a rate such as the scratch watcher's set one day of detections against three weeks of
   commands. Both counts now start from the same day, and the row says which day that is.

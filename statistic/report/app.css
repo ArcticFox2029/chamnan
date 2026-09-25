@@ -75,8 +75,12 @@ tbody tr:hover td { background: var(--panel2); }
 .legend .val + .val { margin-left: 11px; }
 .legend .dimval { color: var(--dim); }
 
-.hbars { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
-.hbars li { display: grid; grid-template-columns: minmax(120px, 1.1fr) 2fr auto; gap: 11px;
+/* 🐛 [2026-09-25] (owner) Each row was its own grid, so its `auto` value column took the width of
+   that row's own text and every track started and ended somewhere else. The columns belong to the
+   list now and each row borrows them (subgrid), so all tracks share one start and one length. */
+.hbars { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px 11px;
+  grid-template-columns: minmax(120px, 1.1fr) 2fr auto; }
+.hbars li { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; gap: 11px;
   align-items: center; font-size: 13px; }
 .hbars li.dim { opacity: .5; }
 .hlab { min-width: 0; }
@@ -92,7 +96,7 @@ tbody tr:hover td { background: var(--panel2); }
    row ends at the same edge whatever it carries. */
 .hval { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px;
   color: var(--dim); text-align: right; justify-self: end; white-space: nowrap; }
-@media (max-width: 560px) { .hbars li { grid-template-columns: 1fr auto; } .htrack { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .hbars { grid-template-columns: 1fr auto; } .htrack { grid-column: 1 / -1; } }
 
 .stack { display: flex; height: 14px; border-radius: 5px; overflow: hidden; margin: 4px 0 14px; }
 .stack > span { display: block; }
