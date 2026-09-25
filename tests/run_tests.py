@@ -43,6 +43,13 @@ _SUITE_GITCONFIG = Path(tempfile.mkdtemp(prefix="chamnan-suite-gitconfig-")) / "
 _SUITE_GITCONFIG.write_text("", encoding="utf-8")
 os.environ["GIT_CONFIG_GLOBAL"] = str(_SUITE_GITCONFIG)
 os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+# 🐛 [2026-09-25] (self-measured) The same isolation for colour. Python 3.14's argparse colours
+# its usage and help when FORCE_COLOR is set, even into a pipe, and a session that exported
+# FORCE_COLOR=3 failed three checks (escape bytes from two commands' usage text, and a --help parse) that CI, with no
+# such variable, passed. The suite measures chamnan, not the shell it was started from.
+for _cv in ("FORCE_COLOR", "CLICOLOR_FORCE", "PYTHON_COLORS"):
+    os.environ.pop(_cv, None)
+os.environ["NO_COLOR"] = "1"
 # Native Windows: no shebang resolution, no executable bit, no POSIX shell. Declared here rather
 # than near its first use because several checks far apart need it, and a second copy of the same
 # predicate is how two platforms end up disagreeing about what they are.
@@ -10406,14 +10413,17 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # Raised 2026-09-25 from 30 to 31, found by CI on the 1.32.0 check branch. `gotcha.index` asks
 # `git ls-files` which files the repository keeps, so the dashboard's lesson index reads those and
 # not ignored ones -- a TWENTY-THIRD purpose, indexing the repository's own recorded lessons.
+# Raised 2026-09-25 from 31 to 32, found by the 1.33 gate. The shallow-clone notice asks
+# `git rev-parse --is-shallow-repository` whether a map stamped with a missing commit is from a
+# shallow clone rather than stale -- a TWENTY-FOURTH purpose: no other site asks about the clone.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 31, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 32, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Thirty-one call sites serve twenty-three read-only paths"
+      and "Thirty-two call sites serve twenty-four read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -19035,7 +19045,8 @@ try:
         "chamnan-impact": ["src/main.py"],       # takes a path
         "chamnan-timeline": ["list"],            # takes a subcommand
         "chamnan-peek": [f"src/{'main.py'}"],    # takes a path to peek at
-        "chamnan-context": ["--emit", "claude"], # --write would install files; --emit only prints
+        "chamnan-context": ["--emit", "generic"],  # --write would install files; --emit only prints.
+        # It was `claude`, which is not an adapter: the sweep drove an argparse error, not the render.
     }
     _not_swept = {
         # Writes to the repository rather than reading from it; driving it here would install a
