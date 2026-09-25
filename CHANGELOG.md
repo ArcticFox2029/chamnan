@@ -39,6 +39,9 @@ already reports the last released number while running newer code.
   file that pointed outside, but read a file reached through a linked directory. `chamnan-where`
   opened a linked file wherever it pointed. Both now apply the rule the map already used. A link
   that stays inside the repository is read as before.
+- **Commands chamnan suggests now work on paths with spaces.** A notice that said to run
+  `chamnan-peek <path>` printed the path unquoted, so `my dir/long notes.md` named the wrong
+  files. Paths and search terms in suggested commands are now quoted.
 - **The redactor no longer slows down sharply on long dotted text.** A long run like `a.b.c…`
   with no `://` in it made one URL pattern re-scan from every dot: 50,000 characters took 99
   seconds, and they now take 0.23. Output is unchanged on every tracked file and on the corpus.

@@ -266,11 +266,13 @@ def _document_notice(path, root, session_id, size):
     #
     # What is always true goes first, and names a command that ships with the plugin. What is
     # local is named only when it is actually there.
+    # 🐛 [2026-09-25] (R63, 2026-09-25) The path went into these copy-and-run commands unquoted, so a file under
+    # `my dir/` or named `big data.csv` produced a command that names the wrong file or none.
     extra = ""
     try:
         agent_report = ws.workspace(root) / "tools" / "read_agent_report.py"
         if agent_report.is_file():
-            extra = f" `python3 .chamnan/tools/read_agent_report.py {path}` is set up here."
+            extra = f" `python3 .chamnan/tools/read_agent_report.py {shlex.quote(str(path))}` is set up here."
     except Exception:
         extra = ""
     rule = ""
@@ -283,7 +285,7 @@ def _document_notice(path, root, session_id, size):
         rule = ""
     return (
         f"chamnan: `{name}` is a long document (~{size:,} bytes). Pulling a list or an answer out "
-        f"of it does not need all of it in context -- `chamnan-peek {path}` gives its shape, and a "
+        f"of it does not need all of it in context -- `chamnan-peek {shlex.quote(str(path))}` gives its shape, and a "
         f"cheaper reader can be asked for the rest.{rule}{extra} "
         "(said up to 3 times per session per file -- now, and again past %d and %d calls)"
         % NUDGE_AGAIN_AT)

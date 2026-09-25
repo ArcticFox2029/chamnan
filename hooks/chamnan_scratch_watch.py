@@ -545,7 +545,7 @@ def _repeated_search(payload, wsdir, root):
     entry["searched_told"] = told + [term]
     _nudge_write(wsdir, session_id, entry)
     say(f"chamnan: that is the {REPEAT_AT}rd search for `{term}` in this session. "
-        f"`chamnan-where {term}` answers the same question without the comments and string "
+        f"`chamnan-where {shlex.quote(term)}` answers the same question without the comments and string "
         f"literals a text search returns — exact for Python, lexical for twenty more languages, "
         f"and it says which of the two it used.")
     return True
