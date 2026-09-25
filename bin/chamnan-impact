@@ -71,6 +71,9 @@ def _index_age(map_path, root=None):
         return age
     if not behind:
         return age + ", current with the code"
+    # A shallow clone cannot say whether the code moved, only that the build commit is not here.
+    if behind == getattr(module, "MISSING_HISTORY", None):
+        return age + ", built from a commit this shallow clone does not have"
     # `edited` is a LIST of names, and interpolating it whole printed `['src/newcomer.py']` at the
     # reader -- a Python repr in a sentence written for a person. One name is enough to make the
     # warning actionable; the count says whether there is more.

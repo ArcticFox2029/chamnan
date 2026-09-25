@@ -861,6 +861,11 @@ KEPT_KEYS_NAMED = 8
 DRIFT_LINE_BYTES = 320
 
 
+# What index_is_behind returns for a map stamped with a commit a shallow clone does not have:
+# truthy, so the notice fires, and never shown as an age -- the notice names the clone instead.
+MISSING_HISTORY = -1.0
+
+
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
 
@@ -954,6 +959,14 @@ def index_is_behind(root, map_path):
         # suggested fix is not the answer; the dead-ends file records why.
         built = map_path.stat().st_mtime
         if newest <= built:
+            # Linux stamps files with a coarse clock, so every file in a fresh clone can carry the
+            # SAME mtime and this comparison would call any map current. A shallow clone missing
+            # the map's build commit is therefore asked about here, not left to the clock. Reached
+            # only when git could not confirm the map, so a current one pays for neither call.
+            if _BUILT_FROM.search(map_path.read_text(encoding="utf-8-sig", errors="replace")[:600]) \
+                    and map_commits_behind(root, map_path) is None \
+                    and map_from_missing_history(root):
+                return MISSING_HISTORY, []
             return 0, []
         # Seconds, not days. Rounding a two-hour gap up to "1 day behind" is a small lie, and this
         # line exists to be trusted -- the caller decides how to say it.
@@ -1519,7 +1532,8 @@ def main():
         try:
             _mp = wsdir / "MAP.md"
             if _mp.is_file():
-                if index_is_behind(root, _mp)[0]:
+                # `> 0`: a shallow clone's unknown answer was already said at startup.
+                if index_is_behind(root, _mp)[0] > 0:
                     _lines.append("_⚠ The architecture index has fallen behind the tree since then "
                                   "— rebuild it with `chamnan-map` before trusting what it says._")
                 # 🐛 [2026-09-09] This path checked only the mtime comparison, and the startup path
@@ -2015,7 +2029,7 @@ def main():
                     # a tree with nothing behind and nothing dead still skips `unindexed`.
                     _dead, _named, _dead_ex = dead_entries(root, text)
                     n, examples = unindexed(root, text) if (behind or _dead) else (0, [])
-                _behind_seconds = behind
+                _behind_seconds = behind if behind != MISSING_HISTORY else None
                 if behind:
                     # A count of what is missing, not an age. See unindexed() for why.
                     # Filenames are chosen by whoever wrote the clone, and this line prints them
