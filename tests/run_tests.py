@@ -26457,7 +26457,7 @@ _t_home101 = _t_root101 / "empty-home"
 _t_home101.mkdir()
 _t_env101 = dict(_os101.environ)
 _t_env101["HOME"] = str(_t_home101)
-_t_run101 = _sp101.run([_sys101.executable, str(_t_report101), "--full"], capture_output=True, text=True,
+_t_run101 = _sp101.run([_sys101.executable, str(_t_report101), "--full"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                        cwd=str(_t_root101), env=_t_env101, timeout=60)
 _t_out101 = _t_run101.stdout
 check("THE REPORT SEPARATES TRACKED FILES FROM CURRENT BYTES THAT ARE COMMITTED",
@@ -33176,7 +33176,7 @@ for _name170, _body170 in _SHAPES170.items():
         _h170.write_text(_body170, encoding="utf-8")
         _h170.chmod(0o755)
         _r170 = _sp170.run([_sy170.executable, str(_PKG170 / "bin" / "chamnan-map"),
-                            "--install-git-hook"], cwd=_d170, capture_output=True, text=True)
+                            "--install-git-hook"], cwd=_d170, capture_output=True, text=True, encoding="utf-8", errors="replace")
         _after170 = _h170.read_text(encoding="utf-8") if _h170.is_file() else "<DELETED>"
 
         # Every line the other tool wrote must still be there, byte for byte.
@@ -33264,7 +33264,7 @@ try:
     _sp171.run([_sy171.executable, str(_PKG171 / "hooks" / "chamnan_session_start.py")],
                input=_js171.dumps({"cwd": str(_root171), "hook_event_name": "SessionStart",
                                    "session_id": _sid171, "source": "startup"}),
-               capture_output=True, text=True)
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
     _log171 = _root171 / ".chamnan" / "logs" / "block_shape.jsonl"
     if _log171.is_file():
         for _l171 in _log171.read_text(encoding="utf-8").splitlines():
@@ -33463,7 +33463,7 @@ try:
     (_root173 / "a.py").write_text("# a file that does a thing\n", encoding="utf-8")
     _sp173.run([_sy173.executable, str(_PKG173 / "hooks" / "chamnan_session_start.py")],
                input=_js173.dumps({"cwd": str(_root173), "hook_event_name": "SessionStart",
-                                   "session_id": "q-probe"}), capture_output=True, text=True)
+                                   "session_id": "q-probe"}), capture_output=True, text=True, encoding="utf-8", errors="replace")
     # Three calls: a search OF the index, a search of the repository at large, and an ordinary open.
     for _tool173, _inp173 in (
             ("Grep", {"path": str(_root173 / ".chamnan" / "MAP.md"), "pattern": "def render"}),
@@ -33472,7 +33472,7 @@ try:
         _sp173.run([_sy173.executable, str(_PKG173 / "hooks" / "chamnan_file_pointer.py")],
                    input=_js173.dumps({"cwd": str(_root173), "session_id": "q-probe",
                                        "tool_name": _tool173, "tool_input": _inp173}),
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     _log173 = _root173 / ".chamnan" / "logs" / "pointer.jsonl"
     if _log173.is_file():
         for _l173 in _log173.read_text(encoding="utf-8").splitlines():
@@ -33544,7 +33544,7 @@ def _run174(commit_first):
                        cwd=d, capture_output=True)
         # Removing the map makes the next run a "first run" again, which is what gates the notice.
         (d / ".chamnan" / "MAP.md").unlink()
-        r = _sp174.run([_sy174.executable, str(_MAP174)], cwd=d, capture_output=True, text=True)
+        r = _sp174.run([_sy174.executable, str(_MAP174)], cwd=d, capture_output=True, text=True, encoding="utf-8", errors="replace")
         return r.stdout
     finally:
         _sh174.rmtree(d, ignore_errors=True)
@@ -33643,7 +33643,7 @@ for _fault175, _break175 in _FAULTS175.items():
             try:
                 _r175 = _sp175.run([_sy175.executable, str(_PKG175 / "hooks" / _hook175)],
                                    input=_payload175(_hook175, _d175), capture_output=True,
-                                   text=True, timeout=60)
+                                   text=True, encoding="utf-8", errors="replace", timeout=60)
             except _sp175.TimeoutExpired:
                 _ran175 += 1
                 _crashed175.append("%s under '%s': did not answer within 60s"
@@ -34231,7 +34231,7 @@ import subprocess as _sp182
 import tempfile as _tf182
 from pathlib import Path as _P182
 
-_t_git182 = _sp182.run(["git", "--version"], capture_output=True, text=True)
+_t_git182 = _sp182.run(["git", "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
 if _t_git182.returncode != 0:
     skip("  [SKIP] git-config execution check — no `git` on PATH")
 else:
@@ -34455,7 +34455,7 @@ else:
     (_t_repo184 / "src").mkdir()
     (_t_repo184 / "src" / "a.py").write_text("# one thing\ndef go():\n    return 1\n", encoding="utf-8")
     _sp184.run([_sys184.executable, str(ROOT / "bin" / "chamnan-map")],
-               cwd=str(_t_repo184), capture_output=True, text=True)
+               cwd=str(_t_repo184), capture_output=True, text=True, encoding="utf-8", errors="replace")
     _t_cfg184 = _t_repo184 / ".chamnan" / "config.json"
 
     _t_broke184 = []
@@ -34632,7 +34632,7 @@ def _fixture187():
 _t_probe187 = None
 try:
     _t_probe187 = _sp187.run([_sys187.executable, str(_t_cmd187), "--help"],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
 except Exception:
     _t_probe187 = None
 
@@ -34644,10 +34644,10 @@ else:
     _t_base1, _t_repo1 = _fixture187()
     _t_map1 = _t_repo1 / ".chamnan" / "MAP.md"
     _t_full1 = _sp187.run([_sys187.executable, str(_t_cmd187)], cwd=str(_t_repo1),
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     _t_full_n1 = _sections187(_t_map1)
     _t_narrow1 = _sp187.run([_sys187.executable, str(_t_cmd187), "sub/inner"], cwd=str(_t_repo1),
-                            capture_output=True, text=True, timeout=60)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     check("A FULL MAP OF THE FIXTURE BUILDS ALL 5 FILE SECTIONS, SO THE REST OF THIS PROVES SOMETHING",
           _t_full1.returncode == 0 and _t_full_n1 == 5,
           saw="full-map exit=%d, section count=%d (expected 0 and 5)"
@@ -34663,7 +34663,7 @@ else:
 
     # 2b. The SAME narrow run, with --replace — must succeed and actually narrow the map.
     _t_narrow_ok1 = _sp187.run([_sys187.executable, str(_t_cmd187), "sub/inner", "--replace"],
-                               cwd=str(_t_repo1), capture_output=True, text=True, timeout=60)
+                               cwd=str(_t_repo1), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     check("...and THE SAME RUN WITH --replace SUCCEEDS AND NARROWS THE MAP",
           _t_narrow_ok1.returncode == 0 and _sections187(_t_map1) == 2,
           saw="`chamnan-map sub/inner --replace` exited %d, section count now %d (expected 0 and 2)"
@@ -34674,7 +34674,7 @@ else:
     _t_base2, _t_repo2 = _fixture187()
     _t_map2 = _t_repo2 / ".chamnan" / "MAP.md"
     _t_first187 = _sp187.run([_sys187.executable, str(_t_cmd187), "sub/inner"], cwd=str(_t_repo2),
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     check("A NARROW RUN AGAINST A REPOSITORY WITH NO EXISTING MAP STILL WORKS, UNREFUSED",
           _t_first187.returncode == 0 and _sections187(_t_map2) == 2,
           saw="first-ever narrow run exit=%d, section count=%d (expected 0 and 2), stderr=%r"
@@ -34955,7 +34955,7 @@ if _t_ws191 is not None:
     _t_out191 = None
     try:
         _t_out191 = _sp191.run(["git", "config", "--get", "core.pager"],
-                               capture_output=True, text=True, timeout=20)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
     except (OSError, _sp191.SubprocessError):
         _t_out191 = None
     if _t_out191 is None:
@@ -36072,7 +36072,7 @@ if _t_ws213 is not None:
                                         "tool_input": {"file_path": str(_t_big213)},
                                         "cwd": str(_t_fix213),
                                         "transcript_path": str(_t_fix213 / "t.jsonl")}),
-                    capture_output=True, text=True, cwd=str(_t_fix213))
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_t_fix213))
                 return "additionalContext" in (_t_r213.stdout or "")
 
             # The measurement that matters runs FIRST, on virgin state.
@@ -36538,7 +36538,7 @@ if _t_ws217 is not None:
                                         "tool_input": {"file_path": str(_t_r217 / rel)},
                                         "cwd": str(_t_r217),
                                         "transcript_path": str(_t_r217 / "t.jsonl")}),
-                    capture_output=True, text=True, cwd=str(_t_r217))
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_t_r217))
                 if "additionalContext" in (_t_res217.stdout or ""):
                     return _js217.loads(
                         _t_res217.stdout)["hookSpecificOutput"]["additionalContext"]
@@ -36653,7 +36653,7 @@ if _t_ws218 is not None:
                 input=_js218.dumps({"session_id": sess, "tool_name": "Read",
                                     "tool_input": {"file_path": str(doc)},
                                     "cwd": str(root), "transcript_path": str(root / "t.jsonl")}),
-                capture_output=True, text=True, cwd=str(root))
+                capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(root))
             if "additionalContext" in (_t_res218.stdout or ""):
                 return _js218.loads(
                     _t_res218.stdout)["hookSpecificOutput"]["additionalContext"]
@@ -38520,11 +38520,11 @@ if _t_ws233 is not None:
 
             def _t_run233(*flags):
                 return _sp233.run([sys.executable, str(_t_cmd233), *flags], cwd=str(_t_r233),
-                                  capture_output=True, text=True, timeout=120).stdout
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
 
             _t_plain_none233 = _t_run233()
             _t_out233 = _sp233.run([sys.executable, str(_t_cmd233), "--json"], cwd=str(_t_r233),
-                                   capture_output=True, text=True, timeout=120)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
             # Only NOW does the tree gain a recorded history, so the other output branch runs here
             # instead of costing a second full pass over the development repository. Written after
             # the --json run above, because that one is the no-history case and this file would
@@ -38566,7 +38566,7 @@ if _t_ws233 is not None:
         # bound, or the branch above is just the command switched off.
         _t_here233 = _sp233.run([sys.executable, str(_t_cmd233), "--json"],
                                 cwd=str(_t_ws233.parent), capture_output=True,
-                                text=True, timeout=300)
+                                text=True, encoding="utf-8", errors="replace", timeout=300)
         _t_mine233 = {}
         try:
             _t_mine233 = _j233.loads(_t_here233.stdout or "{}")
@@ -38718,7 +38718,7 @@ if _t_ws235 is not None:
         (_fix235 / "top.py").write_text("def g():\n    return 1\n", encoding="utf-8")
         _sp235.run(["git", "-C", str(_fix235), "init", "-q"], capture_output=True)
         _sp235.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_fix235),
-                   capture_output=True, text=True, timeout=180)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
         _fixmap235 = _fix235 / ".chamnan" / "MAP.md"
         _txt235 = _fixmap235.read_text(encoding="utf-8-sig", errors="replace") \
             if _fixmap235.is_file() else ""
@@ -39448,7 +39448,7 @@ def _repo246(kind):
         + ("sys.exit(1)\n" if kind == "process" else
            "sys.stdout.buffer.write(sys.stdin.buffer.read())\n"), encoding="utf-8")
     command = '"%s" "%s"' % (_pl246.Path(_sys246.executable).as_posix(), script.as_posix())
-    g = lambda *a: _sp246.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+    g = lambda *a: _sp246.run(["git", "-C", str(repo), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
     g("init", "-q")
     g("config", "user.email", "t@example.invalid")
     g("config", "user.name", "t")
@@ -39482,7 +39482,7 @@ def _run246(kind, switch):
     base, repo, mark = _repo246(kind)
     try:
         out = _sp246.run([_sys246.executable, "-c", _PROBE246, str(repo), switch],
-                         capture_output=True, text=True,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
                          env=dict(_os246.environ, PYTHONPATH=_LIB246))
         return mark.exists(), out.stdout.strip(), out.stderr.strip()[-300:]
     finally:
@@ -39520,7 +39520,7 @@ try:
                    "n = int(os.environ.get('GIT_CONFIG_COUNT', '0'))\n"
                    "print(sorted({os.environ['GIT_CONFIG_KEY_%d' % i] for i in range(n)}))\n")
     _keys246 = _sp246.run([_sys246.executable, "-c", _probe_g246, str(_repo_g246)],
-                          capture_output=True, text=True,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
                           env=dict(_os246.environ, PYTHONPATH=_LIB246,
                                    GIT_CONFIG_GLOBAL=str(_glob246))).stdout
     check("the repository's own driver is overridden", "filter.probe.clean" in _keys246,
@@ -41299,7 +41299,7 @@ else:
     _t_set280 = _sp280.run(
         [sys.executable, "-c", "import sys, json; sys.path.insert(0, %r); import schedule; "
          "print(json.dumps(schedule.parse_when('2h').isoformat(timespec='seconds')))" % _t_lib280],
-        env=dict(os.environ, TZ="Asia/Bangkok"), capture_output=True, text=True, timeout=60)
+        env=dict(os.environ, TZ="Asia/Bangkok"), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     _t_when280 = _js280.loads(_t_set280.stdout or "null")
     _t_ask280 = _sp280.run(
         [sys.executable, "-c",
@@ -41309,7 +41309,7 @@ else:
          "n = datetime.now()\n"
          "print(json.dumps([bool(schedule.due([r], now=n + timedelta(hours=1))),"
          " bool(schedule.due([r], now=n + timedelta(hours=2, minutes=1)))]))" % (_t_lib280, _t_when280)],
-        env=dict(os.environ, TZ="Asia/Tokyo"), capture_output=True, text=True, timeout=60)
+        env=dict(os.environ, TZ="Asia/Tokyo"), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     _t_seen280 = _js280.loads(_t_ask280.stdout or "null")
     check("AN APPOINTMENT SET IN ONE ZONE FIRES AT THE SAME INSTANT IN ANOTHER",
           isinstance(_t_when280, str) and _t_when280.endswith("+07:00") and _t_seen280 == [False, True],

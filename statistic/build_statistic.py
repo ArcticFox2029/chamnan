@@ -1153,7 +1153,7 @@ def _recall():
     try:
         import subprocess                              # noqa: PLC0415
         got = subprocess.run([sys.executable, str(harness), "--chamnan", str(PLUGIN)],
-                             capture_output=True, text=True,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=180)
         text = got.stdout
     except Exception:                                  # noqa: BLE001

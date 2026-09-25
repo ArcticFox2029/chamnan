@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard's measurement step reads its helper's output as UTF-8 on Windows.** It decoded
+  it in the Windows code page, where a single byte that page does not define ends the build with
+  `UnicodeDecodeError`. The suite had 27 calls with the same fault, which CI's Windows legs logged
+  on every run; they are fixed, and a check now covers the dashboard, the tools and the suite.
 - **The dashboard's day bars work from the keyboard, and its sparklines can be heard.** Opening a
   day from a bar chart took a mouse click: the bar could not take focus and ignored every key.
   Each bar is now a button you can Tab to and open with Enter or Space, named with its day and
