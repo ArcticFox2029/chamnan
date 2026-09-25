@@ -29931,10 +29931,12 @@ try:
     _t_repo138 = _t_dir138 / "proj"
     _t_repo138.mkdir()
     (_t_repo138 / ".gitattributes").write_text(
-        "wide.py text working-tree-encoding=UTF-16LE-BOM\n", encoding="utf-8")
-    # Real UTF-16LE with a BOM: what git writes to the worktree for that attribute.
+        "wide.py text working-tree-encoding=UTF-16LE\n", encoding="utf-8")
+    # UTF-16LE with NO byte-order mark, what git writes for that attribute. (R217, 2026-09-25) A
+    # file WITH a mark is now decoded and indexed (check 293), so it no longer reaches this notice;
+    # a mark-less one still cannot be told from binary by its bytes, and is what this arm is for.
     _t_source138 = "def wide():\n    return 1\n"
-    (_t_repo138 / "wide.py").write_bytes(b"\xff\xfe" + _t_source138.encode("utf-16-le"))
+    (_t_repo138 / "wide.py").write_bytes(_t_source138.encode("utf-16-le"))
     (_t_repo138 / "plain.py").write_text("def plain():\n    return 1\n", encoding="utf-8")
     # A genuinely binary file behind a source suffix: the arm that must still say "binary".
     (_t_repo138 / "blob.py").write_bytes(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 64)
@@ -29953,7 +29955,7 @@ try:
                                                                         Path("plain.py"),
                                                                         Path("blob.py")])
     check("git is asked, and answers, which paths it stores re-encoded",
-          _t_declared138.get("wide.py") == "UTF-16LE-BOM" and "plain.py" not in _t_declared138,
+          _t_declared138.get("wide.py") == "UTF-16LE" and "plain.py" not in _t_declared138,
           saw=_t_declared138)
 
     # The notice itself, built the way the map builds it.
@@ -41891,6 +41893,36 @@ try:
           saw=(_t_run292.returncode, _t_run292.stderr[-300:]))
 finally:
     _sh292.rmtree(_t_repo292, ignore_errors=True)
+# ---- 293_a_utf16_source_file_is_indexed_not_called_binary.py
+# ------------------ a UTF-16 source file is indexed, not called binary
+# 🐛 [2026-09-25] (R217, 2026-09-25) The map tested for a NUL byte before looking for a byte-order
+# mark, so a UTF-16 file -- a NUL beside every ASCII character -- was listed as "binary despite a
+# source suffix" and never indexed. Windows PowerShell 5.1 writes .ps1 files as UTF-16 by default.
+# peek.py already checked the mark first; the map now does too. Built for real: a little- and a
+# big-endian file with one mark each must be indexed with their docstrings, and a file with a NUL
+# and no mark must still be refused.
+import shutil as _sh293, subprocess as _sp293, tempfile as _tf293                     # noqa: E402
+from pathlib import Path as _P293                                                    # noqa: E402
+
+_t_repo293 = _P293(_tf293.mkdtemp(prefix="chamnan-utf16-"))
+try:
+    (_t_repo293 / "u16le.py").write_bytes('"""Little endian module."""\ndef le():\n    pass\n'.encode("utf-16"))
+    (_t_repo293 / "u16be.py").write_bytes(b"\xfe\xff" + '"""Big endian module."""\ndef be():\n    pass\n'.encode("utf-16-be"))
+    (_t_repo293 / "realbin.py").write_bytes(b"\x00\x01\x02binary\x00")
+    _sp293.run(["git", "init", "-q"], cwd=str(_t_repo293), capture_output=True, stdin=_sp293.DEVNULL)
+    _sp293.run(["git", "add", "-A"], cwd=str(_t_repo293), capture_output=True, stdin=_sp293.DEVNULL)
+    _sp293.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_t_repo293),
+               capture_output=True, stdin=_sp293.DEVNULL, timeout=120)
+    _t_map293 = (_t_repo293 / ".chamnan" / "MAP.md").read_text(encoding="utf-8") \
+        if (_t_repo293 / ".chamnan" / "MAP.md").is_file() else ""
+    check("A UTF-16 SOURCE FILE, EITHER BYTE ORDER, IS INDEXED WITH ITS DESCRIPTION",
+          "Little endian module." in _t_map293 and "Big endian module." in _t_map293,
+          saw=[l for l in _t_map293.splitlines() if "u16" in l][:4])
+    check("...WHILE A FILE WITH A NUL AND NO BYTE-ORDER MARK IS STILL REFUSED AS BINARY",
+          "binary despite a source suffix" in _t_map293 and "`realbin.py`" in _t_map293,
+          saw=[l for l in _t_map293.splitlines() if "binary" in l][:2])
+finally:
+    _sh293.rmtree(_t_repo293, ignore_errors=True)
 # ---- 29_the_gate_reads_both_streams.py
 # ------------------------------------------- "0 tracebacks" over a run that crashed
 # 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
