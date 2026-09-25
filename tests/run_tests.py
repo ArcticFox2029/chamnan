@@ -33,6 +33,16 @@ import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# 🐛 [2026-09-25] (R188, 2026-09-25) Every fixture repository this suite builds ran git with the
+# person's own configuration, so a `commit.gpgsign = true` in their ~/.gitconfig failed 1 of 2 in
+# check 279, 2 of 2 in 290 and 1 of 7 in 56 on their machine, while CI -- which has no global
+# config -- stayed green. pip and Git LFS isolate their suites the same way. One empty file for the
+# whole run, not /dev/null: Git 2.53 on Windows rejects NUL as a config path (R188 #10). A check
+# that needs a particular setting still passes it itself.
+_SUITE_GITCONFIG = Path(tempfile.mkdtemp(prefix="chamnan-suite-gitconfig-")) / "config"
+_SUITE_GITCONFIG.write_text("", encoding="utf-8")
+os.environ["GIT_CONFIG_GLOBAL"] = str(_SUITE_GITCONFIG)
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
 # Native Windows: no shebang resolution, no executable bit, no POSIX shell. Declared here rather
 # than near its first use because several checks far apart need it, and a second copy of the same
 # predicate is how two platforms end up disagreeing about what they are.

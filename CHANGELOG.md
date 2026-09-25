@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The test suite gives the same answer on your machine as on CI.** It built its test repositories
+  with your own git settings in effect, so a `commit.gpgsign = true` in your `~/.gitconfig` failed
+  checks there that passed everywhere else, including under `tools/verify_release.py`. The suite
+  now runs git with an empty configuration of its own.
 - **A shallow clone is no longer told its map was "built 0 seconds behind".** CI checkouts are
   shallow by default, so the commit the map was built from is often not there. The session then
   fell back to comparing file times, which are all equal in a fresh checkout, and reported a
