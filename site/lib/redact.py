@@ -2108,12 +2108,21 @@ def _secret_word_hits(text):
         return list(_SECRET_WORD_ANYWHERE.finditer(text))
     n = len(text)
     spans = []
+    # 🐛 [2026-09-25] (R81, 2026-09-25) Every stem hit walked its whole identifier run in both
+    # directions, so N hits inside ONE long run cost N walks of that run. A 200 KB base64url blob
+    # (`-` and `_` are identifier characters here) carries dozens of `key`/`token` substrings by
+    # chance and took 16.0 s; 50 KB took 1.4 s. A hit that starts inside the previous run is in the
+    # same run: its span merges with the previous one whatever `lo` is, so only `hi` moves on, from
+    # where the last walk stopped. Output identical; each character is walked at most once.
+    run_hi = -1
     for m in lit.finditer(text):
-        lo, hi = m.start(), m.end()
-        while lo > 0 and (text[lo - 1].isalnum() or text[lo - 1] in "_-"):
-            lo -= 1
+        lo, hi = m.start(), max(m.end(), run_hi)
+        if lo >= run_hi:
+            while lo > 0 and (text[lo - 1].isalnum() or text[lo - 1] in "_-"):
+                lo -= 1
         while hi < n and (text[hi].isalnum() or text[hi] in "_-"):
             hi += 1
+        run_hi = hi
         lo, hi = max(0, lo - _STEM_MARGIN), min(n, hi + _STEM_MARGIN)
         if spans and lo <= spans[-1][1]:
             spans[-1][1] = max(spans[-1][1], hi)
