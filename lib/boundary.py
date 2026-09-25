@@ -114,7 +114,12 @@ def _outside_targets(command, root):
         # unseen. The target is then taken from the original, quotes and all.
         raw = re.sub(r"^>{1,2}\s*", "", command[m.start():]).split()
         if raw:
-            candidates.append(raw[0].strip("'\""))
+            # 🐛 [2026-09-25] (self-measured) An unquoted shell word also ends at `;`, `&`, `|` and
+            # `)`, so `until …; do …; done >/dev/null; echo` took `/dev/null;` as the target and
+            # raised the 🔴 notice on a discard. Cut there -- a quoted target keeps its quotes and
+            # is not cut.
+            _word = raw[0] if raw[0][:1] in "'\"" else re.split(r"[;&|()]", raw[0])[0]
+            candidates.append(_word.strip("'\""))
     for raw in candidates:
         # 🐛 [2026-09-24] (self-measured) Found by the Windows CI legs on the 1.31.1 check branch.
         # The shape test ran AFTER `expanduser`, and on Windows `~/.zshrc` expands to
