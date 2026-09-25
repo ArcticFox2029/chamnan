@@ -41923,6 +41923,89 @@ try:
           saw=[l for l in _t_map293.splitlines() if "binary" in l][:2])
 finally:
     _sh293.rmtree(_t_repo293, ignore_errors=True)
+# ---- 294_gitignore_fallback_agrees_with_git_on_excluded_parents.py
+# ------------------ the no-git .gitignore walk agrees with git on an excluded parent directory
+# 🐛 [2026-09-25] (R207, 2026-09-25) git cannot re-include a file whose parent directory is
+# excluded, and the file walk knew that only for a pattern spelled with a trailing `/`. A bare
+# `build` excludes the directory just the same, so `build` + `!build/keep.txt` re-included the file
+# here while `git check-ignore` kept it ignored. Asserted over every case, not the one that broke,
+# and against git itself where git is present.
+import shutil as _sh294, subprocess as _sp294, tempfile as _tf294                     # noqa: E402
+from pathlib import Path as _P294                                                    # noqa: E402
+
+_t_root294 = _P294(_tf294.mkdtemp(prefix="chamnan-gitignore-"))
+try:
+    (_t_root294 / ".gitignore").write_text(
+        "build\n!build/keep.txt\nlogs/\n!logs/a.log\n*.tmp\n!keep.tmp\nout/*\n!out/kept.txt\n",
+        encoding="utf-8")
+    # path -> what git answers for it, written down so the check holds on a machine without git.
+    _t_cases294 = {"build/keep.txt": True, "build/x.txt": True, "logs/a.log": True,
+                   "x.tmp": True, "keep.tmp": False, "out/kept.txt": False, "out/y.txt": True}
+    for _t_rel294 in _t_cases294:
+        (_t_root294 / _t_rel294).parent.mkdir(parents=True, exist_ok=True)
+        (_t_root294 / _t_rel294).write_text("", encoding="utf-8")
+    _t_got294 = {r: catalogs._ignored_by_files(_t_root294, _t_root294 / r) for r in _t_cases294}
+    check("THE .GITIGNORE FILE WALK CANNOT RE-INCLUDE A FILE UNDER AN EXCLUDED DIRECTORY, HOWEVER THE RULE IS SPELLED",
+          _t_got294 == _t_cases294,
+          saw={r: v for r, v in _t_got294.items() if v != _t_cases294[r]})
+    if _sh294.which("git"):
+        _sp294.run(["git", "init", "-q"], cwd=str(_t_root294), capture_output=True, stdin=_sp294.DEVNULL)
+        _t_git294 = {r: _sp294.run(["git", "check-ignore", "-q", "--", r], cwd=str(_t_root294),
+                                   capture_output=True, stdin=_sp294.DEVNULL).returncode == 0
+                     for r in _t_cases294}
+        check("...AND THE EXPECTED ANSWERS ARE GIT'S OWN",
+              _t_git294 == _t_cases294,
+              saw={r: v for r, v in _t_git294.items() if v != _t_cases294[r]})
+finally:
+    _sh294.rmtree(_t_root294, ignore_errors=True)
+# ---- 295_a_misspelt_config_key_is_named_not_dropped.py
+# ------------------ a misspelt config key is kept and named, not dropped in silence
+# 🐛 [2026-09-25] (R231, 2026-09-25) `ensure()` dropped every key not in DEFAULT_CONFIG as a
+# retired option, and a typo is one too: `{"log_retention_dayz": 30}` vanished from `config.json`
+# on the next session while the 7-day default went on deleting logs, and nothing said a word.
+# Measured before the fix: the key was gone from the file and the session block said nothing.
+# A key close to a real one is now kept as written and named with the key it was meant to be;
+# one close to nothing is still dropped as retired.
+import json as _js295, shutil as _sh295, subprocess as _sp295, tempfile as _tf295    # noqa: E402
+from pathlib import Path as _P295                                                    # noqa: E402
+
+_t_ws295 = _P295(_tf295.mkdtemp(prefix="chamnan-typo-")) / "r"
+try:
+    (_t_ws295 / ".git").mkdir(parents=True)
+    (_t_ws295 / ".chamnan").mkdir()
+    (_t_ws295 / ".chamnan" / ".version").write_text(ws.plugin_version(ROOT) + "\n", encoding="utf-8")
+    _t_cfg295 = _t_ws295 / ".chamnan" / "config.json"
+    _t_cfg295.write_text(_js295.dumps({**ws.DEFAULT_CONFIG, "log_retention_dayz": 30,
+                                       "nothing_like_any_setting": 1}), encoding="utf-8")
+    ws.LAST_CONFIG_KEYS_MISSPELT[:] = []
+    ws.ensure(_t_ws295)
+    _t_after295 = _js295.loads(_t_cfg295.read_text(encoding="utf-8"))
+    check("A MISSPELT CONFIG KEY IS KEPT IN THE FILE AS WRITTEN, NOT DROPPED AS A RETIRED OPTION",
+          _t_after295.get("log_retention_dayz") == 30, saw=sorted(_t_after295)[-5:])
+    check("...and is reported with the key it was meant to be",
+          ws.LAST_CONFIG_KEYS_MISSPELT == [("log_retention_dayz", "log_retention_days")],
+          saw=ws.LAST_CONFIG_KEYS_MISSPELT)
+    check("...while a key close to no setting is still dropped as retired",
+          "nothing_like_any_setting" not in _t_after295)
+    # The population, not the one key: no real setting may read as another's typo, or a correct
+    # config would be warned about. Every real key is checked against all the others.
+    import difflib as _dl295
+    _t_keys295 = list(ws.DEFAULT_CONFIG)
+    _t_clash295 = [(k, _dl295.get_close_matches(k, [o for o in _t_keys295 if o != k], 1,
+                                                   ws.CONFIG_TYPO_CUTOFF))
+                   for k in _t_keys295]
+    check("...and no real setting is close enough to another to be taken for its typo",
+          not [c for c in _t_clash295 if c[1]], saw=[c for c in _t_clash295 if c[1]])
+    _t_out295 = _sp295.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                           input=_js295.dumps({"cwd": str(_t_ws295), "source": "startup",
+                                               "hook_event_name": "SessionStart"}),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=120).stdout
+    check("...and the session block names it",
+          "`log_retention_dayz` — did you mean `log_retention_days`?" in _t_out295,
+          saw=[l for l in _t_out295.splitlines() if "config.json" in l][:3])
+finally:
+    _sh295.rmtree(_t_ws295.parent, ignore_errors=True)
 # ---- 29_the_gate_reads_both_streams.py
 # ------------------------------------------- "0 tracebacks" over a run that crashed
 # 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
@@ -43908,9 +43991,13 @@ check("the Agent-result hook exists", _t_hook58.is_file(), saw=str(_t_hook58))
 
 _t_reg58 = _js58.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
 _t_post58 = (_t_reg58.get("hooks", _t_reg58)).get("PostToolUse", [])
-_t_on_agent58 = [r for r in _t_post58 if r.get("matcher") == "Agent"]
-check("...and is registered on PostToolUse with matcher `Agent`, not on SubagentStop, which carries "
-      "none of the fields it reads",
+# 🐛 [2026-09-25] (R206) Claude Code 2.1.63 renamed the `Task` tool to `Agent`, and the payload's
+# `tool_name` changed with it. A matcher of `Agent` alone never fires on an older host, so the
+# registration names both.
+_t_on_agent58 = [r for r in _t_post58
+                 if {"Agent", "Task"} <= set((r.get("matcher") or "").split("|"))]
+check("...and is registered on PostToolUse with matcher `Agent|Task` (the tool's name before and "
+      "after Claude Code 2.1.63), not on SubagentStop, which carries none of the fields it reads",
       bool(_t_on_agent58) and any("chamnan_agent_result" in h.get("command", "")
                                   for r in _t_on_agent58 for h in r.get("hooks", [])),
       saw=_js58.dumps(_t_post58)[:160])
