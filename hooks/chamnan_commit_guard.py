@@ -82,7 +82,7 @@ def _is_commit(command):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
         payload = payload if isinstance(payload, dict) else {}
     except (ValueError, RecursionError, OSError):
         return 0

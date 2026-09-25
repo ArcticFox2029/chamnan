@@ -130,7 +130,7 @@ def _declared_model(root, agent_type):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
     except Exception:
         return 0
     if not isinstance(payload, dict):

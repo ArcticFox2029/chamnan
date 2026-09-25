@@ -1360,7 +1360,7 @@ def _ceiling_from_env(cfg):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
     except Exception:
         payload = {}
     # A payload that parses but is not an object — JSON `null`, or an array — used to crash the

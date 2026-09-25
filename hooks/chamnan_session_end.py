@@ -114,7 +114,7 @@ def _a_gotcha_is_owed(root, wsdir):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
     except Exception:
         payload = {}
     if not isinstance(payload, dict):

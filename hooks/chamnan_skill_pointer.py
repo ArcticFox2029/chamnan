@@ -577,7 +577,7 @@ def _edit_will_not_survive(payload):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
         payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0

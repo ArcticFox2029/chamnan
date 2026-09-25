@@ -1436,6 +1436,28 @@ def prune_sessions(root=None):
     return sessions.prune(root, load_config(root).get("session_retention_days", 30))
 
 
+def read_hook_payload(stream=None):
+    """The JSON event a host hands a hook on stdin -- or `{}`, said out loud, when a person ran the hook.
+
+    🐛 [2026-09-25] (R74, 2026-09-25) Every hook began with `json.load(sys.stdin)`. The host always pipes an
+    event in, but a person trying a hook in a terminal gets a TTY, and the load waits for input that
+    never comes: the hook looks hung. It happened in this project's own sessions more than once. A
+    TTY now means "no event": one line on stderr says what the hook expects, and the hook carries on
+    with an empty payload, which every hook already treats as nothing to do.
+    """
+    import json as _json
+    stream = sys.stdin if stream is None else stream
+    try:
+        interactive = stream.isatty()
+    except (AttributeError, ValueError, OSError):
+        interactive = False
+    if interactive:
+        print("chamnan: this is a hook -- it reads one JSON event on stdin from the host. "
+              "To try it by hand: echo '{\"cwd\": \".\"}' | python3 <hook>", file=sys.stderr)
+        return {}
+    return _json.load(stream)
+
+
 def hook_root(payload=None):
     """The repository root, for a hook, in the order the host actually guarantees.
 

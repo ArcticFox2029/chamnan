@@ -287,7 +287,7 @@ def _expensive_reads(payload, root):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
         payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0

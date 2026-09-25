@@ -83,7 +83,7 @@ def _note_query(payload):
 def main():
     started = time.time()
     try:
-        payload = json.load(sys.stdin)
+        payload = ws.read_hook_payload()
         # A payload that parses but is not an object -- JSON `null`, or an array -- used to
         # crash on .get() with an AttributeError, on every matching call, all session.
         payload = payload if isinstance(payload, dict) else {}
