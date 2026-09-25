@@ -603,22 +603,33 @@ nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
 ## The dashboard: what it actually cost, on your own numbers
 
-**New in 1.31.** Every figure on these pages is read out of your own workspace's logs. Nothing is
-sampled, nothing is estimated, and a page with no data says so rather than filling itself in — a
-fresh clone opens to greyed panels that name the file each one reads, which is the honest first
-view. It rebuilds itself at the end of every session, into your repository's own
+chamnan does several things for a session — it maps the repository, points at what is already
+known before a file is opened, flags a long document before it is read whole, and warns before a
+failure is repeated. **Whether that adds up to fewer tokens depends on your repository and on how
+you work, so measure it before you believe it.** The
+[measure page](https://arcticfox2029.github.io/chamnan-measure/) runs chamnan's real modules against
+your own repository in the browser; this dashboard then shows what happened once you use it.
+
+Every figure here is read out of your own workspace's logs. Nothing is sampled, and a page with no
+data says so rather than filling itself in — a fresh clone opens to greyed panels that name the
+file each one reads. It rebuilds itself at the end of every session, into your repository's own
 `.chamnan/statistic/` (gitignored — it is your activity, not your team's); open
 `.chamnan/statistic/report/index.html`. To build it by hand, run `statistic/build_statistic.py
 --root <your repository>` from the plugin.
 
+**The pictures below come from the repository chamnan is built in, not from a typical one.** The
+same files there are read again and again, and most of its tokens go into research rounds — reading
+outside work to find ideas and things worth fixing in chamnan. That is why its headline is small:
+0.42% in the month shown. Yours will be different, in either direction, and the page shows your
+own figure rather than this one.
+
 <img src="docs/dashboard/1-impact-hero.png" alt="The impact page: tokens saved by having the plugin, what kind of token each one was, what the repository puts in front of a session, and what the plugin did that would not have happened otherwise." width="100%">
 
-The top line is the one worth arguing with, so it shows its working: the bars **start at the
-common floor rather than at zero**, because the two totals differ by less than a fifth of a
-percent and would otherwise draw as one length. The saving is weighted the way a cache write is
-weighted, and the 25% that turns "characters a local model read" into "tokens saved" is **a
-judgement, not a measurement, and the page says so** — page 4 is where you replace it with your
-own numbers.
+The headline counts what a local model read instead of the session — where your own tooling runs
+one and records it; the plugin does not call a model itself — weighted the way a cache write is
+weighted. How much of that the session would otherwise have read itself is not something the
+plugin can know, so it is a setting, not a finding: page 4 is where you set it, and the headline
+follows.
 
 | | |
 |---|---|
