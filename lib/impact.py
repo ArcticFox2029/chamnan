@@ -130,6 +130,9 @@ TEST_MARKERS = (
     re.compile(r"(^|/)test_[^/]+$"), re.compile(r"_test\.[a-z]+$"),
     re.compile(r"\.test\.[a-z]+$"), re.compile(r"\.spec\.[a-z]+$"),
     re.compile(r"Tests?\.[a-z]+$"), re.compile(r"Test\.java$"),
+    # 🐛 [2026-09-25] (R120, 2026-09-25) Maven Surefire's four default class patterns include
+    # `*TestCase.java`, and one outside a `test/` directory was not recognised.
+    re.compile(r"TestCase\.java$"),
     # .NET puts the tests in a sibling PROJECT, not a subdirectory: MyApp/ beside MyApp.Tests/.
     # Every other marker here looks for a directory literally called test(s) or a filename that
     # announces itself, and both miss that shape entirely.
