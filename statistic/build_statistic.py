@@ -254,6 +254,8 @@ def _merge_usage(a, b):
             "spent": _merge_days(a.get("spent"), b.get("spent")),
             "last": b.get("last") or a.get("last"),
             "seen": sorted(set(a.get("seen") or ()) | set(b.get("seen") or ())),
+            "slots": _merge_days(a.get("slots"), b.get("slots")),
+            "spent_slots": _merge_days(a.get("spent_slots"), b.get("spent_slots")),
             "pending": b.get("pending") if b.get("pending") is not None else a.get("pending")}
 
 
@@ -265,6 +267,30 @@ def _merge_days(a, b):
 
 
 # ---------------------------------------------------------------- the panels
+
+# 🎯 [2026-09-25] (owner) "ควรมีเมนูปรับ timezone … คนใช้ repo อาจเป็นคนประเทศอื่น". A day or an hour
+# bucketed here is bucketed in THIS machine's zone and cannot be moved afterwards. So every count is
+# also kept in fifteen-minute slots of UTC -- fine enough for the zones that sit on a half or a
+# quarter hour -- and the page adds the slots up into days, months and hours in whatever zone the
+# reader picks, its own by default.
+SLOT_MINUTES = 15
+
+
+def _slot(epoch):
+    """The UTC slot an instant falls in, as 'YYYY-MM-DDTHH:MM'."""
+    s = int(epoch) // (SLOT_MINUTES * 60) * (SLOT_MINUTES * 60)
+    return time.strftime("%Y-%m-%dT%H:%M", time.gmtime(s))
+
+
+def _stamp_slot(stamp):
+    """The UTC slot of a transcript stamp, or ''."""
+    try:
+        import datetime as _dt
+        d = _dt.datetime.fromisoformat(str(stamp).strip().replace("Z", "+00:00"))
+        return _slot(d.timestamp() if d.tzinfo else time.mktime(d.timetuple()))
+    except (ValueError, TypeError, OverflowError):
+        return ""
+
 
 def _local_day_hour(stamp):
     """(YYYY-MM-DD, hour) on this machine's clock for a transcript stamp, or ("", 0)."""
@@ -296,6 +322,8 @@ def _usage_of(path, start=0, prev=None):
     tot = collections.Counter()
     per_day = collections.defaultdict(collections.Counter)
     spent = collections.defaultdict(collections.Counter)
+    per_slot = collections.defaultdict(collections.Counter)
+    spent_slot = collections.defaultdict(collections.Counter)
     n, at = 0, start
     last = (prev or {}).get("last")
     pending = dict((prev or {}).get("pending") or {})
@@ -338,7 +366,13 @@ def _usage_of(path, start=0, prev=None):
                 # so everything done before 07:00 at +07:00 was booked to the day before. The
                 # stamp is turned into this machine's local day and hour, like every log beside it.
                 day, hour = _local_day_hour(rec.get("timestamp"))
-                _spent_on(rec, pending, spent[day] if day else collections.Counter())
+                slot = _stamp_slot(rec.get("timestamp"))
+                _into = collections.Counter()
+                _spent_on(rec, pending, _into)
+                if day:
+                    spent[day].update(_into)
+                if slot:
+                    spent_slot[slot].update(_into)
                 # 🐛 [2026-09-25] (self-measured) The command series was drawn from `commands.jsonl`,
                 # which keeps 300 ordinary commands a day for the workflow detector, so every busy
                 # day read ~300: 316 on a day with 1,671 Bash calls. Counted here, from the
@@ -349,6 +383,8 @@ def _usage_of(path, start=0, prev=None):
                                 and b.get("name") == "Bash" and _once("t", b.get("id")):
                             per_day[day]["bash"] += 1
                             per_day[day]["bash_h%02d" % hour] += 1
+                            if slot:
+                                per_slot[slot]["commands"] += 1
                 u = (rec.get("message") or {}).get("usage")
                 if not isinstance(u, dict):
                     continue
@@ -360,6 +396,9 @@ def _usage_of(path, start=0, prev=None):
                 n += 1
                 if day:
                     spent[day][SPEND_OUTPUT] += int(u.get("output_tokens") or 0) * CHARS_PER_TOKEN
+                if slot:
+                    spent_slot[slot][SPEND_OUTPUT] += int(u.get("output_tokens") or 0) * CHARS_PER_TOKEN
+                    per_slot[slot]["requests"] += 1
                 for kind, field in (("cache_read", "cache_read_input_tokens"),
                                     ("cache_write", "cache_creation_input_tokens"),
                                     ("output", "output_tokens"),
@@ -368,16 +407,21 @@ def _usage_of(path, start=0, prev=None):
                     tot[kind] += v
                     if day:
                         per_day[day][kind] += v
+                    if slot:
+                        per_slot[slot][_SLOT_FIELD[kind]] += v
                 if day:
                     per_day[day]["requests"] += 1
     except OSError:
         return {"n": 0, "tot": {}, "days": {}, "last": last, "pending": pending,
-                "seen": sorted(seen)}, start
+                "seen": sorted(seen), "slots": {}, "spent_slots": {}}, start
     # Only the calls still waiting for a result carry over, so the map stays a handful of ids.
     return ({"n": n, "tot": dict(tot), "days": {d: dict(c) for d, c in per_day.items()},
              "spent": {d: {k: int(v) for k, v in c.items() if v} for d, c in spent.items() if c},
              "last": last, "pending": dict(list(pending.items())[-200:]),
-             "seen": sorted(seen)}, at)
+             "seen": sorted(seen),
+             "slots": {s: dict(c) for s, c in per_slot.items()},
+             "spent_slots": {s: {k: int(v) for k, v in c.items() if v}
+                             for s, c in spent_slot.items() if c}}, at)
 
 
 # 🎯 [owner, 2026-09-24] "ควรมีกราฟ tok 5 rank ว่าใช้ไปกับอะไร". What each thing put into the
@@ -387,6 +431,9 @@ def _usage_of(path, start=0, prev=None):
 # ranking is what the context was FILLED with, which is the part a person can change.
 # Stored in characters; the page divides by CHARS_PER_TOKEN like every other estimate on it.
 SPEND_OUTPUT = "the model's own output"
+# A transcript's usage kinds under the names the per-day series already uses.
+_SLOT_FIELD = {"cache_read": "t_read", "cache_write": "t_write", "new_input": "t_new",
+               "output": "t_out"}
 _SPEND_MARKS = ('"usage"', '"tool_result"', '"tool_use"', '"attachment"', '"type":"user"',
                 '"type": "user"')
 _TOOL_GROUPS = {"Read": "Read — file contents", "Bash": "Bash — command output",
@@ -455,7 +502,7 @@ def token_kinds():
     is the cheapest kind of token on every host that has caching at all, and the share is the
     number. (owner, 2026-09-23: *"เราไม่รู้ว่าคนใช้งานจะใช้ llm ค่ายไหน หรือว่ามี local ไหม"*)
     """
-    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v5")
+    scanned, changed = _cached_scan(transcripts(), _usage_of, "usage-v6")
     tot = collections.Counter()
     n = 0
     for row in scanned.values():
@@ -627,6 +674,8 @@ CHARS_PER_TOKEN = 3.8
 def series():
     """One row per day and per month: the counts every page's chart is drawn from."""
     day = collections.defaultdict(lambda: collections.Counter())
+    slots = collections.defaultdict(collections.Counter)
+    slot_spent = collections.defaultdict(collections.Counter)
     for name, field in (("pointer.jsonl", "opens"),
                         ("edits.jsonl", "edits"), ("long_reads.jsonl", "long_reads"),
                         ("scratch.jsonl", "scratch"), ("subagent_start.jsonl", "agents"),
@@ -635,10 +684,12 @@ def series():
             d = day_of(r)
             if d:
                 day[d][field] += 1
+                slots[_slot(when_of(r))][field] += 1
     for r in rows("pointer.jsonl"):
         d = day_of(r)
         if d and r.get("named"):
             day[d]["named"] += 1
+            slots[_slot(when_of(r))]["named"] += 1
     for p in sorted((WS / "state" / "local_assist" / "daily").glob("*.jsonl")):
         try:
             for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -650,6 +701,10 @@ def series():
                     continue
                 day[p.stem]["local_calls"] += 1
                 day[p.stem]["local_chars"] += int(r.get("saved_chars") or 0)
+                w = when_of({"ts": r.get("ts")})
+                if w:
+                    slots[_slot(w)]["local_calls"] += 1
+                    slots[_slot(w)]["local_chars"] += int(r.get("saved_chars") or 0)
         except OSError:
             continue
 
@@ -658,7 +713,7 @@ def series():
     # PER DAY now, so the picker drives a comparison over one window instead of two.
     # \U0001F534 The same cached scan `token_kinds` uses, so the two panels cannot disagree about a
     # transcript: one reader, one cache, two views of the result.
-    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v5")
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v6")
     spent = collections.defaultdict(collections.Counter)
     hour_grid = collections.defaultdict(lambda: [0] * 24)
     for row in scanned.values():
@@ -666,6 +721,10 @@ def series():
             continue
         for d, c in (row.get("spent") or {}).items():
             spent[d].update(c)
+        for s, c in (row.get("slots") or {}).items():
+            slots[s].update(c)
+        for s, c in (row.get("spent_slots") or {}).items():
+            slot_spent[s].update(c)
         for d, c in (row.get("days") or {}).items():
             day[d]["t_read"] += int(c.get("cache_read") or 0)
             day[d]["t_write"] += int(c.get("cache_write") or 0)
@@ -700,8 +759,18 @@ def series():
     # 🎯 [owner, 2026-09-23] "when the work happened 7 วันล่าสุด" — three weeks of rows
     # made the calendar a wall; a week is what a reader actually compares against today.
     recent = [d["day"] for d in days][-7:]
+    cutoff = _slot(time.time() - KEEP_DAYS * 86400)
+    slot_rows = []
+    for s in sorted(set(slots) | set(slot_spent)):
+        if s < cutoff:
+            continue
+        row = {"s": s, **{f: v for f, v in slots[s].items() if v}}
+        if slot_spent.get(s):
+            row["spent"] = {k: int(v) for k, v in slot_spent[s].items() if v}
+        slot_rows.append(row)
     return {"fields": list(fields), "days": days, "months": months,
-            "keep_months": KEEP_MONTHS,
+            "keep_months": KEEP_MONTHS, "slot_minutes": SLOT_MINUTES, "slots": slot_rows,
+            "zone": time.strftime("%z"),
             "hours": [{"day": d, "cells": grid.get(d, [0] * 24)} for d in recent]}
 
 
@@ -744,7 +813,7 @@ def by_hour():
     """When the work happens. Bash is one series; opens and edits are their own — never added."""
     hours = {"commands": [0] * 24, "opens": [0] * 24, "edits": [0] * 24}
     # Commands come from the transcripts, as in `series`: `commands.jsonl` keeps 300 a day.
-    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v5")
+    scanned, _changed = _cached_scan(transcripts(), _usage_of, "usage-v6")
     for row in scanned.values():
         for c in ((row or {}).get("days") or {}).values() if isinstance(row, dict) else ():
             for h in range(24):

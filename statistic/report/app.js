@@ -55,7 +55,23 @@ function toggles() {
     document.documentElement.setAttribute("data-theme", next);
     setPref("theme", next);
   });
-  return el("div", { class: "togs" }, lang, theme);
+  // The zone every day, month and hour on these pages is counted in. See `rezone` below.
+  const zone = el("select", { class: "tog", title: T("time zone", "เขตเวลา") },
+    (() => {
+      let zones = [];
+      try { zones = Intl.supportedValuesOf("timeZone"); } catch (e) { zones = []; }
+      if (!zones.includes("UTC")) zones = ["UTC"].concat(zones);
+      if (!zones.includes(TZ)) zones = [TZ].concat(zones);
+      return zones.map((z) => el("option", z === TZ ? { value: z, selected: "selected" } : { value: z },
+        z === BROWSER_TZ ? `${z} · ${T("this browser", "เครื่องนี้")}` : z));
+    })());
+  zone.addEventListener("change", () => {
+    setPref("tz", zone.value === BROWSER_TZ ? "" : zone.value);
+    const q = new URLSearchParams(location.search);
+    q.delete("tz");
+    location.search = q.toString();
+  });
+  return el("div", { class: "togs" }, zone, lang, theme);
 }
 
 
@@ -407,6 +423,63 @@ function stat(big, en, th) {
 
 const SERIES = S.series || { days: [], months: [], fields: [] };
 
+/* 🎯 [2026-09-25] (owner) "ควรมีเมนูปรับ timezone … ไม่ใช่ +7 เสมอไป". The build buckets days in the
+   zone of the machine it ran on, which is right for nobody reading the page from elsewhere. It also
+   ships every count in fifteen-minute UTC slots, and this adds them up into days, months, the hour
+   calendar and reading-against-writing in the zone chosen here -- the browser's own by default.
+   Without slots (a data file from an older build) the build's own days are used unchanged. */
+function validZone(z) {
+  try { new Intl.DateTimeFormat("en", { timeZone: z }); return true; } catch (e) { return false; }
+}
+const BROWSER_TZ = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (e) { return "UTC"; }
+})();
+const TZ = (() => {
+  const asked = new URLSearchParams(location.search).get("tz") || pref("tz", "");
+  return asked && validZone(asked) ? asked : BROWSER_TZ;
+})();
+
+(function rezone() {
+  const slots = SERIES.slots;
+  if (!Array.isArray(slots) || !slots.length) return;
+  const fields = (SERIES.fields || []).filter((f) => f !== "carried");
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", hourCycle: "h23" });
+  const days = {}, grid = {};
+  for (const s of slots) {
+    const at = {};
+    for (const part of fmt.formatToParts(new Date(s.s + ":00Z"))) at[part.type] = part.value;
+    const day = `${at.year}-${at.month}-${at.day}`, hour = Number(at.hour) % 24;
+    const row = days[day] || (days[day] = { day, spent: {} });
+    for (const f of fields) if (s[f]) row[f] = (row[f] || 0) + s[f];
+    for (const [k, v] of Object.entries(s.spent || {})) row.spent[k] = (row.spent[k] || 0) + v;
+    if (s.commands) (grid[day] || (grid[day] = new Array(24).fill(0)))[hour] += s.commands;
+  }
+  const dayRows = Object.keys(days).sort().map((d) => {
+    const r = days[d];
+    for (const f of fields) r[f] = r[f] || 0;
+    r.carried = r.t_read + r.t_write + r.t_new;
+    return r;
+  });
+  const months = {};
+  for (const r of dayRows) {
+    const m = r.day.slice(0, 7);
+    const row = months[m] || (months[m] = { month: m, spent: {}, days: 0 });
+    for (const f of fields.concat(["carried"])) row[f] = (row[f] || 0) + r[f];
+    for (const [k, v] of Object.entries(r.spent)) row.spent[k] = (row.spent[k] || 0) + v;
+    row.days += 1;
+  }
+  SERIES.days = dayRows;
+  SERIES.months = Object.keys(months).sort().map((m) => months[m]).slice(-(SERIES.keep_months || 12));
+  SERIES.hours = dayRows.slice(-7).map((r) => ({ day: r.day, cells: grid[r.day] || new Array(24).fill(0) }));
+  if (S.read_vs_write) {
+    const recent = dayRows.slice().reverse().filter((r) => r.opens || r.long_reads || r.edits).slice(0, 30);
+    S.read_vs_write.days = recent.map((r) => r.day);
+    S.read_vs_write.opens = recent.map((r) => r.opens + r.long_reads);
+    S.read_vs_write.edits = recent.map((r) => r.edits);
+  }
+})();
+
 function readPeriod() {
   const q = new URLSearchParams(location.search);
   const grain = q.get("grain") === "day" ? "day" : "month";
@@ -481,6 +554,7 @@ function head(page, p) {
       el("div", {},
         el("h1", {}, `${S.repo || "repository"} · ${T("statistics", "สถิติ")}`),
         el("p", { class: "sub" }, `${T("built", "สร้างเมื่อ")} ${S.built || "—"} · `
+          + `${T("days and hours in", "วันและชั่วโมงตามเวลา")} ${TZ} · `
           + T("every number names the file it came from", "ทุกตัวเลขบอกว่ามาจากไฟล์ไหน"))),
       el("div", { class: "topright" }, p ? picker(p) : null, toggles())),
     el("nav", {}, PAGES.map((x, i) =>

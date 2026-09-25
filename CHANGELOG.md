@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard has a time-zone menu.** Days, months and the hour calendar were always counted
+  in the zone of the machine that built the page. They are now counted in the zone you pick, and
+  the default is your browser's zone. Zones offset by a half or a quarter hour work too. The
+  choice is remembered in this browser.
 - **Bar charts on the dashboard line up.** Each bar's length and starting point depended on how
   long the number beside it was, so rows of one chart did not share a scale. All rows of a chart
   now share one track. The features chart now draws each feature's rate out of 100%, and sorts by

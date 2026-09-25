@@ -23,7 +23,7 @@ M.append(panel("when the work happened", "ทำงานช่วงไหน�
     el("p", { class: "src", style: "margin:0 0 12px" },
       T("one cell per hour · darker is heavier · hover for the value",
         "หนึ่งช่องคือหนึ่งชั่วโมง · เข้มกว่าคือหนักกว่า · ชี้เพื่อดูค่า")),
-    calendar(((S.series || {}).hours) || []),
+    calendar(SERIES.hours || []),
   ], { wide: true }));
 
 /* ---- reading against writing.
