@@ -98,7 +98,15 @@ def install(root, body, command=""):
     with held_target(root, TARGET) as target:
         path = target.path
         region = render(body)
-        existing = read_target(target)
+        # 🐛 [2026-09-25] (R90, 2026-09-25) Read in text mode, a `\r\n` file came back with `\n`
+        # and was written that way, so every line of somebody's Windows-made AGENTS.md changed and
+        # a byte-order mark was dropped -- a whole-file diff for a file this adapter promises to
+        # return byte for byte. Read raw now, and the region takes the file's own line ending,
+        # decided by its first line the way Black decides it.
+        existing = read_target(target, raw=True)
+        nl = "\r\n" if existing and existing.partition("\n")[0].endswith("\r") else "\n"
+        if nl != "\n":
+            region = region.replace("\n", nl)
         if existing is None:
             # 🐛 On a CASE-SENSITIVE filesystem this branch quietly creates a SECOND file. macOS and
             # Windows are case-insensitive by default, so `agents.md` and `AGENTS.md` are one inode
@@ -117,7 +125,7 @@ def install(root, body, command=""):
 
         head, marked, rest = existing.partition(START)
         if not marked:
-            if not write_target(target, existing.rstrip() + "\n\n" + region):
+            if not write_target(target, existing.rstrip() + nl + nl + region):
                 raise OSError(f"{target.path} could not be written")
             return path
 
@@ -135,7 +143,7 @@ def install(root, body, command=""):
         # One blank line between the region and whatever they wrote after it. Without it their next
         # heading butts against the end marker, which renders in most parsers but reads as damage
         # in the diff -- and this file is one a person opens by hand.
-        after = tail.lstrip("\n")
-        if not write_target(target, head + region + ("\n" + after if after else "")):
+        after = tail.lstrip("\r\n")
+        if not write_target(target, head + region + (nl + after if after else "")):
             raise OSError(f"{target.path} could not be written")
         return path

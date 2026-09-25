@@ -494,15 +494,20 @@ def held_target(root, rel):
         os.close(fd)
 
 
-def read_target(target):
+def read_target(target, raw=False):
     """The target's current text, or None when it is not there. Refuses to read through a symlink.
 
     The adapter that merges (`gemini`) reads before it writes, and this is the read half of the
     same window `held_target` closes -- reading by name would resolve the name a second time.
+
+    `raw=True` keeps a byte-order mark and `\r\n` line endings exactly as they are, for an adapter
+    that promises to hand the rest of somebody's file back byte for byte (`generic`).
     """
+    enc, nl = ("utf-8", "") if raw else ("utf-8-sig", None)
     if target.dir_fd is None:
         try:
-            return target.path.read_text(encoding="utf-8-sig")
+            with open(target.path, "r", encoding=enc, newline=nl) as fh:
+                return fh.read()
         except (FileNotFoundError, UnicodeDecodeError):
             return None
     try:
@@ -516,7 +521,7 @@ def read_target(target):
                 f"outside the repository, and this adapter merges what it reads into a file it "
                 f"then writes here.") from exc
         raise
-    with os.fdopen(fd, "r", encoding="utf-8-sig") as fh:
+    with os.fdopen(fd, "r", encoding=enc, newline=nl) as fh:
         return fh.read()
 
 
@@ -703,7 +708,8 @@ def write_target(target, text):
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644,
                      dir_fd=target.dir_fd)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # newline="" for the reason `ws.atomic_write_text` gives: the text is written as it is.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
         os.replace(tmp, target.leaf, src_dir_fd=target.dir_fd, dst_dir_fd=target.dir_fd)
         # Recorded AFTER the replace, on both branches of this function. Before it, a write that

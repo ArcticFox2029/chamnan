@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-context --write` keeps an `AGENTS.md` made on Windows as it was.** A file with `\r\n`
+  line endings came back with `\n` on every line, and a byte-order mark was dropped, so updating
+  chamnan's region showed as a change to the whole file. The text outside the region is now
+  returned byte for byte, and the region uses the file's own line ending.
 - **An `AGENTS.md` with two chamnan regions is refused instead of half-updated.** When a paste
   or a merge left a second `<!-- chamnan:start -->` region in the file, the first was replaced and
   the second stayed stale, so the agent read two chamnan blocks that disagreed. `chamnan-context
