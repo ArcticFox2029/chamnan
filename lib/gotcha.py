@@ -117,7 +117,7 @@ _PLACEHOLDER = "<REDACTED>"
 def might_repeat(wsdir, tool, raw):
     """False when no recorded repeat for `tool` could equal the scrubbed form of `raw`.
 
-    🎯 [2026-09-25] (R80 claudeaccount2, 2026-09-24) Scrubbing the command to compare it compiled
+    🎯 [2026-09-25] (R80, 2026-09-24) Scrubbing the command to compare it compiled
     about 120 patterns in a fresh process: 166 ms of a 250 ms PreToolUse hook, on every Bash call,
     to answer a question whose answer is "no" almost every time. Scrubbing only swaps spans for
     `<REDACTED>`, so every piece of a stored subject between markers is text from the raw command;

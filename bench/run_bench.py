@@ -293,7 +293,7 @@ def _report_refusals(data):
     the model refused outright, and on the chamnan arm it produced a full 45-entry table of
     live-looking credential values across 33 turns. Both are defensible if the corpus really is
     fictional as its own README says. What is not defensible is that the run folded that into a
-    token-cost table and printed no line about it at all (R4 acc3, outcome benchmark).
+    token-cost table and printed no line about it at all (R4, outcome benchmark).
     #
     A tool whose argument is "less of your repository reaches a model you cannot verify" has to
     report the case where adding it made a model MORE forthcoming with credential-shaped text, in
@@ -343,7 +343,7 @@ def _report_spread(data, trials):
 def _report_separable(cells):
     """Name every arm-to-arm difference the trials cannot actually separate.
 
-    🐛 [2026-09-21] (R45 acc4, 2026-09-21) The table above prints each cell's spread and then
+    🐛 [2026-09-21] (R45, 2026-09-21) The table above prints each cell's spread and then
     leaves the comparison to the reader's eye, which is how this project published 845 ms from a
     three-run sample and re-measured the same thing at 1,106 and 1,228. The change that number
     justified cost ten tested properties and was reverted. Printing the spread was never the gap:

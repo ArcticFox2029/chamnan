@@ -320,7 +320,7 @@ BENIGN = [
 for label, text in BENIGN:
     check(f"redact leaves {label} alone", redact.scrub(text) == text)
 
-# 🐛 [2026-09-24] (R14 acc5, 2026-09-24) A key-shaped word ending its own line in `:` with nothing after
+# 🐛 [2026-09-24] (R14, 2026-09-24) A key-shaped word ending its own line in `:` with nothing after
 # it -- the tail of a Python `if ... != last_user_key:`, not a config key -- was pairing with an
 # unrelated assignment on the NEXT line: `ASSIGNED_SECRET_BARE`'s separator crossed the newline,
 # and its type-annotation branch read `state["gap_ping_anchor"] = ` as though IT were this key's
@@ -4680,7 +4680,7 @@ reported = re.search(r"Rules this repository works under\s+([\d,]+)", priced)
 # heading text or to the accounting format would stop running them and the suite would stay green
 # with nothing said. The population is asserted instead of skipped, because unlike the
 # live-workspace check above this is not an environment condition -- the fixture always produces
-# both, and their absence IS the regression (R4 acc3, 2026-09-08 backlog triage, ranked first of the round).
+# both, and their absence IS the regression (R4, 2026-09-08 backlog triage, ranked first of the round).
 check("the priced-section fixture still produces a rules section and a reported figure to check",
       bool(rules_chunk) and bool(reported))
 if rules_chunk and reported:
@@ -8325,7 +8325,7 @@ _rmtree(_ret.parent, ignore_errors=True)
 # objects with names of the length a GitOps monorepo actually produces cost 4,059 tokens: more than
 # the whole 3,000-token default index budget, from one optional section, while MAX_PER_GROUP = 14
 # reported nothing wrong. mapper concatenates this straight into the text `tokens.fits` measures,
-# so it forced the directory roll-up onto the entire repository's Quick Index (R10 acc3, 2026-09-06).
+# so it forced the directory roll-up onto the entire repository's Quick Index (R10, 2026-09-06).
 _dep_name = "payments-settlement-nightly-reconciliation-eu-west-1-blue"
 def _dep_found(kinds, per_kind, namelen=73):
     return {"k8s": {f"Kind{k:02d}": [(_dep_name + f"-{i:03d}")[:namelen].ljust(namelen, "x")
@@ -9517,7 +9517,7 @@ check("...and the sweep found the calls it was written to police",
 # `chamnan-promote` wrote its one new entry over the top and every previously registered tool, with
 # its run counters, was gone. Silently and permanently. An unresolved `<<<<<<< HEAD` is the ordinary
 # way there: index.json is committed, two branches registering different tools collide in it.
-# Reported independently by two rounds (R9 acc3, 2026-09-07, R10 agent 2) and unfixed both times; the guard
+# Reported independently by two rounds (R9, 2026-09-07, R10 agent 2) and unfixed both times; the guard
 # already existed one file away in `state.render`.
 import tools_index as _tic  # noqa: E402 — the module-level alias is imported further down
 _ti = Path(tempfile.mkdtemp(prefix="chamnan-ticonf-")) / "r"
@@ -9555,7 +9555,7 @@ _rmtree(_ti.parent, ignore_errors=True)
 # `memory.unresolved_conflict` on 2026-09-06 after a badly-resolved merge injected both sides of
 # STATE.md as settled fact; MAP.md is the same shape of file and was reported the same day and never
 # picked up. It is the store MOST likely to conflict, not the least: two branches editing UNRELATED
-# source files still collide in its alphabetical Quick Index (R9 acc3, 2026-09-07).
+# source files still collide in its alphabetical Quick Index (R9, 2026-09-07).
 _mc = Path(tempfile.mkdtemp(prefix="chamnan-mapconf-")) / "r"
 (_mc / "src").mkdir(parents=True)
 subprocess.run(["git", "init", "-q"], cwd=_mc, capture_output=True)
@@ -9588,7 +9588,7 @@ check("A NOTEBOOK IS UNINDEXED SOURCE, NOT PAYLOAD",
 
 # 🐛 [2026-09-07] `MAX_CARRY_CHARS` was a raw character cap, the exact anti-pattern `lib/state.py`'s
 # docstring names two files away: "a flat character cap mis-prices any file that is not mostly Latin
-# script". Measured 1.99x for Thai at the same character count (R10 acc3, 2026-09-06). The English case must not
+# script". Measured 1.99x for Thai at the same character count (R10, 2026-09-06). The English case must not
 # move — 500 tokens is what 1,200 characters of English came to.
 _carry_en = "Finish the retry path in the importer and re-run the migration. " * 20
 _carry_th = "แก้เส้นทางลองใหม่ในตัวนำเข้าแล้วรันการย้ายข้อมูลอีกครั้ง " * 20
@@ -9684,7 +9684,7 @@ _rmtree(_sk.parent, ignore_errors=True)
 # `DETAIL_LIMIT` bounded how many tables got a detailed line and nothing bounded what a line cost,
 # so 40 tables with an ordinary 140-character summary rendered 3,866 tokens against a 3,000-token
 # index budget. The cliff was INVERTED, which is why nobody noticed: 41 tables took the names-only
-# branch at 674 tokens while 40 took the detailed one at 3,866 (R5 acc3, 2026-09-07).
+# branch at 674 tokens while 40 took the detailed one at 3,866 (R5, 2026-09-07).
 def _schema_fake(n, summary=140):
     return [{"name": f"customer_billing_events_{i:03d}", "summary": "S" * summary,
              "source": f"db/migrations/{i:04d}_create_table.sql", "columns": []}
@@ -9714,7 +9714,7 @@ check("...and a repository with no schema gets no section", schema.render([]) ==
 # service-account key, the most common real "secret in a repo" shape after `.env`, lost two fixed
 # publicly documented Google endpoints that way. `_looks_like_a_credential_name` twenty lines up
 # already stripped quotes correctly: two helpers, one file, same job, different normalisation
-# (R5 acc3, 2026-09-07 found the `auth_uri` case; the class is wider than the case).
+# (R5, 2026-09-07 found the `auth_uri` case; the class is wider than the case).
 _json_key = lambda k, v: f'  "{k}": "{v}",'
 for _name in ("api_key_path", "password_file", "auth_url", "auth_uri", "secret_name",
               "token_provider", "credential_type"):
@@ -9794,7 +9794,7 @@ check("...and does not skip one that can",
 # to disk: `chamnan-timeline new "my thread" -h` created `my-thread-h.md`, and
 # `chamnan-promote tool.sh mytool -h` installed the tool and exited 0. Both files are permanent and
 # tracked, with the flag baked into the name, from a user asking what the command does. Two more
-# escaped only because their argument was consumed first — by accident, not design (R6 acc3, 2026-09-07).
+# escaped only because their argument was consumed first — by accident, not design (R6, 2026-09-07).
 #
 # DERIVED, so a command added next year is covered by existing rather than by being remembered.
 _hlp = Path(tempfile.mkdtemp(prefix="chamnan-helpflag-")) / "r"
@@ -10157,7 +10157,7 @@ _rmtree(_ga, ignore_errors=True)
 # 🐛 [2026-09-06] Only two fixed paths were read, both anchored at the repository ROOT, and git
 # honours a `.gitattributes` at any depth scoped to its own subtree — which is exactly how a
 # monorepo package declares its own generated files without write access to a shared root file.
-# Reproduced with a location-only A/B (R6 acc3, 2026-09-06, unusual repositories): the identical declaration,
+# Reproduced with a location-only A/B (R6, 2026-09-06, unusual repositories): the identical declaration,
 # moved from the root file into `packages/sub/.gitattributes`, stopped being honoured — the file
 # was indexed as ordinary source, counted against `described`, and offered to the commenter agent.
 # The A/B is the test, because a single fixture cannot tell "the rule works" from "the rule only
@@ -10627,7 +10627,7 @@ check("...and the session is told it is running on defaults", "does not parse" i
 # Refusing to start would be worse than the bug — a session with no block is what the rest of this
 # hook exists to prevent — so the run continues and the block is still built.
 check("...while the session still gets its block", "## chamnan" in _bcout)
-# 🐛 [2026-09-24] (R45 acc4, 2026-09-24) A known key of the wrong type or out of range was silently
+# 🐛 [2026-09-24] (R45, 2026-09-24) A known key of the wrong type or out of range was silently
 # REPLACED by the default on this same write -- not merely ignored at read time (`load_config`
 # already does that correctly) but destroyed on disk, the same harm the malformed-file bug above
 # was fixed for. Reproduced with a quoted number and a 1 used for a boolean.
@@ -11329,7 +11329,7 @@ check("...and is not cut mid-character on the way",
 #
 # So this is a decision, not a defect: equal COST and equal INFORMATION cannot both hold across
 # scripts, and one round already chose information. Reverted rather than flipped, and recorded here
-# with both numbers so whoever decides has them (R10 acc3, non-English repositories). The thing that
+# with both numbers so whoever decides has them (R10, non-English repositories). The thing that
 # must NOT happen is this being changed back and forth by successive rounds each seeing one half.
 check("the clip is still bounded by characters, which is the recorded choice",
       "def _clip(text, limit=110)" in (ROOT / "lib" / "mapper.py").read_text(encoding="utf-8"))
@@ -12880,7 +12880,7 @@ _NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
 # table enumerated 18 of 22 keys, the Requirements row said four hook events where five are
 # registered, CONTRIBUTING said four commands where there are ten and "there is no CI" beside a
 # workflow that runs on every commit, and two docs still said chamnan "never invokes git" — a claim
-# the README had already corrected, left standing in its siblings (R1 acc3). Prose does not fail a
+# the README had already corrected, left standing in its siblings (R1). Prose does not fail a
 # test on its own, so the numbers are held against their source here, the way CLAUDE.md's retention
 # figures already are.
 _readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -14741,7 +14741,7 @@ _rmtree(_gsroot.parent, ignore_errors=True)
 # an ordinary dirty tree — a file count and a branch name — and the one fact that changes what the
 # reader does next was dropped: you are stuck, and the way out is `--continue` or `--abort`. git
 # does not put this in `status --porcelain`; a conflicted merge shows as `UU path` and a rebase as
-# an ordinary dirty tree (R6 acc3, 2026-09-06, unusual repositories). Driven through a REAL conflict rather
+# an ordinary dirty tree (R6, 2026-09-06, unusual repositories). Driven through a REAL conflict rather
 # than by planting a marker file, so the check would notice if git stopped writing one.
 _confl = Path(tempfile.mkdtemp(prefix="chamnan-conflict-"))
 _confenv = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
@@ -15407,7 +15407,7 @@ check("...and an upgraded plugin path is corrected in place",
 # because `/clear` is what just discarded it. `matcher` on a lifecycle event is an EXACT string in
 # Gemini's own reference, and SessionStart's documented sources are startup | resume | clear.
 # chamnan's Claude Code registration sets no matcher at all, i.e. every source; this is that same
-# rule, reaching the other member of the set (R1 acc3, 2026-09-06, adapter targets).
+# rule, reaching the other member of the set (R1, 2026-09-06, adapter targets).
 _gemsrcs = {g.get("matcher") for g in _again["hooks"]["SessionStart"]
             if any(h.get("name") == "chamnan-context" for h in g.get("hooks", []))}
 check(f"EVERY SessionStart SOURCE GEMINI DOCUMENTS IS REGISTERED: {sorted(_gemsrcs)}",
@@ -17562,7 +17562,7 @@ check("...and the README says why Claude Code has none",
 # one of them reported somebody else's repository: the session block said "10 uncommitted file(s)"
 # for a directory with one file and no commits, `chamnan-map` stamped MAP.md with the ancestor's
 # HEAD, and `--install-git-hook` resolved a RELATIVE hooks path four `../` deep and wrote a live
-# executable pre-commit hook into an unrelated repository, printing success (R6 acc3, 2026-09-07).
+# executable pre-commit hook into an unrelated repository, printing success (R6, 2026-09-07).
 #
 # Twelve sites in seven files, no shared guard -- the shape this repository keeps paying for. So
 # the check is over the SET: every `git -C` in shipped code sits in a function that consults one of
@@ -17790,7 +17790,7 @@ _rmtree(_esc, ignore_errors=True)
 # 🐛 [2026-09-06] docs/verification.md's worked example printed `220/220 checks passed` as the
 # expected output of the suite, and the suite had passed 3,000 by then -- a snapshot from an early
 # release that survived a more than tenfold growth, telling anyone who verified the plugin from a
-# clean clone that a correct run was wrong by an order of magnitude (R1 acc3, 2026-09-06, untrue docs). Any
+# clean clone that a correct run was wrong by an order of magnitude (R1, 2026-09-06, untrue docs). Any
 # literal N/N in prose is the same trap: it is a measurement of one moment, written where nothing
 # re-measures it. The docs say N/N now, and this keeps it that way.
 # 🐛 [2026-09-09] The pattern had no thousands separator in it, so `4,405/4,405 checks passed` --
@@ -17827,7 +17827,7 @@ check("...and the pattern now sees a count written with thousands separators",
 # 🐛 [2026-09-06] The same trap one step over: the "In one screen" summary told a skimmer the page
 # was 1,900 lines when it was 2,329 — 21.5% out, and drifting further with every section added. On
 # a page where every other number carries a citation and a re-run command, the one number describing
-# the page itself was the one nobody kept in sync (R10 acc3, 2026-09-06). It reads "two thousand lines" now,
+# the page itself was the one nobody kept in sync (R10, 2026-09-06). It reads "two thousand lines" now,
 # which is a scale rather than a measurement and cannot go stale the same way.
 _self_count = []
 for _dp in sorted(list((ROOT / "docs").glob("*.md")) + [ROOT / "README.md"]):
@@ -18006,7 +18006,7 @@ else:
 # Seven of the seventeen defects fixed today were a rule applied to some members of a set and
 # forgotten in the identical ones beside it, and each was found one at a time by a person reading
 # code. A check that walks the set is the only thing that finds the next one without them
-# (R2 acc3, 2026-09-08, ranked second of five and the one that generalises).
+# (R2, 2026-09-08, ranked second of five and the one that generalises).
 #
 # Behavioural, not structural: it does not look for the word "mtime" in a sort key, because a
 # correct rewrite that spells it differently must not fail and a wrong one that keeps the word must
@@ -18061,7 +18061,7 @@ _rmtree(_fam.parent, ignore_errors=True)
 # of a three-way set to need the same fix: the tools index beside them ranks by run count then
 # recency, and `memory_mod.titles()` was fixed the same day for the identical reason. Measured on this
 # repository at the time: 20 skills, 8 invisible -- including the one written the day before to stop
-# a repeated mistake, cut from every session because its name begins with a w (R2 acc3, and reported
+# a repeated mistake, cut from every session because its name begins with a w (R2, and reported
 # twice before that without being acted on).
 #
 # The fixture makes the two orders disagree completely, so a regression cannot pass by accident:
@@ -18574,7 +18574,7 @@ _rmtree(_mfd, ignore_errors=True)
 # nineteen lines later. A file that GREW in between passed a check on a size it no longer had: a
 # 6 MB file was yielded whole against the 2 MB ceiling and SKIPPED_TOO_LARGE stayed EMPTY, so
 # nothing recorded that a limit had been crossed, and every downstream scanner got it as an
-# ordinary small file (R6 acc3, 2026-09-07). The earlier test above proves the mechanism holds against an
+# ordinary small file (R6, 2026-09-07). The earlier test above proves the mechanism holds against an
 # inflated CONSTANT; it says nothing about this, because nothing moves the file during it.
 #
 # The race is injected deterministically rather than raced for: the growth happens INSIDE the
@@ -19061,7 +19061,7 @@ finally:
     # while the table above already enumerates all six for a different property. A hook that raises
     # is not a wrong number in a report -- it is a session that starts with no context and a user
     # who is told nothing about why, which is the failure this whole plugin exists to avoid. The
-    # sweep it needed was one more loop over a list already built (R2 acc3, ranked first of five for
+    # sweep it needed was one more loop over a list already built (R2, ranked first of five for
     # value per line added).
     #
     # The host sends this JSON; chamnan does not choose it. Every shape below is one a real client
@@ -21087,7 +21087,7 @@ check("...and says why, so it reads as a reason rather than a rule",
 # 🐛 [2026-09-06] The grouping key was `casefold()` alone, which folds case and does NOT normalise.
 # A precomposed `café` (U+00E9) and its decomposed twin (`e` + U+0301) render identically, collapse
 # into one file on APFS exactly as the case pair does, and hashed to two different keys — so the
-# guard built for precisely this failure returned nothing (R6 acc3, 2026-09-06, hostile filesystem).
+# guard built for precisely this failure returned nothing (R6, 2026-09-06, hostile filesystem).
 import unicodedata as _ud  # noqa: E402
 _nfc = _ud.normalize("NFC", "caf\u00e9-strategy")
 _nfd = _ud.normalize("NFD", "caf\u00e9-strategy")
@@ -21168,7 +21168,7 @@ for _n in _typed_name_stores:
 # them landed on that single constant. In a Thai-language repository that is the normal case, not
 # an edge case: two Thai-titled sessions on one day both became `<date>-session.md` and the second
 # overwrote the first, and every Thai memory entry ever written collapsed onto one `entry.md`,
-# because memory filenames carry no date to separate them. Reported as dead code (R6 acc3, 2026-09-07); it is
+# because memory filenames carry no date to separate them. Reported as dead code (R6, 2026-09-07); it is
 # not — this repository's owner writes Thai.
 import sessions as _sess  # noqa: E402
 import timeline as _tlm  # noqa: E402
@@ -21310,7 +21310,7 @@ finally:
 # 🐛 [2026-09-06] The session block promises "Nothing writes here unless you ask", and the skills it
 # names had nothing enforcing it. `disable-model-invocation` defaults to false, so Claude Code may
 # load a skill on its own from a description match -- chamnan printed a guarantee in every session
-# that its own frontmatter contradicted (R1 acc3, 2026-09-06, platform drift). Checked over the SET, keyed off
+# that its own frontmatter contradicted (R1, 2026-09-06, platform drift). Checked over the SET, keyed off
 # the constant the hook actually names, so a write skill added later cannot be the one that is
 # forgotten -- and the other direction is checked too: a skill that must stay reachable (a
 # regenerable index is not a record) fails if somebody disables it.
@@ -22377,7 +22377,7 @@ check("...and a file with no trailing newline does not grow one",
 # `policy` was in neither of the two hand-written exemption lists, and the two disagree about which
 # words name a mechanism — one alone had `url`/`endpoint`/`ttl`, the other alone `regex`/`id`/`class`.
 # Both got the missing words together, because adding to one and forgetting the other is the defect
-# this file keeps producing (R6 acc2, 2026-09-08, which found it with the decoy word it had been handed).
+# this file keeps producing (R6, 2026-09-08, which found it with the decoy word it had been handed).
 for _decoy in ('password_policy = "minimum-twelve-characters"', "token_ttl = 3600",
                "key_rotation_days = 30", 'secret_manager_url = "https://vault.internal/v1"',
                "password_length = 12", "api_key_rate_limit = 100",
@@ -23036,7 +23036,7 @@ check(f"EVERY NAME THE SESSION BLOCK PRINTS PASSES THROUGH scrub (bare: {_hook_b
       _hook_bare == [])
 
 
-# ---------------------- a label on one line, its value on the next, 2026-09-08 (R5 a2 / R6 acc2)
+# ---------------------- a label on one line, its value on the next, 2026-09-08 (R5 a2 / R6)
 # 🐛 The personal-data keyword gate read the CURRENT LINE ONLY, so 16 of 17 generated multi-line
 # shapes passed through whole -- each with a valid checksum, each with no marker beside it. A YAML
 # block scalar, a pretty-printed JSON value and a support ticket are all written that way.
@@ -24250,7 +24250,7 @@ check("the git-handler sweep found the modules it is about", _gh_seen >= 5)
 # loaded into the same window. Measured on this repository: 8,925 bytes of block against a 9,000
 # ceiling, and a 17,116-byte CLAUDE.md against no budget at all — nearly twice the size, never
 # counted. Derived from `host._AGENTS` rather than hardcoding `CLAUDE.md`, because the same blind
-# spot exists for all twenty-four vendors in that table (R5 acc3, 2026-09-07 new_ideas #2).
+# spot exists for all twenty-four vendors in that table (R5, 2026-09-07 new_ideas #2).
 import host as _hc  # noqa: E402
 _cf_repo = Path(tempfile.mkdtemp(prefix="chamnan-ctxfiles-")) / "r"
 _cf_repo.mkdir(parents=True)
@@ -24330,7 +24330,7 @@ check("...while the ones with no role in prose are removed", not _inv_kept)
 # 🐛 [2026-09-07] `_TERMINAL_SAFE` exists to strip "characters that make text lie", and it was
 # written against characters that lie by REORDERING or ERASING what is on screen. It missed the two
 # blocks whose purpose is text that is not on screen at all — both documented attacks against LLM
-# assistants, not Unicode corner cases (R11 acc3, 2026-09-07, hostile repo).
+# assistants, not Unicode corner cases (R11, 2026-09-07, hostile repo).
 #
 # A committed file is the delivery: `chamnan-timeline show` prints a thread body, `chamnan-peek`
 # prints a file, and the SessionStart block carries rules and titles. A line reading "This file
@@ -24939,7 +24939,7 @@ check("no flag is documented and then called undocumented in the same help",
 # 🐛 [2026-09-08] `chamnan-map`'s comment-coverage suggestion said "Ask Claude" unconditionally, to
 # a reader who might be in Cursor's terminal or Aider's, and pointed at `/chamnan:bootstrap` — a
 # Claude Code slash command that exists for none of the other twenty-two vendors. The advice itself
-# is agent-agnostic; only the vendor name made it Claude's (R2 acc3, 2026-09-08, adapters).
+# is agent-agnostic; only the vendor name made it Claude's (R2, 2026-09-08, adapters).
 #
 # The name is printed on RUNNING evidence only. A `~/.claude/` says Claude Code was installed on
 # this machine once, not that it is the process reading the line — and on a machine with both
@@ -25083,7 +25083,7 @@ finally:
 # one `"null"`, `chamnan_subagent_start` got a five-payload loop — and the other four were never
 # fed anything but well-formed fixtures. The property held in all six when it was finally measured,
 # which is the point: it held by nobody's design and could stop holding without a red check
-# (R2 acc3, 2026-09-08, suite blindspots).
+# (R2, 2026-09-08, suite blindspots).
 #
 # Derived from the directory, so hook number seven is covered the day it is written rather than the
 # day somebody remembers it.
@@ -25153,7 +25153,7 @@ check("...and the ceiling it compares against is the one the hook actually uses"
 # and cut from every session because its name begins with a w.
 #
 # Each fix arrived with its own hand-built fixture. Nothing asked the question of the family, which
-# is why the second one existed at all (R2 acc3, 2026-09-08, suite blindspots). Two checks below: the shape,
+# is why the second one existed at all (R2, 2026-09-08, suite blindspots). Two checks below: the shape,
 # derived from source so a fifth member cannot join quietly, and the behaviour, driven.
 _r19_glob = re.compile(r'\.glob\((["\'])\*\.md\1\)')
 _r19_unranked = []
@@ -25324,7 +25324,7 @@ check(f"NO {_r23_win}-LINE RUN OF THIS SUITE EXISTS TWICE", not _r23_dups)
 # nothing accounting for the other eight. They are not lost — the Deployment, Data model and
 # Configuration sections right above are made of them — but somebody doing the obvious "did it
 # index my whole repo?" check gets a number that looks wrong and has to open MAP.md to find out it
-# is not (R4 acc3, 2026-09-09, first ten minutes).
+# is not (R4, 2026-09-09, first ten minutes).
 #
 # Deliberately separate from the "no reader for the extension" line, which fires only for
 # extensions that ARE somebody's source language: saying chamnan cannot read a Dockerfile would be
@@ -25398,7 +25398,7 @@ finally:
 # on their PATH, and nothing at the moment of installation said so — the README does, under
 # "Running it on each operating system", well past a Quick Start that never links to it. Inside
 # Claude Code the Bash tool resolves the plugin's bin regardless, so this is the terminal case,
-# which is exactly what somebody trying the CLI in their first ten minutes is in (R4 acc3, 2026-09-09).
+# which is exactly what somebody trying the CLI in their first ten minutes is in (R4, 2026-09-09).
 #
 # Said on the run that CREATES the index and only when the name really does not resolve here: a
 # line on every run is one people stop reading, and the people who need this need it once.
@@ -25528,7 +25528,7 @@ finally:
 # help with this one... compiling a list of live credential values isn't something I'll do") and the
 # chamnan arm produced a full 45-entry table of credential-shaped values across 33 turns. Both are
 # defensible if the corpus is fictional as its own README says. Folding that into a token-cost table
-# is not (R4 acc3, 2026-09-09, outcome benchmark).
+# is not (R4, 2026-09-09, outcome benchmark).
 #
 # A tool whose argument is "less of your repository reaches a model you cannot verify" has to report
 # the case where adding it made a model MORE forthcoming with credential-shaped text, in its own
@@ -31699,7 +31699,7 @@ if _live154:
           _declared > 0 or len(_live154) > 0)
 # ---- 155_the_three_config_tables_agree.py
 # ------------------ three tables describe one set of settings, and they have drifted before
-# R18 finding 5 (acc5, 2026-09-15) proposes merging `DEFAULT_CONFIG`, `_NON_NEGATIVE` and
+# R18 finding 5 (2026-09-15) proposes merging `DEFAULT_CONFIG`, `_NON_NEGATIVE` and
 # `_UPPER_BOUND` in `lib/workspace.py` into one declarative table, on the ground that 26 keys are
 # described in three places and seven of them appear in two.
 #
@@ -31763,7 +31763,7 @@ check("...and the key whose ceiling once never ran is in every table it belongs 
       and "rules_char_budget" in _nonneg155)
 # ---- 156_three_fence_scanners_give_one_answer.py
 # ------------------ three separate scanners read the same markdown structure
-# R18 finding 4 (acc5, 2026-09-15): `md.fenced_spans()`, `md.unclosed_fence_marker()` and
+# R18 finding 4 (2026-09-15): `md.fenced_spans()`, `md.unclosed_fence_marker()` and
 # `mdblock.fenced_lines()` are three state machines over the same CommonMark structure, and it
 # proposes replacing them with one iterator every structural reader consumes.
 #
@@ -31849,7 +31849,7 @@ check("...and a cut never leaves a fence open, which is what all three exist to 
           for _d in _DOCS156[:7] for _b_156 in range(1, min(len(_d), 60))))
 # ---- 157_every_adapter_module_is_registered.py
 # ------------------ the adapter population is written down twice and must not drift
-# R18 finding 3 (acc5, 2026-09-15) proposes deriving the adapter registry from the package with
+# R18 finding 3 (2026-09-15) proposes deriving the adapter registry from the package with
 # `pkgutil.iter_modules()` instead of spelling 22 modules in an import list and again in a table.
 #
 # Measured before acting, as its own NO condition asks: **they agree today.** 22 modules on disk, 22
@@ -31923,7 +31923,7 @@ check("...and every registered adapter declares what the package reads off it",
       not _thin157)
 # ---- 158_the_sets_that_are_identical_today_must_stay_identical.py
 # ------------------ two populations that agree today, asserted so the next member cannot differ
-# R20.5 (acc4, 2026-09-15) proposed merging both: one shared hook-output emitter, and generating
+# R20.5 (2026-09-15) proposed merging both: one shared hook-output emitter, and generating
 # `site/lib` at build time instead of committing it. Both were measured before being judged, which
 # is the rule this repository keeps having to relearn -- **merge when the duplication is DIVERGING;
 # assert when it is not** -- and both turned out to agree exactly.
@@ -32332,7 +32332,7 @@ check("...and chamnan-guard REFUSES on it rather than reporting it",
       saw="the detector exists but nothing acts on it")
 # ---- 161_every_command_answers_the_same_three_questions.py
 # ------------------ R20.5.1: the CLI contract, asserted over the commands rather than shared
-# R20.5 (acc4, 2026-09-15) proposed one `workspace.cli_prelude(argv)` because thirteen commands
+# R20.5 (2026-09-15) proposed one `workspace.cli_prelude(argv)` because thirteen commands
 # repeat the version/help/unknown-flag branches. Measured first, as this repository keeps having to
 # relearn: **merge when the duplication is DIVERGING; assert when it is not.**
 #
@@ -34790,7 +34790,7 @@ else:
         check("EVERY 🐛 RECORD DATED ON OR AFTER %s NAMES WHERE IT CAME FROM (A ROUND, OR A STATED "
               "NON-RESEARCH SOURCE)" % (_RULE_STARTED_186.isoformat(),),
               _t_offenders186 == [],
-              # 🐛 [2026-09-21] (R92 acc4, 2026-09-21) This said only that a record "names
+              # 🐛 [2026-09-21] (R92, 2026-09-21) This said only that a record "names
               # neither", and a reader who had just written `(self-measured, from two real
               # repositories)` could not see what was wrong with it. `STATED_SOURCE` matches
               # exactly `(self-measured)`, `(agent)` or `(owner)` and nothing else inside the
@@ -35018,7 +35018,7 @@ if _t_ws189 is not None:
         check("...and the sweep found marked numbers, so that is not a pass over nothing",
               _t_seen189 >= 3, saw="%d marked number(s) found" % _t_seen189)
 
-        # 🐛 [2026-09-21] (R24 acc4, 2026-09-21) The sweep asked for exact equality until today, so
+        # 🐛 [2026-09-21] (R24, 2026-09-21) The sweep asked for exact equality until today, so
         # it fired on every commit that grew the tree — 3,691 → 3,701 in one day, the same WARN with
         # the same remedy each time, which R24 #5 measures as the shape attention stops reaching.
         # It now separates a claim that has stopped being TRUE from a figure that merely understates
@@ -35496,7 +35496,7 @@ if _t_ws194 is not None:
                   "drop" % len(_t_tight194))
 # ---- 195_a_scheduled_run_records_a_number_the_agent_did_not_supply.py
 # ---- 195_a_scheduled_run_records_a_number_the_agent_did_not_supply.py
-# 🐛 [2026-09-20] (R10 acc3, 2026-09-20) Every field in an agent's run record came from the agent
+# 🐛 [2026-09-20] (R10, 2026-09-20) Every field in an agent's run record came from the agent
 # being measured. 73 runs across six agents were recorded that way and none was ever checked.
 # R10's name for the class is a SILENT SEMANTIC VIOLATION — nothing crashes, nothing errors, the
 # behaviour is simply wrong — measured at 20-57% of all failures per system across nine real
@@ -35793,7 +35793,7 @@ if _t_ws196 is not None:
                       saw="explicit path became %r" % _t_expl196)
 # ---- 197_a_pair_read_and_dismissed_is_not_asked_about_again.py
 # ---- 197_a_pair_read_and_dismissed_is_not_asked_about_again.py
-# 🐛 [2026-09-20] (R20 acc4, 2026-09-20; the ceiling it is measured against is R14 acc4's)
+# 🐛 [2026-09-20] (R20, 2026-09-20; the ceiling it is measured against is R14's)
 # `rule_conflicts.py` flagged 19 rule pairs, 3 survived its
 # second pass, and every one was read in full and dismissed. Without somewhere to put that
 # judgement the same three come back on the next run and on every run after it -- the shape this
@@ -35866,7 +35866,7 @@ if _t_ws197 is not None:
                                                    for r in _t_bad197[:3])))
 # ---- 198_ordinary_code_under_a_credential_name_stays_readable.py
 # ---- 198_ordinary_code_under_a_credential_name_stays_readable.py
-# 🐛 [2026-09-21] (R30 acc1, 2026-09-21) Check 115 makes this same property and builds ONE line per
+# 🐛 [2026-09-21] (R30, 2026-09-21) Check 115 makes this same property and builds ONE line per
 # credential word per shape. R30's measurement is that a property fed by a generator kills about 50x
 # the mutants of a hand-written case, and that 76% of what it will ever catch arrives in the first
 # twenty inputs — so the generator does not have to be large to be worth having.
@@ -36300,7 +36300,7 @@ if _t_ws201 is not None:
                   "what it names")
 # ---- 202_a_gap_inside_the_noise_is_not_a_difference.py
 # ---- 202_a_gap_inside_the_noise_is_not_a_difference.py
-# 🐛 [2026-09-21] (R45 acc4, 2026-09-21) `_report_spread` printed each cell's median, min, max and
+# 🐛 [2026-09-21] (R45, 2026-09-21) `_report_spread` printed each cell's median, min, max and
 # spread and then left the comparison to the reader's eye. That is how this project published
 # 845 ms from a three-run sample and re-measured the same thing at 1,106 and 1,228; the change that
 # number justified cost ten tested properties and was reverted. Printing the spread was never the
@@ -36432,7 +36432,7 @@ if _t_ws203 is not None:
                   % ", ".join(_t_teach203[:4]))
 # ---- 204_a_store_names_no_flag_or_call_that_is_gone.py
 # ---- 204_a_store_names_no_flag_or_call_that_is_gone.py
-# 🐛 [2026-09-21] (R50 acc4, 2026-09-21) `dangling-references.py` counts PATHS a store names, and
+# 🐛 [2026-09-21] (R50, 2026-09-21) `dangling-references.py` counts PATHS a store names, and
 # its `_REF` deliberately requires a separator or a source suffix. So a store naming a FLAG or a
 # CALL that no longer exists is invisible to it -- and that happened on this very day: the skill
 # and a rule file both went on naming `--deep` after it was removed from the dispatcher, and it was
@@ -36667,7 +36667,7 @@ if _t_ws206 is not None:
               saw="only %d row(s) in public mode" % len(_t_rows206))
 # ---- 207_a_published_row_closes_what_it_opens.py
 # ---- 207_a_published_row_closes_what_it_opens.py
-# 🐛 [2026-09-21] (R56 acc4, 2026-09-21) A row of the index is one line of Markdown, and three of
+# 🐛 [2026-09-21] (R56, 2026-09-21) A row of the index is one line of Markdown, and three of
 # them left a code span open, by two different routes. `head[:150]` cut `lib/redact.py:197`
 # mid-span, ending at "`scrub(scrub(x)) !=" with no closing tick; two more quote a source comment
 # containing a literal triple backtick, which is seven ticks on one line. Everything after an
@@ -36809,7 +36809,7 @@ if _t_ws208 is not None:
                   saw="; ".join(_t_bad208[:4]))
 # ---- 209_a_log_field_says_what_it_means.py
 # ---- 209_a_log_field_says_what_it_means.py
-# 🐛 [2026-09-21] (R84 acc4, 2026-09-21) `block_shape.jsonl` carried ten fields and documented none
+# 🐛 [2026-09-21] (R84, 2026-09-21) `block_shape.jsonl` carried ten fields and documented none
 # of them. `short` was read as "held back because it had gone stale" when it means "cut down to its
 # name to fit the budget", and a wrong conclusion about a real repository — that the ageing pass had
 # never fired in eighty firings — was published on the strength of it and had to be retracted.
@@ -41451,7 +41451,7 @@ finally:
     _sh254.rmtree(_tmp254, ignore_errors=True)
 # ---- 255_a_closed_thread_is_not_named_when_its_file_opens.py
 # ------------------ a closed thread is history, and the pointer does not name it
-# 🐛 [2026-09-24] (R21 acc5, 2026-09-24) On Lumin-App the most-named entry in 24 days — 56 times, 35 of them as the
+# 🐛 [2026-09-24] (R21, 2026-09-24) On Lumin-App the most-named entry in 24 days — 56 times, 35 of them as the
 # only thing named — was a thread whose status had been closed since the 1.6.0 batch. Driven through
 # the real `pointer.related` with one open and one closed thread naming the same file.
 import pathlib as _pl255, shutil as _sh255, tempfile as _tf255   # noqa: E402
@@ -41473,7 +41473,7 @@ finally:
     _sh255.rmtree(_ws255.parent, ignore_errors=True)
 # ---- 256_a_handoff_names_what_was_committed_after_the_old_session_stopped.py
 # ------------------ a handoff names what was committed after the old session stopped
-# 🎯 [2026-09-24] (R12 acc5, 2026-09-24) Tested from a research finding (SyncMind: an agent that does not know
+# 🎯 [2026-09-24] (R12, 2026-09-24) Tested from a research finding (SyncMind: an agent that does not know
 # the repository moved recovered in 0.33-3.33% of cases). A fresh session starts from the handoff,
 # so the handoff has to say what changed after the old conversation's last response — and say
 # nothing when nothing did. Driven through the real `handoff.write_handoff` on a throwaway repo.
@@ -41512,9 +41512,9 @@ finally:
     _sh256.rmtree(_repo256.parent, ignore_errors=True)
 # ---- 257_a_full_width_separator_is_a_separator.py
 # ------------------ a full-width separator is a separator
-# 🐛 [2026-09-25] (R69 acc4, 2026-09-24) A Japanese or Chinese input method types `：` and `＝`
-# (U+FF1A, U+FF1D), and `db_password：value` was left in the clear while the same line with `:` was
-# redacted. Derived from the one separator name rather than listed by hand, so a separator added
+# 🐛 [2026-09-25] (R69, 2026-09-24) A Japanese or Chinese input method types `：` and `＝`
+# (U+FF1A, U+FF1D), and a secret assigned with `：` was left in the clear while the same line with `:`
+# was redacted. Derived from the one separator name rather than listed by hand, so a separator added
 # to `_KV_SEP` later is covered here without editing this check — and each is also tried with
 # spaces and inside a Japanese sentence, the two places an IME puts it.
 import re as _re257                                                          # noqa: E402
@@ -41536,7 +41536,7 @@ check("...AND EVERY SEPARATOR IN IT REDACTS, SPACED OR NOT, INSIDE CJK TEXT OR N
       bool(_seps257) and not _missed257, saw=_missed257)
 # ---- 258_a_command_that_cannot_repeat_is_not_scrubbed_to_find_out.py
 # ------------------ a command that cannot repeat is not scrubbed to find out
-# 🎯 [2026-09-25] (R80 claudeaccount2, 2026-09-24) `gotcha.might_repeat` lets the PreToolUse hook skip
+# 🎯 [2026-09-25] (R80, 2026-09-24) `gotcha.might_repeat` lets the PreToolUse hook skip
 # a 166 ms scrub when no recorded repeat could match. It is only safe while it never says "no"
 # where the full comparison says "yes", so this compares the two on shapes that stress the pieces:
 # a plain repeat, a repeat carrying a redacted value, a stored subject cut in the middle of the
@@ -47424,7 +47424,7 @@ check("...and nothing in the scheduler executes a third binary behind the README
           "it runs git and this interpreter, and that sentence is what would become false")
 
 # --- 14. AT-MOST-ONCE, chosen rather than inherited.
-# 🎯 [acc4, 2026-09-12] "Firing once does not guarantee running once": the child can die after the
+# 🎯 [2026-09-12] "Firing once does not guarantee running once": the child can die after the
 # job starts and before the outcome is written, leaving the record `pending` for something else to
 # pick up. Which guarantee this feature wants is a decision, and the decision is at-most-once —
 # because it exists to get AROUND a usage limit, and a job that fires twice spends the quota it was
@@ -50322,7 +50322,7 @@ check("with reorder never called, _followers is exactly what it was",
 _se = Path(tempfile.mkdtemp(prefix="chamnan-expiring-sessions-")) / "r"
 (_se / ".git").mkdir(parents=True)
 ws.ensure(_se)
-# 🐛 [2026-09-24] (R20 acc5, 2026-09-24) These expectations held only before 12:00 UTC. `_age` dates a
+# 🐛 [2026-09-24] (R20, 2026-09-24) These expectations held only before 12:00 UTC. `_age` dates a
 # record from NOON UTC of the day in its name, so a record named 30 days ago is 29.9 days old at
 # 09:00 UTC and 30.1 at 15:00 — and "due tomorrow" became "already doomed" every afternoon. The
 # 1.31.1 CI ran in the morning and passed; the 1.31.2 check branch ran at 13:44 UTC and all five

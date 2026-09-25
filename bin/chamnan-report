@@ -1205,7 +1205,7 @@ def main(argv):
     # this is the command that PRUNES, so a misspelt flag did not merely do the wrong thing, it
     # deleted session records past the retention window while appearing to answer a question about
     # itself. The paragraph above records the same shape for `--help` and this half was left
-    # (R6 acc3, 2026-09-07). `chamnan-map` has refused unknown flags all along.
+    # (R6, 2026-09-07). `chamnan-map` has refused unknown flags all along.
     _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
     if _bad:
         print(f"chamnan: unknown option {_bad[0]!r} — this command takes no options",

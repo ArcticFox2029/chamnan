@@ -226,7 +226,7 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
                 text = f.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
-            # 🐛 [2026-09-24] (R21 acc5, 2026-09-24) A thread marked closed was still named every time a file it
+            # 🐛 [2026-09-24] (R21, 2026-09-24) A thread marked closed was still named every time a file it
             # lists was opened: on Lumin-App the most-named entry in 24 days, 56 times, was a thread
             # closed since the 1.6.0 batch, and in 35 of those it was the ONLY thing named — so the
             # pointer's whole message was "read this finished work". Found by testing a research

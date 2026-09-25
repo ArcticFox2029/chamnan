@@ -43,7 +43,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
           short_full=None, origins=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
-    🐛 [2026-09-21] (R84 acc4, 2026-09-21) WHAT EACH FIELD MEANS, because a reader of the JSONL had
+    🐛 [2026-09-21] (R84, 2026-09-21) WHAT EACH FIELD MEANS, because a reader of the JSONL had
     nothing to read and one of them was read as its opposite. `short` was taken to mean "held back
     because it had gone stale", a wrong conclusion about a real repository was published on the
     strength of it, and the retraction cost more than this comment. The subject of that round is

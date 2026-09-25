@@ -101,7 +101,7 @@ def in_source(text, symbol):
     # stack, instead of marking every node under a shadowing scope one at a time (which walked
     # most of the tree once per shadowing function, on top of the two full walks this replaces).
     #
-    # 🎯 [2026-09-25] (R65 acc4, 2026-09-24) A use of `symbol` has its text on a line inside the
+    # 🎯 [2026-09-25] (R65, 2026-09-24) A use of `symbol` has its text on a line inside the
     # node that holds it, so a subtree whose lines never mention the text cannot hold one and is
     # not descended into. Measured on this repository: 3.7 s per `chamnan-where` call, 2.7 s of it
     # walking and shadow-checking subtrees that could not contain the name. Line numbers are

@@ -60,7 +60,7 @@ def main(argv):
     # 🐛 [2026-09-07] Any unrecognised flag was accepted in silence and the default action ran, so
     # a misspelt flag did something other than what was asked with nothing on screen to say so.
     # `chamnan-map` has refused unknown flags for exactly this reason since it grew its own; the
-    # commands beside it never got the rule (R6 acc3, 2026-09-07).
+    # commands beside it never got the rule (R6, 2026-09-07).
     _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
     if _bad:
         print(f"chamnan: unknown option {_bad[0]!r} — "

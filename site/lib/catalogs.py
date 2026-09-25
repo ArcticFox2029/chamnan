@@ -580,7 +580,7 @@ def _is_ignored(root, path):
     # refuses is not a repository to git, so this call walked UP and let an ANCESTOR's .gitignore
     # decide this repository's answer -- a path ignored there reported ignored here. Falls through
     # to the file walk below rather than answering False, which is the documented degrade path and
-    # the right one when git cannot speak for this directory (R6 acc3, 2026-09-06, first ten minutes).
+    # the right one when git cannot speak for this directory (R6, 2026-09-06, first ten minutes).
     try:
         # check-ignore is asked about one specific path, so it is scoped by construction.
         if ws.git_can_speak_for(root):

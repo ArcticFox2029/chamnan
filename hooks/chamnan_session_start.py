@@ -107,7 +107,7 @@ def _read_bounded(path, ceiling):
 # these skills was keeping it. A SKILL.md with no `disable-model-invocation` takes the platform's
 # documented default of `false`, which means Claude Code may load and run the skill on its own from
 # a description match -- so chamnan printed a guarantee in every session that its own frontmatter
-# contradicted (R1 acc3, 2026-09-06, platform drift). All five record-writing skills now set it to true; the
+# contradicted (R1, 2026-09-06, platform drift). All five record-writing skills now set it to true; the
 # index-building ones (bootstrap, remap) deliberately do not, because a regenerable index is not a
 # record and CLAUDE.md asks for it to be rebuilt without being told. `SELF_INVOKED_SKILLS` is the
 # set-wide form: a new write skill added without the field fails the suite rather than quietly
@@ -772,7 +772,7 @@ def _map_is_current_by_git(root, map_path):
         # See workspace.git_owns. Without this the diff below runs against an ANCESTOR repository,
         # where the stamped sha is either unknown (128, read as "no git") or -- worse -- a real
         # commit of somebody else's history, and the map is then declared current or stale on
-        # evidence from a repository this index does not describe (R6 acc3, first ten minutes).
+        # evidence from a repository this index does not describe (R6, first ten minutes).
         return False
     try:
         head_text = map_path.read_text(encoding="utf-8-sig", errors="replace")[:600]
@@ -1835,7 +1835,7 @@ def main():
                 # fact. MAP.md is the same shape of file and the same failure: two branches editing
                 # UNRELATED source files still collide in its alphabetical Quick Index, so this is
                 # the store most likely to conflict, not the least — and half a merge leaves
-                # `<<<<<<< HEAD` in the largest section a session reads (R9 acc3, 2026-09-07).
+                # `<<<<<<< HEAD` in the largest section a session reads (R9, 2026-09-07).
                 #
                 # Said instead of the content, exactly as STATE.md says it: printing both sides
                 # under a warning invites the reader to pick one, which is the failure.
@@ -2392,7 +2392,7 @@ def main():
             # filesystem one survives -- the first name carrying the second file's content. On a
             # case-sensitive checkout both live and `latest()` picks by an mtime tie-break that a
             # fresh clone resets, so which of two contradictory records reaches the model is
-            # decided by nothing. (R5 acc3 windows semantics, which argued it correctly where an
+            # decided by nothing. (R5, windows semantics, which argued it correctly where an
             # earlier round argued the same shape for two stores it cannot apply to.)
             _sess_clash = memory.case_collisions(sessions.records(root))
             if _sess_clash:
@@ -2568,7 +2568,7 @@ def main():
             # fixed the same day for the identical reason. Skills never got it, and the cost is
             # exact: 20 skills in this repository, 8 of them invisible -- including
             # `writing_a_check_that_can_fail.md`, written the day before to stop a repeated mistake
-            # and cut from every session because its name begins with a w (R2 acc3, and reported
+            # and cut from every session because its name begins with a w (R2, and reported
             # twice before that without being acted on).
             #
             # mtime, with the filename as tie-break, for the reason `memory.py` gives at its own
@@ -2751,7 +2751,7 @@ def main():
             # as completely by load_config, was not detected at all, and would have been described
             # with syntax advice that does not apply to it. `config_is_malformed` names the reason
             # now and it is interpolated here, so the line tells the reader which mistake they made.
-            # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) `_config_problem` now appends "(line N, column
+            # 🐛 [2026-09-24] (R45, 2026-09-24) `_config_problem` now appends "(line N, column
             # M)" to "does not parse" so a syntax error can be found without a full re-read -- this
             # was an exact `==` against the string it used to always be, and stopped matching the
             # moment the location was added, silently falling into the wrap-in-`{ }` advice for a
@@ -2764,7 +2764,7 @@ def main():
                           f"being ignored. It has NOT been overwritten; {_fix} and it takes "
                           "effect on the next session._\n")
         if ws.LAST_CONFIG_KEYS_IGNORED:
-            # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) A key of the wrong type or out of range is now
+            # 🐛 [2026-09-24] (R45, 2026-09-24) A key of the wrong type or out of range is now
             # kept in `config.json` exactly as the user wrote it (see `_merged`'s own comment)
             # rather than silently replaced by the default -- but the running config still ignores
             # it, same as `load_config` always has, and a setting that quietly does nothing reads as

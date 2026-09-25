@@ -111,7 +111,7 @@ tbody tr:hover td { background: var(--panel2); }
 .statlab { color: var(--dim); font-size: 12.5px; margin: 2px 0 0; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 14px; }
 .note { color: var(--warm); font-size: 12.5px; margin: 12px 0 0; max-width: 78ch; }
-/* 🎯 [2026-09-24] (R42 acc5, 2026-09-24) A wide panel ran its notes and source lines to ~130
+/* 🎯 [2026-09-24] (R42, 2026-09-24) A wide panel ran its notes and source lines to ~130
    characters, and measured comprehension peaks near 55 with long lines read slower. The hero's
    sentences were already held to 66ch; the notes and source lines now are too. */
 .src { max-width: 90ch; }

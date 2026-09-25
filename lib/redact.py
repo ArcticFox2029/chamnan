@@ -118,7 +118,7 @@ _A_DOTTED_REFERENCE = re.compile(
 def _names_where_it_lives(value):
     """True when the value names WHERE the secret is kept rather than being the secret.
 
-    🐛 [2026-09-21] (R30 acc1, 2026-09-21) `api_key = os.environ["X"]`, `os.getenv("X")` and
+    🐛 [2026-09-21] (R30, 2026-09-21) `api_key = os.environ["X"]`, `os.getenv("X")` and
     `os.environ.get("X")` were all kept already — a bracket in the value answers this question for
     them further up. `api_key = os.environ` was redacted, and so were `z.infer<typeof schema>` and
     `$(command -v true)`: the same claim written without brackets. One decision, landed on the
@@ -159,7 +159,7 @@ def _is_a_plain_word(value):
     # question and `password = <redacted>` was being redacted by every one of them.
     if bool(_PLAIN_WORD.match(value)) or value[:1] in "([{<":
         return True
-    # 🐛 [2026-09-21] (R30 acc1, 2026-09-21) `api_key = os.environ["X"]`, `os.getenv("X")` and
+    # 🐛 [2026-09-21] (R30, 2026-09-21) `api_key = os.environ["X"]`, `os.getenv("X")` and
     # `os.environ.get("X")` were all already kept — their brackets hit the line above — while
     # `api_key = os.environ` was redacted. The same decision, applied to the three members of the
     # set that carry a bracket and forgotten in the one that does not, which is this repository's
@@ -891,7 +891,7 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
 # Deliberately NOT applied to the language-bound separators. Ruby's `=>` and a YAML block
 # scalar's bare `:` are different separators, not variants of this one, and forcing them
 # through a shared name would break both to satisfy a rule about neither.
-# 🐛 [2026-09-25] (R69 acc4, 2026-09-24) A Japanese or Chinese input method types the full-width
+# 🐛 [2026-09-25] (R69, 2026-09-24) A Japanese or Chinese input method types the full-width
 # colon and equals sign (U+FF1A, U+FF1D), and `db_password：value` passed through untouched while
 # the same line with `:` was caught. R69 asked for code-switched text to be measured as its own
 # slice; that slice was 7 of 8 before this line, and the one it missed was this.
@@ -962,7 +962,7 @@ _BETWEEN_NAME_AND_VALUE_SPACED = (
 # QUOTED rule and nowhere else, so the identical line with the quotes left off passed through whole.
 # The disease this repository keeps producing, in the one module where it leaks credentials.
 #
-# 🐛 [2026-09-24] (R14 acc5, 2026-09-24) The `\s*` after `_KV_SEP` here crossed a newline into a SECOND,
+# 🐛 [2026-09-24] (R14, 2026-09-24) The `\s*` after `_KV_SEP` here crossed a newline into a SECOND,
 # unrelated assignment on the next line, and `_BETWEEN_NAME_AND_VALUE_SPACED`'s type-annotation
 # branch (`identifier[...] = `) then read that assignment's OWN target as this key's "type", handing
 # its value to the placeholder. Real case: `proactive.py`'s
@@ -1257,7 +1257,7 @@ def _is_never_opened_name(name):
 # beside it survived. The asymmetry is in SECRET_WORDS: `token` fires only as a compound suffix
 # (`[A-Za-z0-9]+[_-]tokens?`), so a leading `token_` never matches, while `auth` has no such
 # left-side requirement and matches anywhere. One word bounded, its neighbour not — the same defect
-# this repository keeps finding, inside a single tuple (R5 acc3, 2026-09-07).
+# this repository keeps finding, inside a single tuple (R5, 2026-09-07).
 #
 # Added the whole class rather than `uri` alone: every one of these names a LOCATION or a PARTY, and
 # none of them has ever been the name of a credential. `issuer` and `audience` are the JWT claim
@@ -1276,7 +1276,7 @@ def _is_never_opened_name(name):
 # producing. They are NOT unified into a single vocabulary -- the two answer the same question at
 # different positions and each carries members the other would be wrong to inherit
 # (`password_class` is a mechanism; `password_url` is arguably not) -- and that unification needs a
-# measured pass of its own (R6 acc2, which named the gap and put the merge out of its own scope).
+# measured pass of its own (R6, which named the gap and put the merge out of its own scope).
 _CONFIG_ABOUT_A_SECRET = ("policy", "policies", "rotation", "days", "window", "level", "limit",
                           "mode", "rate", "length", "format", "strength", "age", "interval",
                           "attempts", "retries", "timeout")
@@ -1599,7 +1599,7 @@ def _names_a_mechanism(key, value=None):
     `api_key_path`, `password_file` and `auth_url` were all destroyed in a `.json` file and all
     correctly kept in the identical assignment outside one. A GCP service-account key — the most
     common real "secret in a repo" shape after `.env` — lost two fixed, publicly documented Google
-    endpoints that way (R5 acc3, 2026-09-07 found the `auth_uri` case; the class is wider than the case).
+    endpoints that way (R5, 2026-09-07 found the `auth_uri` case; the class is wider than the case).
 
     `_looks_like_a_credential_name` twenty lines up already normalises with a regex that strips the
     quote correctly. Two helpers, one file, the same job, different normalisation — so they share
@@ -1993,7 +1993,7 @@ def _prose_gap(gap):
     return ":" not in gap or bool(_GAP_IS_PROSE.search(gap.split(":", 1)[0]))
 
 
-# 🎯 [2026-09-25] (R80 claudeaccount2, 2026-09-24) Compiled on first use, not at import: 13 ms, and every
+# 🎯 [2026-09-25] (R80, 2026-09-24) Compiled on first use, not at import: 13 ms, and every
 # hook imports this module whether or not it scrubs anything. The same import used to compile a
 # second copy of this pattern, `_KEY_SAYS_CREDENTIAL`, which nothing had ever used; it is gone.
 _SECRET_WORD_ANYWHERE = _lazy(lambda: re.compile(SECRET_WORDS, re.I))
@@ -2761,7 +2761,7 @@ def _reads_like_a_credential(value):
     off to `_looks_like_a_passphrase`, which asks the narrower question a space cannot answer by
     itself: content words, none of them a function word, on their own.
     """
-    # 🐛 [2026-09-21] (R30 acc1, 2026-09-21) `type="password" autocomplete="off"` came back as
+    # 🐛 [2026-09-21] (R30, 2026-09-21) `type="password" autocomplete="off"` came back as
     # `type="password"<REDACTED>"off"` — an attribute NAME eaten and the quotes left unbalanced.
     # DELIMITED_AFTER_SECRET_WORD had taken the quote CLOSING the password attribute for one
     # OPENING a value, so the "value" it captured was the text between two attributes: a space, a
@@ -3121,7 +3121,7 @@ def scrub(text, windowed=True, *, _unmask=True):
 # text is CUT — works on the string before this table is ever applied.
 #
 # In this table rather than at the call sites, for the reason stated above: a per-call rule is one
-# every future print has to remember, and the misses are silent (R11 acc3, hostile repo).
+# every future print has to remember, and the misses are silent (R11, hostile repo).
 # 🎯 [R46 #4/#5, 2026-09-17] `_TERMINAL_SAFE` above strips ANSI escapes so a committed file cannot
 # rewrite what a reader sees. Probed the same way: a chat-template control token -- `<|im_start|>`,
 # `<|im_end|>`, `<|endoftext|>` -- sits in ordinary text next to it and passes through untouched,
@@ -3864,7 +3864,7 @@ def _redact_personal_data(text):
         # pretty-printed JSON value, a support ticket and a chat transcript are all written.
         # 16 of 17 generated multi-line shapes passed through whole, each with a valid checksum,
         # each with no marker beside it. `YAML_BLOCK_SECRET` exists for exactly this problem on the
-        # credential side of this file; nothing equivalent existed here (R5 agent 2, 2026-09-08, R6 acc2).
+        # credential side of this file; nothing equivalent existed here (R5 agent 2, 2026-09-08, R6).
         #
         # The window is the LABEL side only. The number is still matched in `folded` -- the current
         # line -- and still has to pass its own checksum, so this widens what counts as context and

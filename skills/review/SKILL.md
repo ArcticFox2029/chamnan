@@ -21,9 +21,9 @@ reviews of 1-100 lines falls to 28% above 1,000 — a review of a large change f
 found everything. The same goes for a change that mixes a rename or move with a change in
 behaviour: say so, and review the behaviour on its own — reviewers of a tangled change reported
 six false positives against one for the same change split in two.
-<!-- 🎯 [2026-09-24] (R47 acc4, 2026-09-24) The tangled-change figure is that round's ninth
+<!-- 🎯 [2026-09-24] (R47, 2026-09-24) The tangled-change figure is that round's ninth
      finding: 28 developers, one feature-plus-refactoring pair, p = 0.03. -->
-<!-- 🎯 [2026-09-24] (R35 acc5, 2026-09-24) Screened from a research round on code review: the
+<!-- 🎯 [2026-09-24] (R35, 2026-09-24) Screened from a research round on code review: the
      87%-to-28% figure is its first finding, and the review skill had no word about size. -->
 
 ## The four signals, and what each one is for

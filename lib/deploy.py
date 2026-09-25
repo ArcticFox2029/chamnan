@@ -61,7 +61,7 @@ SKIP = {".git", "node_modules", "__pycache__", ".venv", "vendor", ".terraform"}
 # `index_token_budget`, with MAX_PER_GROUP reporting nothing wrong. And it does not fail on its
 # own: mapper concatenates this into the very text `tokens.fits(index, budget)` measures, so one
 # oversized Deployment section forces the directory roll-up onto the entire repository's Quick
-# Index (R10 acc3, 2026-09-06).
+# Index (R10, 2026-09-06).
 #
 # The count cap stays as a floor against a wall of very short names; the token budget is now the
 # primary limit. One eighth of the configured index budget: this is a supplement to the Quick

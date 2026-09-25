@@ -45,7 +45,7 @@ CARRIED = ("Remaining", "Blockers")
 # script" — and this cap was the member of that set nobody revisited. Measured with chamnan's own
 # estimator: a Thai carry-forward note costs 1.99x the tokens of an English one at the same
 # character count, so a repository working in Thai was silently spending twice the injection budget
-# this number was chosen to bound (R10 acc3, 2026-09-07). 500 is what 1,200 characters of English came to, so
+# this number was chosen to bound (R10, 2026-09-07). 500 is what 1,200 characters of English came to, so
 # the English case is unchanged and only the mis-priced one moves.
 MAX_CARRY_TOKENS = 500
 
@@ -229,7 +229,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
         # interrupted `git init`, a copied-without-contents `.git` -- made every call below walk up
         # and answer about the nearest REAL repository above it. Reproduced: this section reported
         # "10 uncommitted file(s)" and named a branch, for a directory containing one file and no
-        # commits at all; both numbers were the ancestor's (R6 acc3, 2026-09-06, first ten minutes).
+        # commits at all; both numbers were the ancestor's (R6, 2026-09-06, first ten minutes).
         return ""
     try:
         # 🐛 [2026-09-06] chamnan's OWN workspace was counted as the user's uncommitted work. git
@@ -294,7 +294,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
     # 🐛 [2026-09-06] A session resumed in the middle of a rebase or a conflicted merge was told it
     # had an ordinary dirty tree -- a file count and a branch name -- and the one fact that changes
     # what the reader should do next was dropped: you are stuck, and the way out is `--continue` or
-    # `--abort` (R6 acc3, 2026-09-06, unusual repositories). git records the state in its own directory rather
+    # `--abort` (R6, 2026-09-06, unusual repositories). git records the state in its own directory rather
     # than in `status --porcelain`'s first two columns, so it has to be asked separately. Read from
     # disk, not from another `git` call: this is a section that already costs three subprocesses.
     interrupted = _interrupted_by(root)

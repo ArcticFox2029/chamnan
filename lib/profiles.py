@@ -22,7 +22,7 @@ in a model profile would mean choosing a Gemini profile silently raised a ceilin
 host still enforces, and the block would be cut with no explanation. It stays on the agent adapter
 where it belongs.
 
-**What the 3x buys on Claude Code's own hook, measured rather than assumed.** R10 acc3 reported
+**What the 3x buys on Claude Code's own hook, measured rather than assumed.** (R10) reported
 that the ceiling makes the delivered block "byte-for-byte identical regardless of profile" and
 that `large-window` is therefore dead code on chamnan's flagship integration. Reproduced against
 the real hook on four fixtures -- 120, 400 and 1,200 files, and 1,200 files with a five-times

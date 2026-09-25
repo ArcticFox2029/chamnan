@@ -1370,7 +1370,7 @@ def main(argv):
     # the other eight went. They are not lost — a Dockerfile, a compose file, a migration and a
     # workflow are read by the Deployment, Data model and Configuration sections right above — but
     # a person doing the obvious "did it index my whole repo?" check gets a number that looks wrong
-    # and has to cross-reference MAP.md to find out it is not (R4 acc3, 2026-09-09, first ten minutes).
+    # and has to cross-reference MAP.md to find out it is not (R4, 2026-09-09, first ten minutes).
     #
     # Separate from the "no reader for the extension" line above, which fires only for extensions
     # that ARE somebody's source language. `.md`, `.yml` and a Dockerfile are not source and saying
@@ -1487,7 +1487,7 @@ def main(argv):
     # `chamnan-map --help` exits 127. Inside Claude Code the Bash tool resolves the plugin's bin
     # regardless, so this is the "driving it from a terminal, or from an agent that is not Claude
     # Code" case — which is exactly what somebody trying the CLI in their first ten minutes is
-    # doing (R4 acc3, 2026-09-09, first ten minutes).
+    # doing (R4, 2026-09-09, first ten minutes).
     #
     # Said once, on the run that creates the index, and only when the name really does not resolve
     # from this environment. A line that fires on every run is one people stop reading, and the
@@ -1621,7 +1621,7 @@ def main(argv):
             # comment — and only the vendor name made it Claude's. `/chamnan:bootstrap` really is
             # Claude Code only, so it is named only when Claude Code is what is running; every
             # other agent gets the same instruction addressed to it, which it can carry out
-            # (R2 acc3, 2026-09-08, adapters).
+            # (R2, 2026-09-08, adapters).
             #
             # "your agent" rather than a per-vendor display name: a label table would be
             # twenty-four more strings that have to agree with `host._AGENTS`, which is the

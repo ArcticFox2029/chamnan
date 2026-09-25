@@ -668,7 +668,7 @@ def _in_range(key, value):
     return True
 
 
-# 🐛 [2026-09-24] (R45 acc4, 2026-09-24) Phrasing for the session-block notice about a KNOWN key
+# 🐛 [2026-09-24] (R45, 2026-09-24) Phrasing for the session-block notice about a KNOWN key
 # whose value `_merged` (below) is keeping on disk but the running config still ignores — named in
 # the reader's words rather than Python's, the same choice `_config_problem` already makes for
 # "array" over "list".
@@ -1712,7 +1712,7 @@ def refuse_to_write(stream=None):
 # a downgrade can be reported with what it would otherwise have destroyed.
 LAST_CONFIG_KEYS_KEPT = []
 
-# 🐛 [2026-09-24] (R45 acc4, 2026-09-24) Known keys `ensure()` kept on disk exactly as written
+# 🐛 [2026-09-24] (R45, 2026-09-24) Known keys `ensure()` kept on disk exactly as written
 # because the value has the wrong type or is out of range — `load_config` already ignores each of
 # these at read time, same as `LAST_CONFIG_KEYS_KEPT` above is read by the session-start hook, so
 # the reader learns which of their settings are silently doing nothing instead of finding out from
@@ -1844,7 +1844,7 @@ def ensure(root=None):
                 if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
                 and _in_range(k, v)}
         merged.update(good)
-        # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) A known key that failed the check above used to be
+        # 🐛 [2026-09-24] (R45, 2026-09-24) A known key that failed the check above used to be
         # silently REPLACED here by the default, and the write below then put that default ON DISK
         # in place of what the user wrote — `{"log_retention_days": "30"}` became 7, not just in the
         # running config but in the file itself, and `log_retention_days` 90 -> 7 starts deleting
@@ -3424,7 +3424,7 @@ def wants_help(argv):
 
     Both files are permanent and tracked, with `-h` baked into the name, from a flag the user typed
     to find out what the command does. Two further commands escaped only because their argument
-    happened to be consumed first — by accident, not by design (R6 acc3, which swept the whole set
+    happened to be consumed first — by accident, not by design (R6, which swept the whole set
     rather than reporting one).
 
     An exact bare `-h` element is never a legitimate title, note or filename: a quoted title
@@ -3517,7 +3517,7 @@ def _config_problem(path):
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as err:
-        # 🐛 [2026-09-24] (R45 acc4, 2026-09-24) "does not parse" was the whole message -- true, and
+        # 🐛 [2026-09-24] (R45, 2026-09-24) "does not parse" was the whole message -- true, and
         # useless for finding the stray comma or quote in a file with more than a couple of lines.
         # `JSONDecodeError` already carries where it gave up; `json.JSONDecodeError` is caught ahead
         # of the bare `ValueError` below (it is a subclass of it) only so this branch sees it before
@@ -3542,7 +3542,7 @@ def _config_problem(path):
 # does not fail. It WALKS UP and answers about the nearest real repository above it.
 #
 # Twelve call sites shelled out to `git -C root ...` on that assumption and every one of them was
-# reporting somebody else's repository (R6 acc3, 2026-09-06, first ten minutes). Reproduced: in a directory
+# reporting somebody else's repository (R6, 2026-09-06, first ten minutes). Reproduced: in a directory
 # holding one file and an empty `.git/`, nested inside a real repository, the session-start block
 # said "10 uncommitted file(s)" and named a branch — the ANCESTOR's status; `chamnan-map` stamped
 # `Built from <sha>` into MAP.md with the ancestor's HEAD; and `--install-git-hook` resolved

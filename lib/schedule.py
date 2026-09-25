@@ -701,7 +701,7 @@ def fire(root, rec, run=None, now=None):
     if rec.get("account"):
         env["CLAUDE_CONFIG_DIR"] = str(rec["account"])
     late = lateness(rec, now() if now else None)
-    # \U0001f3af [acc4, 2026-09-12] "Firing once does not guarantee running once": the child can die
+    # \U0001f3af [2026-09-12] "Firing once does not guarantee running once": the child can die
     # after the job starts and before the outcome is written, leaving the record `pending` for
     # something else to pick up. That makes the guarantee AT-LEAST-ONCE by accident, and the choice
     # between the two should be made rather than inherited.
