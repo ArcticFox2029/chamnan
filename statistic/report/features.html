@@ -34,7 +34,8 @@ M.append(panel("which features actually fire",
   [
     hbars(live.map((x, i) => ({
       label: x.feature, value: x.fired,
-      text: `${short(x.fired)} / ${short(x.chances)} · ${pct(x.fired, x.chances).toFixed(1)}%`,
+      text: `${short(x.fired)} / ${short(x.chances)} · ${pct(x.fired, x.chances).toFixed(1)}%`
+        + (x.since ? ` · ${T("since", "ตั้งแต่")} ${x.since}` : ""),
       colour: PAL[i % PAL.length], dim: !x.fired,
     }))),
     dark.length ? el("p", { class: "note" },

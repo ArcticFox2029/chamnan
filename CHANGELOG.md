@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Feature rates on the dashboard compare like with like.** Each log keeps only its newest rows,
+  so a rate such as the scratch watcher's set one day of detections against three weeks of
+  commands. Both counts now start from the same day, and the row says which day that is.
 - **The dashboard's command counts are real now.** The command charts were drawn from a log that
   keeps 300 ordinary commands a day, so any busy day showed about 300. On one measured day the
   chart showed 316 when there were 1,623 Bash calls. Commands are now counted from the session

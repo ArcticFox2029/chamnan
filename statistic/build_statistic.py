@@ -830,13 +830,20 @@ def features():
         {"feature": "subagent block",
          "fired": sum(1 for r in sub if r.get("outcome") == "delivered"),
          "chances": len(sub), "source": "subagent_start.jsonl"},
-        {"feature": "scratch watcher", "fired": len(rows("scratch.jsonl")),
-         "chances": len(rows("commands.jsonl")), "source": "scratch.jsonl"},
-        {"feature": "bulk-read notice", "fired": len(rows("long_reads.jsonl")),
-         "chances": len(rows("commands.jsonl")), "source": "long_reads.jsonl"},
-        {"feature": "gotcha (repeat failures)", "fired": len(rows("failures.jsonl")),
-         "chances": len(rows("commands.jsonl")), "source": "failures.jsonl"},
     ]
+    # 🐛 [2026-09-25] (self-measured) Each log keeps its own newest N rows, so a count of one against
+    # a count of `commands.jsonl` compared two different windows: the scratch watcher read
+    # "300 / 7.0k" with its 300 reaching back one day and the 7.0k three weeks. Both halves are now
+    # counted from the later of the two logs' oldest rows, and the row says from when.
+    cmds = [w for w in (when_of(r) for r in rows("commands.jsonl")) if w]
+    for feature, log in (("scratch watcher", "scratch.jsonl"),
+                         ("bulk-read notice", "long_reads.jsonl"),
+                         ("gotcha (repeat failures)", "failures.jsonl")):
+        fired = [w for w in (when_of(r) for r in rows(log)) if w]
+        since = max(min(fired or [0]), min(cmds or [0]))
+        out.append({"feature": feature, "fired": sum(1 for w in fired if w >= since),
+                    "chances": sum(1 for w in cmds if w >= since), "source": log,
+                    "since": time.strftime("%Y-%m-%d", time.localtime(since)) if since else ""})
     # 🔴 Named, not omitted. Four guards shipped on 2026-09-23 print a notice and record nothing,
     # so `silence.py` cannot see them either — a feature with no recorder is invisible to the tool
     # built to find invisible features, which is exactly why the page has to say the name out loud.
