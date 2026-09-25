@@ -602,6 +602,12 @@ def _is_ignored(root, path):
     return _ignored_by_files(Path(root), Path(path))
 
 
+def _ancestors(rel):
+    """The directories above a posix relative path: `a/b/c.txt` gives `a` and `a/b`."""
+    parts = rel.split("/")[:-1]
+    return ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
+
+
 def _ignored_by_files(root, path):
     # Asked once per call rather than once per pattern: `tree.git_folds_case` caches per root, but
     # the lookup still costs a dict hit inside the pattern loop below.
@@ -648,7 +654,14 @@ def _ignored_by_files(root, path):
                 if negated and _parent_dir_excluded:
                     continue
                 verdict = not negated
-                if not negated and pat.endswith("/"):
+                # 🐛 [2026-09-25] Only a pattern written with a trailing `/` used to count as
+                # excluding a directory. A bare `build` excludes the directory just the same, so
+                # `build` + `!build/keep.txt` re-included the file here while `git check-ignore`
+                # kept it ignored. What matters is whether the rule matched a directory ABOVE the
+                # file, whatever its spelling (R207, 2026-09-25).
+                if not negated and any(
+                        tree.gitignore_matches(a, pat, _fold() if callable(_fold) else _fold)
+                        for a in _ancestors(rel)):
                     _parent_dir_excluded = True
     return verdict
 

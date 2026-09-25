@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The `.env` warning reads `.gitignore` the way git does outside a repository.** When git
+  cannot answer, chamnan reads the `.gitignore` files itself. It knew that git cannot bring back a
+  file inside an ignored folder only when the rule ended in `/`. With `build` and then
+  `!build/keep.txt`, chamnan said the file was not ignored, but git keeps it ignored. Any rule that
+  matches a folder above the file now counts.
 - **Source files saved as UTF-16 are indexed.** The map treated any file with a zero byte near its
   start as binary before looking for a byte-order mark, so a UTF-16 file (which has a zero byte
   beside every ASCII character) was listed as "binary despite a source suffix" and left out.
