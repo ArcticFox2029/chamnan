@@ -107,15 +107,6 @@ HOOK_BODY = """{marker}
 #
 # It WARNS and never blocks: `chamnan-guard` returns 0 unless a project asked for `--strict`, and a
 # hook that stops somebody committing is a hook they delete.
-# 🐛 [2026-09-25] (R23, 2026-09-25) `command -v` finds these only where the plugin is on PATH -- inside a
-# Claude Code session. A commit from a terminal or an IDE found neither, skipped the secret check
-# and the refresh, and said nothing: a hook installed and unreachable, the state the finding names
-# as the one that must never pass as "no problems". It still never blocks; it now says so.
-if command -v chamnan-guard >/dev/null 2>&1; then
-  chamnan-guard || true
-else
-  echo "chamnan: chamnan-guard is not on PATH here, so this commit was not checked for secrets." >&2
-fi
 if command -v chamnan-map >/dev/null 2>&1; then
   if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
     chamnan-map >/dev/null 2>&1 || true
@@ -159,19 +150,16 @@ if command -v chamnan-map >/dev/null 2>&1; then
     fi
   fi
 fi
-# The other direction a secret leaves a machine. `lib/redact.py` has always guarded what reaches the
-# MODEL — the session block, MAP.md, the file each agent reads — and never what reaches a COMMIT,
-# which is the direction this repository's own rules name first (R1 agent 5, finding 1).
-#
-# Outside the `--diff-filter=ACDR` branch above on purpose: that branch is about the INDEX going
-# stale, which only added, deleted and renamed files can do. A credential arrives by editing a file
-# that already exists, which is the case that branch deliberately skips.
-#
-# It warns and the commit proceeds. `chamnan-guard` exits 0 unless asked for `--strict`, and the
-# `|| true` is belt and braces: a tool that blocks commits on a 98.2% recall gets switched off, and
-# then nothing is watching at all.
+# 🐛 [2026-09-25] (R23, 2026-09-25) `command -v` finds these only where the plugin is on PATH -- inside a
+# Claude Code session. A commit from a terminal or an IDE found neither, skipped the secret check
+# and the refresh, and said nothing: a hook installed and unreachable, the state the finding names
+# as the one that must never pass as "no problems". It still never blocks; it now says so.
+# It runs ONCE, here, after and outside the ACDR branch: a credential arrives by editing a file that
+# already exists. A second copy of this call near the top made every commit run the guard twice.
 if command -v chamnan-guard >/dev/null 2>&1; then
-  chamnan-guard 2>&1 || true
+  chamnan-guard || true
+else
+  echo "chamnan: chamnan-guard is not on PATH here, so this commit was not checked for secrets." >&2
 fi
 # <<< chamnan
 """
