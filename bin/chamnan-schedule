@@ -239,7 +239,7 @@ def _cancel(argv, root):
         # because a pid alone is reused. So cancelling a schedule whose waiter had already exited
         # could terminate whatever inherited that number. This package has now learned the same
         # lesson three times: `pgrep -f` matching its own search, `os.kill(pid, 0)` terminating on
-        # Windows, and this (R1 agent1, 2026-09-12; acc4 agreed on the fix).
+        # Windows, and this (R1 agent1, 2026-09-12; a second review agreed on the fix).
         #
         # Nothing is signalled now, because nothing needs to be. Writing the status IS the cancel:
         # the waiter re-reads its own record every tick and returns the moment that record stops

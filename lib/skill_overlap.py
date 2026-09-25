@@ -195,7 +195,7 @@ def overlaps(root, home=None, found=None):
         #
         # What this loses is real and is not being papered over: a repository report no longer
         # notices two plugin copies disagreeing, or a cache drifting from its marketplace. Nothing
-        # else reports those today. The trade was made on the owner's word after acc4 was consulted
+        # else reports those today. The trade was made on the owner's word after a second review
         # and argued the same way -- a per-repository command answers about that repository, and an
         # installation-level audit needs an audience of its own before it is worth keeping here.
         if not any(r["store"] == "workspace" for r in group):

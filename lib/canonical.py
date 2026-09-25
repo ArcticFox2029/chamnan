@@ -18,8 +18,8 @@ kept in one place is the "assert the member, not the set" bug with extra steps �
 two commands that burned an hour today and silently miss the 109 other tools in this workspace. So
 a script opts in by putting one line in its own docstring or header comments, spelled with the
 two directive words built in `_REQUIRES_KEY` / `_INSTEAD_KEY` below, followed by a colon and either
-the tokens that must be present or the thing to run instead. `read_agent_report.py` and
-`ask-acc5.sh` both carry a real one; copy from either.
+the tokens that must be present or the thing to run instead. Two scripts in the development
+workspace carry a real one; copy the shape from there.
 
 🐛 [2026-09-23] (self-measured) The first version of this file put a literal example HERE, and the module then read
 its own docstring and reported itself as an incorrectly-invoked script. A check that reads source
@@ -63,7 +63,7 @@ def declarations(path):
     return out
 
 
-# 🐛 [2026-09-23] (self-measured) Caught live, minutes after this shipped: `git add .chamnan/tools/ask-acc5.sh`
+# 🐛 [2026-09-23] (self-measured) Caught live, minutes after this shipped: `git add` of a workspace script
 # raised the notice for a script that was being COMMITTED, not run. A script name is an invocation
 # only in command position — first word of a segment, or straight after an interpreter.
 _INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "dash", "ksh", "perl", "ruby",

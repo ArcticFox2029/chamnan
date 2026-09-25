@@ -1,5 +1,5 @@
 # Commits that only reword comments. `git blame --ignore-revs-file .git-blame-ignore-revs`
 # (and GitHub's blame view) skip them, so a line is credited to the change that made it.
 
-# Round citations drop the account name: (R35 acc5, …) -> (R35, …)
+# Round citations drop the account name: (R35 <account>, …) -> (R35, …)
 40a8faae3220d9ff7a7cdcb3571d21e22e186582

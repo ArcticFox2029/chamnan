@@ -598,7 +598,7 @@ def _build_id(_root):
 _installed_drift = []
 try:
     _mine = _build_id(ROOT)
-    for _cfg in (Path.home() / ".claude", Path.home() / ".config" / "claude-account2"):
+    for _cfg in ([Path(os.environ["CLAUDE_CONFIG_DIR"])] if os.environ.get("CLAUDE_CONFIG_DIR") else []) + [Path.home() / ".claude"] + sorted((Path.home() / ".config").glob("claude*")):
         _rec = _cfg / "plugins" / "installed_plugins.json"
         if not _rec.is_file():
             continue
@@ -43132,7 +43132,7 @@ def _build43(seed):
 
     # A workspace file answering to a shipped skill's own name with the SAME text. Neither
     # randomised generator planted a `shadowed` before today, so that branch of `overlaps` was
-    # carried by nothing across fifty workspaces (found by acc4 reading the generators, 2026-09-12).
+    # carried by nothing across fifty workspaces (found by a second review reading the generators, 2026-09-12).
     left2 = [s for s in shipped
              if ("divergent", s) not in want and ("divergent", s) not in must_not]
     if left2 and rnd.random() < 0.5:
@@ -47344,12 +47344,12 @@ _sh89.rmtree(_t_bare89, ignore_errors=True)
 # The mark has to survive the round trip, or it is not there when the job fires.
 _t_r89 = _t_repo89()
 _t_s89.add(_t_r89, {"id": "mk", "when": "2026-09-11T21:00:00", "status": "pending",
-                    "agent": "hermes", "pool": "pool-3", "account": "/somewhere/acc2",
+                    "agent": "hermes", "pool": "pool-3", "account": "/somewhere/account-b",
                     "runner": [_sys89.executable, "-c", ""]})
 _t_back89 = _t_s89.read(_t_r89)[0]
 check("...and the agent, the pool and the account survive being written and read back",
       (_t_back89.get("agent"), _t_back89.get("pool"), _t_back89.get("account"))
-      == ("hermes", "pool-3", "/somewhere/acc2"),
+      == ("hermes", "pool-3", "/somewhere/account-b"),
       saw=repr({k: _t_back89.get(k) for k in ("agent", "pool", "account")}))
 
 # ...and the account the schedule was set under is what the job actually runs as. A resumed job on
@@ -47358,7 +47358,7 @@ _t_env89 = {}
 _t_s89.fire(_t_r89, _t_back89, run=lambda a, e: (_t_env89.update(e) or 0, "ok"),
             now=lambda: _dt89(2026, 9, 11, 21, 0))
 check("...and the job runs as the account that scheduled it, not as whatever is current",
-      _t_env89.get("CLAUDE_CONFIG_DIR") == "/somewhere/acc2",
+      _t_env89.get("CLAUDE_CONFIG_DIR") == "/somewhere/account-b",
       saw=str(_t_env89.get("CLAUDE_CONFIG_DIR")))
 _sh89.rmtree(_t_r89, ignore_errors=True)
 
@@ -49085,7 +49085,7 @@ check("...and a script that declares nothing is never spoken about",
 check("...and a required flag is not satisfied by a LONGER flag that merely contains it",
       "--out" in _cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws),
       saw=_cn.advice("python3 declares.py x --output-dir /tmp", _cn_ws)[:160])
-# 🐛 [2026-09-23] (self-measured) Caught live minutes after shipping: `git add .../ask-acc5.sh` raised the notice
+# 🐛 [2026-09-23] (self-measured) Caught live minutes after shipping: `git add` of a workspace script raised the notice
 # for a script being COMMITTED. A name is an invocation only in command position.
 check("A SCRIPT MERELY NAMED AS AN ARGUMENT IS NOT AN INVOCATION",
       _cn.advice("git add declares.py", _cn_ws) == ""

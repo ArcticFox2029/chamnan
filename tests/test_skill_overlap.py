@@ -90,7 +90,7 @@ def build(seed):
 
     # plant: a workspace file carrying a shipped skill's own name AND its exact text -- `shadowed`.
     # Neither generator planted one before today, so that branch of `overlaps` was asserted by
-    # nothing across fifty workspaces (acc4, reading both generators, 2026-09-12).
+    # nothing across fifty workspaces (a second review, reading both generators, 2026-09-12).
     if shipped and rnd.random() < 0.5:
         free = [s for s in shipped
                 if ("divergent", s) not in expected and ("divergent", s) not in forbidden]

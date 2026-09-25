@@ -5,8 +5,8 @@
 the author's own laptop rather than imagined. Four copies of chamnan were installed at once:
 
     ~/.claude                 1.16.0     eleven releases behind
-    ~/.config/claude-account2 1.20.1     seven
-    ~/.config/claude-account3 1.24.0     three
+    ~/.config/claude-work     1.20.1     seven
+    ~/.config/claude-home     1.24.0     three
     the checkout              1.27.1
 
 `.chamnan/.version` read 1.27.1, because the workspace was last written by the checkout — so the
