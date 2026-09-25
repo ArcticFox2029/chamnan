@@ -66,7 +66,7 @@ jobs:
       #   "Node 20 is being deprecated. This workflow is running with Node 24 by default."
       # v5 is the first major on node24 (confirmed against the tag's own action.yml, not the
       # release notes) and the smallest jump that survives the date.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
           # actions/checkout defaults to a depth-1 clone with no tags, so `git describe
           # --tags` finds nothing and the suite's version-drift check — the one its own
@@ -78,7 +78,7 @@ jobs:
       # v7 exists and its release notes say "Remove EOL Python versions", which is about the
       # action's own test fixtures rather than what it can install — but the matrix below still
       # needs 3.8, and taking the smaller jump means that claim does not have to be right.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python }}
 

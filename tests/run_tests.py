@@ -21685,13 +21685,21 @@ _wf_files = sorted(_wf_dir.glob("*.yml")) + sorted(_wf_dir.glob("*.yaml"))
 _wf_uses = []
 for _wf in _wf_files:
     for _i, _line in enumerate(_wf.read_text(encoding="utf-8").splitlines(), 1):
-        _m = re.search(r"uses:\s*([\w.-]+/[\w.-]+)@v(\d+)", _line)
+        # 🎯 [2026-09-25] (R5, 2026-09-25) An action is pinned to a full commit SHA with its version as
+        # a trailing comment -- a tag can be moved to other code after review, which is how a
+        # compromised action reached every repository pinned to it by tag. So the major is read
+        # from `@vN` or, after a SHA, from `# vN`, and a pin that is not a SHA is its own failure.
+        _m = re.search(r"uses:\s*([\w.-]+/[\w.-]+)@(?:v(\d+)|([0-9a-f]{40})\s*#\s*v(\d+))", _line)
         if _m:
-            _wf_uses.append((_wf.name, _i, _m.group(1), int(_m.group(2))))
+            _wf_uses.append((_wf.name, _i, _m.group(1), int(_m.group(2) or _m.group(4)),
+                             bool(_m.group(3))))
 check("the CI-action audit found the workflow it is meant to police",
       bool(_wf_files) and len(_wf_uses) >= 2)
+_tag_pinned = [f"{_n}:{_i} {_a}" for _n, _i, _a, _v, _sha in _wf_uses if not _sha]
+check("EVERY CI ACTION IS PINNED TO A FULL COMMIT SHA, NOT TO A TAG THAT CAN MOVE",
+      not _tag_pinned, saw=_tag_pinned)
 _stale_actions = [f"{_n}:{_i} {_a}@v{_v} — needs v{_ACTION_FLOORS[_a][0]}+ ({_ACTION_FLOORS[_a][1]})"
-                  for _n, _i, _a, _v in _wf_uses
+                  for _n, _i, _a, _v, _sha in _wf_uses
                   if _a in _ACTION_FLOORS and _v < _ACTION_FLOORS[_a][0]]
 check("NO CI ACTION IS PINNED TO A MAJOR THAT STOPS RESOLVING ON A KNOWN DATE", not _stale_actions)
 for _sa in _stale_actions:
