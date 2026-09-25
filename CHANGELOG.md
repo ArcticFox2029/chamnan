@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Skills saved with a byte-order mark are read correctly.** Some Windows editors and PowerShell
+  5.1 add an invisible mark at the start of a file. The skill-overlap check read that mark as
+  part of the text, so the skill lost its description and did not match an identical copy
+  without the mark. The mark is now removed when the file is read, as it already was everywhere
+  else.
 - **A misspelt setting is named instead of deleted.** chamnan removed any key in `config.json`
   that it did not know, which is right for an old setting and wrong for a typo. With
   `"log_retention_dayz": 30`, the key disappeared on the next session and the 7-day default kept

@@ -133,23 +133,27 @@ def inventory(root, home=None):
     """
     root = Path(root)
     found = []
+    # `utf-8-sig` at every read below, as everywhere else in the package: a file saved with a BOM
+    # (Windows editors, PowerShell 5.1) otherwise hides its front matter behind U+FEFF, so its
+    # description read as "\ufeff---" and its digest differed from the same skill without one
+    # (R246, 2026-09-26).
     for p in sorted((root / ".chamnan" / "skills").glob("*.md")):
         if p.name.upper() == "README.MD":
             continue
         try:
-            found.append(_record(p.stem, p, "workspace", p.read_text(encoding="utf-8", errors="replace")))
+            found.append(_record(p.stem, p, "workspace", p.read_text(encoding="utf-8-sig", errors="replace")))
         except OSError:
             continue
     for label, base in active_plugin_roots(home):
         for p in sorted(base.glob("skills/*/SKILL.md")):
             try:
-                found.append(_record(p.parent.name, p, f"plugin:{label}", p.read_text(encoding="utf-8", errors="replace")))
+                found.append(_record(p.parent.name, p, f"plugin:{label}", p.read_text(encoding="utf-8-sig", errors="replace")))
             except OSError:
                 continue
     for label, base in snapshot_roots(home):
         for p in sorted(base.glob("skills/*/SKILL.md")):
             try:
-                found.append(_record(p.parent.name, p, f"snapshot:{label}", p.read_text(encoding="utf-8", errors="replace")))
+                found.append(_record(p.parent.name, p, f"snapshot:{label}", p.read_text(encoding="utf-8-sig", errors="replace")))
             except OSError:
                 continue
     return found
