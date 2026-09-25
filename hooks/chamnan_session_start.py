@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """SessionStart hook — hand the new session the map index, the open state, and the repo's own tools.
 
+READS: .chamnan/logs/repeat_digest.json via { at least 1
+
 This is the part that answers "Claude forgot everything again". Compaction is not an edge case: 259
 compaction traces were found across 23 sessions on one machine. After it fires, whatever the agent
 had worked out about this codebase is gone, and it goes back to grepping. Injecting the index and

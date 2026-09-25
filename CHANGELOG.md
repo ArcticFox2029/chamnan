@@ -26,12 +26,15 @@ already reports the last released number while running newer code.
   (median of five runs each side). The answers are unchanged: the old and new code gave identical
   results on all 15,772 symbol-and-file pairs tried.
 - **Secrets written with a full-width `：` or `＝` are now redacted.** Japanese and Chinese input
-  methods type these, and `db_password：value` had been passing through while the same line with `:`
-  was caught. No other output changed on 1,391 real files, and the corpus benchmark is unchanged.
+  methods type these, and a secret assigned with `：` had been passing through while the same line
+  with `:` was caught. No other output changed on 1,391 real files, and the corpus benchmark is unchanged.
 - **Every Bash call starts about 90 ms sooner.** Before a command runs, a hook checks whether it has
   already failed here twice. It used to redact the command first on every call, which cost 166 ms of
   regex compilation. It now skips that when nothing recorded could match: 246 ms to 153 ms median.
   Its answers are unchanged: old and new agreed on all 1,378 real commands tried.
+- **`chamnan-recall` indexes only chamnan's own stores.** It also looked for two named files that are
+  not part of the workspace layout chamnan creates; that lookup, and the section splitting it
+  needed, are gone.
 
 ---
 

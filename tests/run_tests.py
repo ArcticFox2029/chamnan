@@ -27065,140 +27065,6 @@ try:
 finally:
     import shutil as _shutil108
     _shutil108.rmtree(_root108, ignore_errors=True)
-# ---- 109_a_dead_end_is_a_section_not_the_whole_research_file.py
-# --- a curated research store is searchable by section, and the archive beside it stays out
-# 🎯 [2026-09-13] `chamnan-recall` answers "what do we already say about X" from a derived index --
-# and `state/research/chamnan_research_dead_ends.md` (99 refused topics, each with the measurement
-# that refused it) and `chamnan_research_backlog.md` (43 queued topics) were both invisible to it:
-# neither file was among `recall.KINDS`. A session asking "should I research vscode extensions"
-# got 4 of 125 entries and none of them the report that already answered exactly that.
-#
-# Both files are 100-180 KB. Indexed whole, either one would out-score nearly every other document
-# on any query while pointing the reader at nothing more specific than "somewhere in this file" --
-# so `recall.KINDS` now names them by file, and `recall.build()` splits each into one entry per
-# `## ` heading, the same unit both files already use for their own quick index.
-#
-# Built against a temporary workspace, not this repository's real stores: a fixture can put a term
-# in exactly one section and assert exactly which section comes back, which the real corpus cannot
-# promise now that it has been edited by hand many times over.
-import json as _js109
-import shutil as _sh109
-import tempfile as _tf109
-from pathlib import Path as _Path109
-
-import recall as _rc109
-
-_t_tmp109 = _Path109(_tf109.mkdtemp(prefix="chamnan-recall-research-"))
-_t_ws109 = _t_tmp109 / ".chamnan"
-try:
-    (_t_ws109 / "memory" / "rules").mkdir(parents=True)
-    (_t_ws109 / "state" / "research" / "old").mkdir(parents=True)
-
-    # An ordinary store, untouched by this change -- the regression guard for "the existing six
-    # stores are still searched, still ranked as before".
-    (_t_ws109 / "memory" / "rules" / "gorznik-rule.md").write_text(
-        "# Gorznik\n\nGorznik must never happen twice.\n", encoding="utf-8")
-
-    # Two sections in ONE file. `quuxinator` sits only in the second -- the term this check exists
-    # to prove comes back scoped to that section, not to the file as a whole.
-    (_t_ws109 / "state" / "research" / "chamnan_research_dead_ends.md").write_text(
-        "# Dead ends\n\n"
-        "<!-- quick-index: generated, do not edit by hand -->\n"
-        "## Quick Index -- 2 entries\n\n"
-        "- Angle Zebraflorp\n- Angle Wobblehatch\n\n"
-        "<!-- end quick-index -->\n\n"
-        "## Angle Zebraflorp -- a query that returned nothing\n\n"
-        "Zebraflorp was tried on 2026-09-01 and abandoned: it produced nothing worth keeping.\n\n"
-        "## Angle Wobblehatch -- a second angle in the same file\n\n"
-        "Quuxinator lives only here, in the second section, not the first.\n",
-        encoding="utf-8")
-
-    (_t_ws109 / "state" / "research" / "chamnan_research_backlog.md").write_text(
-        "# Research backlog\n\n"
-        "<!-- quick-index: generated, do not edit by hand -->\n"
-        "## Quick Index -- 1 entries\n\n"
-        "- Torquilfrost, queued\n\n"
-        "<!-- end quick-index -->\n\n"
-        "## Torquilfrost, queued for the next round\n\n"
-        "Torquilfrost is queued and not yet tested.\n",
-        encoding="utf-8")
-
-    # The archive these two files exist to replace. A term that lives ONLY here must never surface.
-    (_t_ws109 / "state" / "research" / "old" / "plinthaxis_superseded_report.md").write_text(
-        "# Superseded\n\nPlinthaxis appears only in this archived report and must never surface.\n",
-        encoding="utf-8")
-
-    _t_idx109 = _rc109.build(_t_ws109)
-    check("the fixture indexed the ordinary store plus both research files' sections: "
-          "%d entr(ies)" % _t_idx109["count"],
-          _t_idx109["count"] >= 4,
-          saw="nothing (or too little) was indexed, so every assertion below would pass on an "
-              "empty or near-empty index")
-
-    _t_dead109 = [e for e in _t_idx109["entries"] if e["kind"] == "dead_end"]
-    _t_back109 = [e for e in _t_idx109["entries"] if e["kind"] == "backlog"]
-    check("THE DEAD-ENDS FILE BECAME TWO ENTRIES, ONE PER REAL SECTION -- NOT ONE FOR THE FILE",
-          len(_t_dead109) == 2, saw="%d dead_end entr(ies): %s"
-          % (len(_t_dead109), [e["title"] for e in _t_dead109]))
-    check("...and neither of them is titled after the Quick Index heading",
-          all("quick index" not in e["title"].lower() for e in _t_dead109),
-          saw=[e["title"] for e in _t_dead109])
-    check("...and the backlog file became its one real section",
-          len(_t_back109) == 1, saw=[e["title"] for e in _t_back109])
-
-    # --- row 1: a term that lives only in a dead_ends section
-    _t_hit_zebra109 = _rc109.query(_t_idx109, ["zebraflorp"], limit=3)
-    check("A TERM IN A DEAD-ENDS SECTION IS FOUND AND LABELLED AS A REFUSAL",
-          bool(_t_hit_zebra109) and _t_hit_zebra109[0][1]["kind"] == "dead_end",
-          saw=[(h[1]["kind"], h[1]["title"]) for h in _t_hit_zebra109] or "no hits")
-    check("...naming the section it is actually in",
-          bool(_t_hit_zebra109) and "Zebraflorp" in _t_hit_zebra109[0][1]["title"],
-          saw=_t_hit_zebra109[0][1]["title"] if _t_hit_zebra109 else "no hits")
-
-    # --- row 2: a term that lives only in a backlog section
-    _t_hit_torq109 = _rc109.query(_t_idx109, ["torquilfrost"], limit=3)
-    check("A TERM IN A BACKLOG SECTION IS FOUND AND LABELLED AS QUEUED",
-          bool(_t_hit_torq109) and _t_hit_torq109[0][1]["kind"] == "backlog",
-          saw=[(h[1]["kind"], h[1]["title"]) for h in _t_hit_torq109] or "no hits")
-
-    # --- row 3 (the regression guard): two sections in one file, a term in only the second
-    _t_hit_quux109 = _rc109.query(_t_idx109, ["quuxinator"], limit=3)
-    check("A TERM IN ONLY THE SECOND SECTION OF A FILE RETURNS THAT SECTION, NOT THE FILE",
-          bool(_t_hit_quux109) and "Wobblehatch" in _t_hit_quux109[0][1]["title"]
-          and "Zebraflorp" not in _t_hit_quux109[0][1]["title"],
-          saw=_t_hit_quux109[0][1]["title"] if _t_hit_quux109 else "no hits")
-    check("...and it is a DIFFERENT entry (different path) than the first section",
-          bool(_t_hit_quux109) and bool(_t_hit_zebra109)
-          and _t_hit_quux109[0][1]["path"] != _t_hit_zebra109[0][1]["path"],
-          saw="quuxinator hit %r, zebraflorp hit %r"
-          % (_t_hit_quux109[0][1]["path"] if _t_hit_quux109 else None,
-             _t_hit_zebra109[0][1]["path"] if _t_hit_zebra109 else None))
-
-    # --- row 4: the six existing stores are still searched and still ranked as before
-    _t_hit_gorz109 = _rc109.query(_t_idx109, ["gorznik"], limit=3)
-    check("AN ORDINARY STORE (memory/rules) IS STILL SEARCHED AND RANKED AS A RULE",
-          bool(_t_hit_gorz109) and _t_hit_gorz109[0][1]["kind"] == "rule"
-          and _t_hit_gorz109[0][1]["weight"] == 3.0,
-          saw=_t_hit_gorz109[0][1] if _t_hit_gorz109 else "no hits")
-
-    # --- row 5 (the exclusion this check exists to pin): a term only in state/research/old/
-    _t_hit_plin109 = _rc109.query(_t_idx109, ["plinthaxis"], limit=3)
-    check("A TERM THAT LIVES ONLY IN state/research/old/ IS NOT FOUND -- THE ARCHIVE STAYS OUT",
-          not _t_hit_plin109,
-          saw=[(h[1]["kind"], h[1]["path"]) for h in _t_hit_plin109] or None)
-
-    # --- staleness still notices an edit to one of the two named files, not just to a directory
-    _t_fresh109 = _rc109.stale_by(_t_ws109, _t_idx109)
-    (_t_ws109 / "state" / "research" / "chamnan_research_backlog.md").write_text(
-        "# Research backlog\n\n## Torquilfrost, queued for the next round\n\n"
-        "Torquilfrost is queued and not yet tested. Edited.\n", encoding="utf-8")
-    _t_behind109 = _rc109.stale_by(_t_ws109, _t_idx109)
-    check("EDITING A FILE-NAMED KINDS ENTRY IS DETECTED AS STALE, NOT SILENTLY IGNORED",
-          _t_fresh109 == 0 and _t_behind109 == 1,
-          saw="fresh said %r and after editing the backlog file it said %r"
-          % (_t_fresh109, _t_behind109))
-finally:
-    _sh109.rmtree(_t_tmp109, ignore_errors=True)
 # ---- 10_offer_fatigue.py
 # 🐛 [2026-09-09] The hook-install OFFER fired on every qualifying session forever, three lines
 # below a comment saying a repeated warning "trains the reader to skip the line". The guard for
@@ -27520,21 +27386,22 @@ check("...and none of them turns an ordinary sentence about the word into a reda
 # ---- R9.34 (research round R9, 2026-09-13): is `chamnan-recall`'s display window (`limit=6`) the
 # lever on retrieval quality, and would a bigger one just be free correctness?
 #
-# Measured this session against the REAL, live stores (`.chamnan/state/research/*.md`, 142
-# dead_end/backlog entries): a query built from an entry's own title finds that entry inside the
+# Measured against a real workspace's stores (142 entries): a query built from an entry's own
+# title finds that entry inside the
 # current display window (K=6) 100% of the time, saturating by K=3 -- so the display window is not
 # starving the obvious case. Eighteen realistic PARAPHRASE queries (a user's own words, not the
 # heading text) told a different story: recall@6 was 72.2%, recall@50 only 83.3%, and the two worst
-# misses (one scoring zero, one at rank 113) were unreachable at ANY K. Conclusion, written into
-# `chamnan_research_dead_ends.md`: **K is not the lever.** Raising it recovers a query that shares
+# misses (one scoring zero, one at rank 113) were unreachable at ANY K. Conclusion: **K is not the
+# lever.** Raising it recovers a query that shares
 # vocabulary with the right entry but got crowded out by weaker matches elsewhere; it recovers
 # nothing when the query shares no vocabulary with the entry at all. A blind "raise the default"
 # fix would pay real tokens (a wide real-corpus query went 821 -> 1248 -> 2424 tokens at K=6/10/20)
 # for a partial, mechanism-dependent win.
 #
 # This check is the portable regression guard for that mechanism -- built on a SYNTHETIC fixture
-# (never inside Lumin-App) rather than the live stores, so it does not drift as this repo's research
-# files grow, and reproduces both halves: crowding IS recoverable by K, vocabulary mismatch is NOT.
+# rather than live stores, so it does not drift as a workspace grows, and reproduces both halves:
+# crowding IS recoverable by K, vocabulary mismatch is NOT. The fixture is one memory entry per
+# document: lessons for the filler and the crowd, one decision holding the answer in its body.
 # Mutation-tested and reverted this session: setting `recall.FIELD_WEIGHT["title"] = 1.0` (equal to
 # body) collapsed the crowding assertion, and this check named exactly that.
 import shutil
@@ -27551,8 +27418,10 @@ FLOOR = 0.95            # today's measured floor on this fixture is 100%; leaves
 _root112 = Path(tempfile.mkdtemp(prefix="chamnan-r934-112-"))
 try:
     _repo112 = _root112 / "repo"
-    _research112 = _repo112 / ".chamnan" / "state" / "research"
-    _research112.mkdir(parents=True)
+    _lessons112 = _repo112 / ".chamnan" / "memory" / "lessons"
+    _decisions112 = _repo112 / ".chamnan" / "memory" / "decisions"
+    _lessons112.mkdir(parents=True)
+    _decisions112.mkdir(parents=True)
     (_repo112 / ".git").mkdir()
 
     FILLER_N = 50
@@ -27566,34 +27435,29 @@ try:
                         "and query and answer and store and entry and topic and section and body "
                         "and title and weight and score and rank and window and limit.\n")
 
-    _dead_ends_lines112 = ["# Synthetic dead-end fixture for check 112\n"]
     for i in range(FILLER_N):
-        _dead_ends_lines112.append(f"## Filler topic {i:03d}\n\n{_filler_body112}\n")
+        (_lessons112 / f"filler-topic-{i:03d}.md").write_text(
+            f"# Filler topic {i:03d}\n\n{_filler_body112}", encoding="utf-8")
     for i in range(CROWD_N):
-        _dead_ends_lines112.append(
-            f"## Handling the widget cache for hotwordxyz session {i:02d}\n\n{_filler_body112}\n")
-    (_research112 / "chamnan_research_dead_ends.md").write_text(
-        "\n".join(_dead_ends_lines112), encoding="utf-8")
-
-    _backlog_text112 = (
-        "# Synthetic backlog fixture for check 112\n\n"
-        "## Roundup of small findings\n\n"
-        "Several unrelated notes are grouped under one heading here, which is exactly the real "
-        "shape `chamnan_research_backlog.md` uses for its own \"Selected for testing\" section. "
-        "The one specific fact in this roundup is that hotwordxyz drops idle connections after a "
-        "short timeout, which nothing else in this fixture mentions.\n"
-    )
-    (_research112 / "chamnan_research_backlog.md").write_text(_backlog_text112, encoding="utf-8")
+        (_lessons112 / f"widget-cache-hotwordxyz-{i:02d}.md").write_text(
+            f"# Handling the widget cache for hotwordxyz session {i:02d}\n\n{_filler_body112}",
+            encoding="utf-8")
+    (_decisions112 / "roundup-of-small-findings.md").write_text(
+        "# Roundup of small findings\n\n"
+        "Several unrelated notes are grouped under one heading here, the way a roundup entry is "
+        "often written. The one specific fact in this roundup is that hotwordxyz drops idle "
+        "connections after a short timeout, which nothing else in this fixture mentions.\n",
+        encoding="utf-8")
 
     _wsdir112 = ws.workspace(_repo112)
     _index112 = recall.build(_wsdir112)
-    _targets112 = [e for e in _index112["entries"] if e["kind"] in ("dead_end", "backlog")]
+    _targets112 = [e for e in _index112["entries"] if e["kind"] in ("lesson", "decision")]
 
     check("THE FIXTURE SWEEP IS REAL AND NON-TRIVIAL: %d entr(ies) generated and indexed"
           % len(_targets112),
           len(_targets112) >= 50,
           saw="only %d entries indexed from a fixture meant to hold %d -- the fixture or the "
-              "sectioning contract (`## ` headings under a KINDS file path) changed"
+              "memory folders in `recall.KINDS` changed"
               % (len(_targets112), FILLER_N + CROWD_N + 1))
 
     def _rank112(words, path, window):
@@ -27621,28 +27485,28 @@ try:
     # A bare `next()` over a source search raises StopIteration when the fixture stops producing
     # what it expects, and inside the folded suite that is not one failed check -- it ends the whole
     # run as "NOT VERIFIED, no result", costing every check after it. Default and assert instead.
-    _backlog_path112 = next((e["path"] for e in _targets112 if e["kind"] == "backlog"), None)
-    check("the fixture produced a backlog entry to rank against",
-          _backlog_path112 is not None,
+    _answer_path112 = next((e["path"] for e in _targets112 if e["kind"] == "decision"), None)
+    check("the fixture produced the decision entry to rank against",
+          _answer_path112 is not None,
           saw="kinds=%r" % sorted({e["kind"] for e in _targets112}))
 
-    _crowd_rank_display112 = _rank112(["hotwordxyz"], _backlog_path112, DISPLAY_WINDOW)
+    _crowd_rank_display112 = _rank112(["hotwordxyz"], _answer_path112, DISPLAY_WINDOW)
     check("A REAL ANSWER MENTIONED ONLY IN BODY TEXT CAN BE CROWDED OUT OF THE DISPLAY WINDOW "
           "BY WEAKER TITLE MATCHES ELSEWHERE (this is why recall@6 was 72%% on the real corpus, "
           "not a fixture defect)",
           _crowd_rank_display112 is None,
-          saw="expected the backlog entry to rank BELOW K=%d behind the %d crowd entries "
+          saw="expected the decision entry to rank BELOW K=%d behind the %d crowd entries "
               "that only mention 'hotwordxyz' in their title; it ranked %r instead -- "
               "FIELD_WEIGHT may have changed" % (DISPLAY_WINDOW, CROWD_N, _crowd_rank_display112))
 
-    _crowd_rank_wide112 = _rank112(["hotwordxyz"], _backlog_path112, WIDE_WINDOW)
+    _crowd_rank_wide112 = _rank112(["hotwordxyz"], _answer_path112, WIDE_WINDOW)
     check("...BUT RAISING K PAST THE DISPLAY WINDOW DOES RECOVER IT WHEN THE VOCABULARY MATCHES "
           "(the half of R9.34 where K genuinely helps)",
           _crowd_rank_wide112 is not None,
-          saw="the backlog entry was not found even at the wide window (K=%d) -- "
+          saw="the decision entry was not found even at the wide window (K=%d) -- "
               "'hotwordxyz' may have been stripped as a common body term" % WIDE_WINDOW)
 
-    _nomatch_rank112 = _rank112(["impossibletofindword"], _backlog_path112, WIDE_WINDOW)
+    _nomatch_rank112 = _rank112(["impossibletofindword"], _answer_path112, WIDE_WINDOW)
     check("...AND RAISING K RECOVERS NOTHING WHEN THE QUERY SHARES NO VOCABULARY WITH THE ANSWER "
           "AT ALL (the R9.34 finding: K is not a general fix for a real miss)",
           _nomatch_rank112 is None,
@@ -31373,9 +31237,10 @@ check("...and there were call sites to check, so that is not a vacuous pass",
 _created150 = sorted({str(p.relative_to(ROOT)).replace("/", "\\")
                       for p in (ROOT / "lib").rglob("*") if p.is_file()}
                      | {".chamnan\\" + n for n in
-                        ("state\\research\\chamnan_research_backlog.md",
-                         "tools\\checks\\150_the_windows_answers_reachable_without_windows.py",
-                         "memory\\rules\\acc4-is-the-consultant-and-the-brief-is-the-difference.md",
+                        # The longest names the stores can mint: a memory or thread slug is cut
+                        # at 50 characters and a candidate's at 60, before `.md`.
+                        ("memory\\decisions\\" + "x" * 50 + ".md",
+                         "candidates\\" + "x" * 60 + ".md",
                          "logs\\block_shape.jsonl", "state\\install_notice_seen.json")},
                      key=len)
 _longest150 = _created150[-1] if _created150 else ""
@@ -41637,6 +41502,68 @@ try:
           bool(_quiet256) and "committed since then" not in _quiet256, saw=_quiet256)
 finally:
     _sh256.rmtree(_repo256.parent, ignore_errors=True)
+# ---- 257_a_full_width_separator_is_a_separator.py
+# ------------------ a full-width separator is a separator
+# 🐛 [2026-09-25] (R69 acc4, 2026-09-24) A Japanese or Chinese input method types `：` and `＝`
+# (U+FF1A, U+FF1D), and `db_password：value` was left in the clear while the same line with `:` was
+# redacted. Derived from the one separator name rather than listed by hand, so a separator added
+# to `_KV_SEP` later is covered here without editing this check — and each is also tried with
+# spaces and inside a Japanese sentence, the two places an IME puts it.
+import re as _re257                                                          # noqa: E402
+import redact as _rd257                                                      # noqa: E402
+
+_class257 = _re257.fullmatch(r"\[(.*)\]", _rd257._KV_SEP)
+_seps257 = sorted(set(_class257.group(1).encode().decode("unicode_escape"))) if _class257 else []
+_value257 = "q7Rw" * 5                   # an assignment's value, not any provider's key shape
+_missed257 = []
+for _sep257 in _seps257:
+    for _line257 in ("db_password%s%s" % (_sep257, _value257),
+                     "db_password %s %s" % (_sep257, _value257),
+                     "設定はdb_password%s%sです" % (_sep257, _value257)):
+        if _value257 in _rd257.scrub(_line257):
+            _missed257.append(_line257)
+check("THE SEPARATOR CLASS CARRIES BOTH FULL-WIDTH FORMS",
+      "：" in _seps257 and "＝" in _seps257, saw=_seps257)
+check("...AND EVERY SEPARATOR IN IT REDACTS, SPACED OR NOT, INSIDE CJK TEXT OR NOT",
+      bool(_seps257) and not _missed257, saw=_missed257)
+# ---- 258_a_command_that_cannot_repeat_is_not_scrubbed_to_find_out.py
+# ------------------ a command that cannot repeat is not scrubbed to find out
+# 🎯 [2026-09-25] (R80 claudeaccount2, 2026-09-24) `gotcha.might_repeat` lets the PreToolUse hook skip
+# a 166 ms scrub when no recorded repeat could match. It is only safe while it never says "no"
+# where the full comparison says "yes", so this compares the two on shapes that stress the pieces:
+# a plain repeat, a repeat carrying a redacted value, a stored subject cut in the middle of the
+# marker, a different command, and a different tool. Plus the one constant it copies.
+import json as _js258, shutil as _sh258, tempfile as _tf258                   # noqa: E402
+import pathlib as _pl258                                                       # noqa: E402
+import gotcha as _gt258, redact as _rd258                                      # noqa: E402
+
+check("THE REPEAT PRE-CHECK SPELLS THE REDACTOR'S PLACEHOLDER EXACTLY",
+      _gt258._PLACEHOLDER == _rd258.PLACEHOLDER, saw=(_gt258._PLACEHOLDER, _rd258.PLACEHOLDER))
+_ws258 = _pl258.Path(_tf258.mkdtemp(prefix="chamnan-repeat-"))
+try:
+    (_ws258 / "logs").mkdir()
+    _v258 = "q7Rw" * 5
+    _cases258 = ["pytest tests/", "DB_PASSWORD=%s make run" % _v258,
+                 "x" * 290 + " password=%s tail" % _v258]
+    with open(_ws258 / "logs" / "failures.jsonl", "w", encoding="utf-8") as _fh258:
+        for _c258 in _cases258:
+            for _ in range(2):
+                _fh258.write(_js258.dumps({"at": "2026-09-25T00:00:00Z", "tool": "Bash",
+                                           "subj": _rd258.scrub(_c258)[:300], "err": "exit 1"}) + "\n")
+    _probes258 = [("Bash", c) for c in _cases258] + [("Bash", "npm test"), ("Edit", "pytest tests/")]
+    _wrong258 = []
+    for _t258, _c258 in _probes258:
+        _full258 = _gt258.about_to_repeat(_ws258, _t258, _rd258.scrub(_c258)[:300]) is not None
+        _pre258 = _gt258.might_repeat(_ws258, _t258, _c258)
+        if _full258 and not _pre258:
+            _wrong258.append(_c258[:40])
+    check("...AND NEVER SAYS NO WHERE THE FULL COMPARISON SAYS YES, CUT MARKER INCLUDED",
+          not _wrong258, saw=_wrong258)
+    check("...WHILE A COMMAND NOTHING RECORDED COULD MATCH IS ANSWERED WITHOUT A SCRUB",
+          not _gt258.might_repeat(_ws258, "Bash", "npm test")
+          and not _gt258.might_repeat(_ws258, "Edit", "pytest tests/"))
+finally:
+    _sh258.rmtree(_ws258, ignore_errors=True)
 # ---- 25_the_block_log_answers_what_it_records.py
 # ------------------------------------------- five fixes to blocklog, and no test behind any of them
 # 🐛 [2026-09-09] `check_coverage_audit.py` was written to answer the owner's "go back and find what
