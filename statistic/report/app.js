@@ -251,7 +251,7 @@ function hbars(rowsIn, opts) {
     : pct(v, max);
   const list = el("ul", { class: "hbars" }, rows.map((r) =>
     el("li", { class: r.dim ? "dim" : "" },
-      el("span", { class: "hlab" }, T(r.label, r.th)),
+      el("span", { class: "hlab" }, T(r.label, r.th), r.sub ? el("em", {}, r.sub) : null),
       el("span", { class: "htrack" },
         el("span", { class: "hfill", style: `width:${Math.max(at(r.value), 1.5)}%;`
           + `background:${r.colour || (r.dim ? "var(--grey)" : PAL[0])}` })),

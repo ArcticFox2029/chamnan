@@ -37,8 +37,10 @@ M.append(panel("which features actually fire",
        The bar, the order and the leading number are the RATE now; the counts follow it. */
     hbars(live.map((x, i) => ({
       label: x.feature, value: pct(x.fired, x.chances),
-      text: `${pct(x.fired, x.chances).toFixed(1)}% · ${short(x.fired)} / ${short(x.chances)}`
-        + (x.since ? ` · ${T("since", "ตั้งแต่")} ${x.since}` : ""),
+      text: `${pct(x.fired, x.chances).toFixed(1)}% · ${short(x.fired)} / ${short(x.chances)}`,
+      /* The window goes under the name, not after the numbers: in the value column it made that
+         column as wide as its longest row and pushed every track to a different length. */
+      sub: x.since ? `${T("counted since", "นับตั้งแต่")} ${x.since}` : null,
       colour: PAL[i % PAL.length], dim: !x.fired,
     })), { max: 100, log: false }),
     dark.length ? el("p", { class: "note" },
