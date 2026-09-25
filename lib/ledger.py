@@ -202,7 +202,7 @@ def snapshot(root, now=None):
             for _ln in _he.read_text(encoding="utf-8", errors="replace").splitlines():
                 try:
                     _ts = datetime.datetime.fromisoformat(json.loads(_ln).get("ts", ""))
-                except (ValueError, AttributeError, TypeError):
+                except (ValueError, AttributeError, TypeError, RecursionError):
                     continue
                 if _ts.tzinfo is not None and _ts.astimezone().date().isoformat() == _today:
                     hook_errors += 1

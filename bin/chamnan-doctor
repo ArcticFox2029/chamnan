@@ -212,7 +212,7 @@ def which_hook_crashes(wsdir, lines):
         try:
             r = json.loads(raw)
             ts = datetime.fromisoformat(r.get("ts", "")).timestamp()
-        except (ValueError, AttributeError, TypeError):
+        except (ValueError, AttributeError, TypeError, RecursionError):
             continue
         if ts >= cutoff:
             key = (r.get("hook", "?"), r.get("error", "?"), r.get("where", "?"))
