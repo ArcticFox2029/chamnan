@@ -17,6 +17,7 @@ with no further change here.
 """
 import datetime
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -191,6 +192,23 @@ def snapshot(root, now=None):
     all_ts = session_ts + memory_mtimes + milestone_ts + thread_mtimes
     last_write = max(all_ts) if all_ts else None
 
+    # 🐛 [2026-09-25] (R145, 2026-09-25) A hook that crashed today, counted where it is seen on every
+    # session start; `ws.never_fail` records the crash, and without this line nothing surfaced it.
+    hook_errors = 0
+    try:
+        _he = ws.workspace(root) / ws.HOOK_ERRORS
+        if _he.is_file():
+            _today = datetime.date.fromtimestamp(now).isoformat()
+            for _ln in _he.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    _ts = datetime.datetime.fromisoformat(json.loads(_ln).get("ts", ""))
+                except (ValueError, AttributeError, TypeError):
+                    continue
+                if _ts.tzinfo is not None and _ts.astimezone().date().isoformat() == _today:
+                    hook_errors += 1
+    except OSError:
+        pass
+
     return {
         "now": now,
         "record_count": record_count,
@@ -204,6 +222,7 @@ def snapshot(root, now=None):
         # of a session, and adding it to that number would silently change what the number has
         # meant since 1.5.0. Same None-vs-0 rule as candidates above.
         "thread_count": None if thread_files is None else len(thread_files),
+        "hook_errors_today": hook_errors,
     }
 
 
@@ -247,7 +266,10 @@ def render(snap):
     # statement of fact that is false. Adding a store means adding it here.
     if (rc == 0 and mc == 0 and snap["candidate_count"] in (None, 0)
             and snap.get("thread_count") in (None, 0)):
-        return "chamnan · 0 records · 0 memory entries · nothing written yet"
+        he = snap.get("hook_errors_today")
+        return ("chamnan · 0 records · 0 memory entries · nothing written yet"
+                + (f" · {he} hook crash{'es' if he != 1 else ''} today — `chamnan-doctor` names them"
+                   if he else ""))
 
     parts = [
         f"{rc} record{'s' if rc != 1 else ''} (+{snap['record_recent']} this week)",
@@ -264,6 +286,9 @@ def render(snap):
     tc = snap.get("thread_count")
     if tc:
         parts.append(f"{tc} thread{'s' if tc != 1 else ''}")
+    he = snap.get("hook_errors_today")
+    if he:
+        parts.append(f"{he} hook crash{'es' if he != 1 else ''} today — `chamnan-doctor` names them")
     return "chamnan · " + " · ".join(parts)
 
 

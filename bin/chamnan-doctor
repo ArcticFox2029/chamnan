@@ -24,6 +24,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -193,6 +194,38 @@ def which_quarantine(wsdir, lines):
                        + " — logs/recovered.jsonl says when and why"))
 
 
+def which_hook_crashes(wsdir, lines):
+    """Every hook crash `never_fail` swallowed in the last week, by hook, error and line.
+
+    🐛 [2026-09-25] (R145, 2026-09-25) A crashed hook exits 0 so the session carries on, and its
+    stderr goes only to the host's debug log, so until crashes were recorded this command could
+    report every hook "present" while one of them failed on every call.
+    """
+    log = wsdir / "logs" / "hook_errors.jsonl"
+    cutoff = time.time() - 7 * 86400
+    seen = {}
+    try:
+        rows = log.read_text(encoding="utf-8", errors="replace").splitlines() if log.is_file() else []
+    except OSError:
+        rows = []
+    for raw in rows:
+        try:
+            r = json.loads(raw)
+            ts = datetime.fromisoformat(r.get("ts", "")).timestamp()
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if ts >= cutoff:
+            key = (r.get("hook", "?"), r.get("error", "?"), r.get("where", "?"))
+            seen[key] = seen.get(key, 0) + 1
+    if not seen:
+        lines.append((OK, "no hook crashed in the last 7 days"))
+        return
+    worst = sorted(seen.items(), key=lambda kv: -kv[1])
+    lines.append((BAD, f"{sum(seen.values())} hook crash(es) in the last 7 days, kept from the "
+                       f"session and recorded in logs/hook_errors.jsonl: "
+                       + "; ".join(f"{h} {e} at {w} ×{n}" for (h, e, w), n in worst[:3])))
+
+
 def which_stores(wsdir, lines):
     """A store that cannot be read is not a store, whatever it holds."""
     for name, glob in (("rules", "memory/rules/*.md"), ("skills", "skills/*.md")):
@@ -252,6 +285,7 @@ def main(argv):
     which_artefacts(root, wsdir, lines)
     which_stores(wsdir, lines)
     which_quarantine(wsdir, lines)
+    which_hook_crashes(wsdir, lines)
     # 🐛 [2026-09-24] (self-measured) Two more lines used to run `.chamnan/tools/silence.py` and
     # `invariant_map.py` from the repository this was pointed at — files that do not ship with
     # chamnan, so a checkout carrying either name had its own code run by a command documented

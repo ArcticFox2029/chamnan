@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A hook that crashes is no longer invisible.** chamnan's hooks are wrapped so that a crash
+  never stops your session, and Claude Code sends a quiet hook's error output only to its debug
+  log, so a hook could fail on every call without anyone knowing. A crash is now recorded (the hook,
+  the error type and the line, never the error's text, which can carry your paths or values). The
+  line at the top of each session says how many crashed today, and `chamnan-doctor` lists them.
 - **The dashboard no longer states, as fact, things that differ from person to person.** Its
   headline said that only 25% of what a local model read would really have been read without
   the plugin, and its bar note said the two totals differed by less than a fifth of a percent.
