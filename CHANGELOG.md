@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A `sed` script with two expressions no longer sets off the "outside this checkout" warning.**
+  A `;` inside the quoted script was read as the end of the command, so part of the script looked
+  like a path, and an edit inside the repository was reported in red as a write outside it. Quoted
+  text is now skipped before the command is split. A write that really goes outside is still
+  reported.
 - **The dashboard's measurement step reads its helper's output as UTF-8 on Windows.** It decoded
   it in the Windows code page, where a single byte that page does not define ends the build with
   `UnicodeDecodeError`. The suite had 27 calls with the same fault, which CI's Windows legs logged

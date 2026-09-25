@@ -101,8 +101,14 @@ def _outside_targets(command, root):
     """Every path this command looks like it will WRITE that is not ours."""
     seen, out = set(), []
     candidates = []
-    for m in _WRITERS.finditer(command):
-        candidates += _PATHISH.findall(_QUOTED.sub(" ", m.group(2)))
+    # 🐛 [2026-09-25] (self-measured) The writer's arguments ran to the next `;`, `&` or `|` BEFORE
+    # quotes were masked, so a separator inside a quoted sed script cut the quote in half:
+    # `sed -i '' 's/^version: "1"/version: "2"/; s/…/' CITATION.cff` left `/version:` looking like
+    # a path, and the red "outside this checkout" notice fired on an edit inside it. Quotes are now
+    # masked across the whole command first, as the redirect branch below already did. A quoted
+    # path was dropped by the old code too, so nothing that used to be caught is lost.
+    for m in _WRITERS.finditer(_QUOTED.sub(lambda q: " " * len(q.group(0)), command)):
+        candidates += _PATHISH.findall(m.group(2))
     # 🐛 [2026-09-23] (self-measured) A redirect INSIDE a quoted string is text, not a redirect: `echo 'hi > /etc/passwd'`
     # writes nothing. Quoted regions are masked to spaces so offsets survive, the operator is found
     # in the masked copy, and the target is then read from the ORIGINAL — because a quoted PATH,
