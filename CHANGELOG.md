@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A shallow clone is no longer told its map was "built 0 seconds behind".** CI checkouts are
+  shallow by default, so the commit the map was built from is often not there. The session then
+  fell back to comparing file times, which are all equal in a fresh checkout, and reported a
+  map 26 commits old as current to the second. It now says the map was built from a commit this
+  shallow clone does not have.
 - **After an upgrade, the file ranking is recounted by the new code.** The session start ranks files
   by how often they change, and keeps that count between sessions. The stored count was matched
   to the commit alone, so after an upgrade that changed how changes are counted, the old count

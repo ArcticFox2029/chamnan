@@ -731,6 +731,19 @@ def map_commits_behind(root, map_path):
         return None
 
 
+def map_from_missing_history(root):
+    """True when this is a shallow clone, so the map's build commit may simply not be here."""
+    if not ws.git_can_speak_for(root):
+        return False
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             stdin=subprocess.DEVNULL, timeout=5)
+        return out.returncode == 0 and out.stdout.strip() == "true"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def map_rebuild_cost(indexed):
     """"about 12 seconds" for the reader's own index size, or "" when the size is unknown.
 
@@ -2086,6 +2099,14 @@ def main():
                             and _behind_commits >= MAP_STALE_COMMITS)
                     if _far:
                         _how_far = f"built {_behind_commits} commits ago"
+                    elif _behind_commits is None and map_from_missing_history(root):
+                        # 🐛 [2026-09-25] (R182, 2026-09-25) In a shallow clone the commit the map
+                        # was built from is not there, so the count is unknown and the fallback
+                        # compared file times -- all equal in a fresh checkout -- and said "built 0
+                        # seconds behind" about a map 26 commits old. Hermes Agent measured the same
+                        # shape: an authoritative-looking number where the truthful answer is
+                        # "unknown". Say what is known instead.
+                        _how_far = "built from a commit this shallow clone does not have"
                     else:
                         # 🐛 (self-measured) Was `f"built {ago(behind)} ago"`, and `ago()` already
                         # ends its own string with "behind" — so every stale index in every
