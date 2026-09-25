@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Piping a command into `head` no longer ends in an error.** `chamnan-where check | head -1`
+  printed `BrokenPipeError` and exited with status 120. Every command now exits quietly when the
+  reader stops early, and prints its full output as before when read to the end.
 - **The dashboard has a time-zone menu.** Days, months and the hour calendar were always counted
   in the zone of the machine that built the page. They are now counted in the zone you pick, and
   the default is your browser's zone. Zones offset by a half or a quarter hour work too. The
