@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Dashboard charts put failures and subagent starts on the right day.** Those two logs record
+  time in UTC, and the dashboard read them as local time. Anywhere outside UTC, each entry moved by
+  the local offset. At +07:00, 42 of 315 entries were drawn on the previous day.
 - **The dashboard's lesson panels now fill in on every build.** They read an index that nothing
   in the plugin ever wrote, so on a fresh install they stayed empty. The dashboard now builds the
   index from the repository's `🐛` comments each time it is rebuilt at the end of a session, adding

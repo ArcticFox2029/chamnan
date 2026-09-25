@@ -99,10 +99,20 @@ def when_of(row):
         if isinstance(v, (int, float)):
             return float(v)
         if isinstance(v, str) and len(v) >= 19:
+            # 🐛 [2026-09-25] (self-measured) The first 19 characters were read as local time, dropping any
+            # zone. `failures.jsonl` stamps UTC (`Z`) and `subagent_start.jsonl` `+00:00`, so on a
+            # machine seven hours east every one of them moved seven hours back: 12 of 50 failures and
+            # 30 of 265 subagent starts were drawn on the previous day. A stamp that names its zone
+            # is read in it; one that names none is local, as before.
             try:
-                return time.mktime(time.strptime(v[:19], "%Y-%m-%dT%H:%M:%S"))
+                import datetime as _dt
+                d = _dt.datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+                return d.timestamp() if d.tzinfo else time.mktime(d.timetuple())
             except ValueError:
-                continue
+                try:
+                    return time.mktime(time.strptime(v[:19], "%Y-%m-%dT%H:%M:%S"))
+                except ValueError:
+                    continue
     return None
 
 
