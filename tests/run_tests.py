@@ -40219,7 +40219,8 @@ try:
     if _t_links259:
         def _run259(*argv):
             r = _sp259.run([sys.executable, str(ROOT / "bin" / argv[0])] + list(argv[1:]),
-                           cwd=str(_t_repo259), capture_output=True, text=True,
+                           cwd=str(_t_repo259), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace",
                            stdin=_sp259.DEVNULL, timeout=120)
             return r.returncode, r.stdout + r.stderr
         _rc259, _o259 = _run259("chamnan-peek", "linkdir/mod.py")
@@ -41085,26 +41086,29 @@ finally:
 import os as _os278, re as _re278, shutil as _sh278, subprocess as _sp278, tempfile as _tf278   # noqa: E402
 from pathlib import Path as _P278                                                                # noqa: E402
 
-_t_dir278 = _P278(_tf278.mkdtemp(prefix="chamnan-open-env-"))
-try:
-    _t_repo278 = _t_dir278 / "repo"
-    _t_repo278.mkdir()
-    _sp278.run(["git", "init", "-q", str(_t_repo278)], check=True)
-    _t_bin278 = _t_dir278 / "bin"
-    _t_bin278.mkdir()
-    _t_out278 = _t_dir278 / "seen.txt"
-    (_t_bin278 / "claude").write_text(
-        "#!/bin/sh\nenv | grep -c '^GIT_CONFIG_' > \"%s\"\n" % _t_out278, encoding="utf-8")
-    (_t_bin278 / "claude").chmod(0o755)
-    _t_env278 = {k: v for k, v in _os278.environ.items() if not k.startswith("GIT_CONFIG_")}
-    _t_env278["PATH"] = str(_t_bin278) + _os278.pathsep + _t_env278.get("PATH", "")
-    _sp278.run([sys.executable, str(ROOT / "bin" / "chamnan-open"), "--fresh"], cwd=str(_t_repo278),
-               env=_t_env278, stdin=_sp278.DEVNULL, capture_output=True, timeout=60)
-    _t_seen278 = _t_out278.read_text(encoding="utf-8").strip() if _t_out278.is_file() else "(not run)"
-    check("A SESSION OPENED BY chamnan-open INHERITS NONE OF CHAMNAN'S GIT OVERRIDES",
-          _t_seen278 == "0", saw=_t_seen278)
-finally:
-    _sh278.rmtree(_t_dir278, ignore_errors=True)
+if _os278.name == "nt":
+    skip("  [SKIP] check 278 launch — the stand-in `claude` is a shell script, and Windows runs none")
+else:
+    _t_dir278 = _P278(_tf278.mkdtemp(prefix="chamnan-open-env-"))
+    try:
+        _t_repo278 = _t_dir278 / "repo"
+        _t_repo278.mkdir()
+        _sp278.run(["git", "init", "-q", str(_t_repo278)], check=True)
+        _t_bin278 = _t_dir278 / "bin"
+        _t_bin278.mkdir()
+        _t_out278 = _t_dir278 / "seen.txt"
+        (_t_bin278 / "claude").write_text(
+            "#!/bin/sh\nenv | grep -c '^GIT_CONFIG_' > \"%s\"\n" % _t_out278, encoding="utf-8")
+        (_t_bin278 / "claude").chmod(0o755)
+        _t_env278 = {k: v for k, v in _os278.environ.items() if not k.startswith("GIT_CONFIG_")}
+        _t_env278["PATH"] = str(_t_bin278) + _os278.pathsep + _t_env278.get("PATH", "")
+        _sp278.run([sys.executable, str(ROOT / "bin" / "chamnan-open"), "--fresh"], cwd=str(_t_repo278),
+                   env=_t_env278, stdin=_sp278.DEVNULL, capture_output=True, timeout=60)
+        _t_seen278 = _t_out278.read_text(encoding="utf-8").strip() if _t_out278.is_file() else "(not run)"
+        check("A SESSION OPENED BY chamnan-open INHERITS NONE OF CHAMNAN'S GIT OVERRIDES",
+              _t_seen278 == "0", saw=_t_seen278)
+    finally:
+        _sh278.rmtree(_t_dir278, ignore_errors=True)
 _t_bare278 = sorted(p.name for p in (ROOT / "bin").iterdir()
                     if p.is_file() and not p.suffix
                     and _re278.search(r"os\.exec(?:v|vp|l|lp)\(", p.read_text(encoding="utf-8", errors="replace")))
@@ -41125,7 +41129,8 @@ _t_env279 = dict(_os279.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
 
 
 def _t_g279(*a):
-    return _sp279.run(["git", "-C", str(_t_dir279), *a], env=_t_env279, capture_output=True, text=True)
+    return _sp279.run(["git", "-C", str(_t_dir279), *a], env=_t_env279, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
 
 
 def _t_map279():
@@ -41137,7 +41142,8 @@ def _t_block279():
     return _sp279.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                       input='{"hook_event_name":"SessionStart","source":"startup","session_id":"p"}',
                       env=dict(_t_env279, CLAUDE_PROJECT_DIR=str(_t_dir279)), cwd=str(_t_dir279),
-                      capture_output=True, text=True, timeout=120).stdout
+                      capture_output=True, text=True, encoding="utf-8", errors="replace",
+                      timeout=120).stdout
 
 
 try:
@@ -41146,7 +41152,8 @@ try:
         if _t_branch279:
             _t_g279("checkout", "-q", "main")
             _t_g279("checkout", "-qb", _t_branch279)
-        (_t_dir279 / (_t_name279 + ".py")).write_text('def %s():\n    """%s."""\n' % (_t_name279, _t_name279))
+        (_t_dir279 / (_t_name279 + ".py")).write_text('def %s():\n    """%s."""\n' % (_t_name279, _t_name279),
+                                                      encoding="utf-8")
         _t_map279()
         _t_g279("add", "-A")
         _t_g279("commit", "-qm", _t_name279)
