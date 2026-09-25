@@ -35,6 +35,10 @@ already reports the last released number while running newer code.
 - **`chamnan-recall` indexes only chamnan's own stores.** It also looked for two named files that are
   not part of the workspace layout chamnan creates; that lookup, and the section splitting it
   needed, are gone.
+- **Two commands no longer follow a link out of the repository.** `chamnan-peek` refused a linked
+  file that pointed outside, but read a file reached through a linked directory. `chamnan-where`
+  opened a linked file wherever it pointed. Both now apply the rule the map already used. A link
+  that stays inside the repository is read as before.
 
 ---
 

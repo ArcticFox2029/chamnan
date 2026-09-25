@@ -470,6 +470,7 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
     the same reason `mapper`'s coverage line reports how many rows carried a claim nothing checked.
     """
     found, unjudged, how = [], 0, {"exact": 0, "lexical": 0}
+    root_real = os.path.realpath(str(root))
     ext_lang = line_comments = None
 
     def _unreadable(err):
@@ -491,6 +492,18 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                 if ext not in ext_lang:
                     continue
             p = os.path.join(base, name)
+            # 🐛 [2026-09-25] (R2, 2026-09-25) `os.walk` does not descend into a linked directory,
+            # but it still yields a linked FILE, and `open()` follows it: a `src/x.py` pointing
+            # outside the repository was parsed and its definitions reported as the repository's
+            # own. `tree._walk` has refused such an escape since it was found for the map; this
+            # walk is its own and never learned it. Same test, component by component.
+            if os.path.islink(p) or (hasattr(os.path, "isjunction") and os.path.isjunction(p)):
+                try:
+                    _to = os.path.realpath(p)
+                except (OSError, RuntimeError):
+                    continue
+                if os.path.commonpath([_to, root_real]) != root_real:
+                    continue
             try:
                 if os.path.getsize(p) > MAX_BYTES:
                     unjudged += 1
