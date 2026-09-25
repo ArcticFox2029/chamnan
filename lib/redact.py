@@ -836,7 +836,12 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
     # which is the shape a session record or a bug report is most likely to carry one in.
     # Relaxing it costs nothing: this rule fires only when a `:password@host` follows, so a plain
     # URL is still untouched no matter what precedes the scheme. (R3.1 boundary mutation.)
-    r"(?<![A-Za-z0-9])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
+    # 🐛 [2026-09-25] (R11, 2026-09-25) The scheme was `[a-zA-Z][a-zA-Z0-9+.-]*`, unbounded, and a
+    # new attempt may start after every `.`, `+` or `-`: on a long dotted run with no `://` each
+    # start scanned to the run's end, so the rule was quadratic. `a.a.a…` of 5,000 characters took
+    # 1.0 s and of 50,000 took 99 s; a 6,000-character dotted identifier took 1.1 s. No real scheme
+    # approaches 32 characters, so each part is capped there and the scan is linear.
+    r"(?<![A-Za-z0-9])([a-zA-Z][a-zA-Z0-9+.-]{0,31}(?::[a-zA-Z][a-zA-Z0-9+.-]{0,31})?://[^\s:/@]*)"
     # 🐛 [2026-09-19] (self-measured) The class was `[^\s/]{3,}` alone, and the comment above says
     # why `/` is excluded: it stops the match running past the authority into a path. That reasoning
     # is right and is kept. What it did not cover is that standard base64 CONTAINS `/` — which is
