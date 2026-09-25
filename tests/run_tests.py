@@ -40943,6 +40943,31 @@ _t_full274 = _sp274.run(_t_cmd274, capture_output=True, stdin=_sp274.DEVNULL, cw
 check("...AND READ TO THE END IT STILL WRITES ALL OF ITS OUTPUT, LARGER THAN A PIPE HOLDS",
       _t_full274.returncode == 0 and len(_t_full274.stdout) > 65536,
       saw=(_t_full274.returncode, len(_t_full274.stdout)))
+
+# 🐛 [2026-09-25] (self-measured, CI) Windows under Python 3.8 reports a closed pipe as
+# `OSError: [Errno 22] Invalid argument`, not `BrokenPipeError`; the check above failed there with
+# exit 120. That platform is simulated here: stdout's raw stream raises EINVAL until fd 1 has been
+# pointed somewhere that is not the closed pipe -- which is what the exit handler must do.
+_t_sim274 = (
+    "import io, os, errno, sys\n"
+    "sys.path.insert(0, %r)\n"
+    "import workspace\n"
+    "_dn = os.stat(os.devnull)\n"
+    "class _Raw(io.RawIOBase):\n"
+    "    def writable(self): return True\n"
+    "    def fileno(self): return 1\n"
+    "    def write(self, b):\n"
+    "        st = os.fstat(1)\n"
+    "        if (st.st_dev, st.st_ino) != (_dn.st_dev, _dn.st_ino):\n"
+    "            raise OSError(errno.EINVAL, 'Invalid argument')\n"
+    "        return len(b)\n"
+    "sys.stdout = io.TextIOWrapper(io.BufferedWriter(_Raw()), encoding='utf-8')\n"
+    "print('x' * 100)\n" % str(ROOT / "lib"))
+_t_simr274 = _sp274.run([sys.executable, "-c", _t_sim274], capture_output=True, stdin=_sp274.DEVNULL)
+check("...AND WHERE THE CLOSED PIPE IS REPORTED AS EINVAL (WINDOWS, PYTHON 3.8) IT LEAVES QUIETLY TOO",
+      _t_simr274.returncode != 120 and b"Exception ignored" not in _t_simr274.stderr
+      and b"Traceback" not in _t_simr274.stderr,
+      saw=(_t_simr274.returncode, _t_simr274.stderr[-200:]))
 # ---- 275_a_deleted_transcript_keeps_its_days_on_the_dashboard.py
 # ------------------ a deleted transcript keeps its days on the dashboard
 # 🐛 [2026-09-25] (R102, 2026-09-25) Claude Code deletes a transcript 30 days after its session by default,

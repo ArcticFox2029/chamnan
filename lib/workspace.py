@@ -14,6 +14,7 @@ import time
 import contextlib
 import pathlib
 import os
+import errno
 from datetime import datetime, timezone
 import sys
 from pathlib import Path
@@ -33,12 +34,36 @@ _PERSONS_ENV = dict(os.environ)
 # point stdout at devnull so the shutdown flush has somewhere to go, and leave with status 1. Every
 # other exception goes to whatever hook was installed before, unchanged. SIGPIPE is not set to
 # SIG_DFL, which the same documentation warns against.
+def _stdout_is_gone():
+    """Whether stdout's reader has gone, asked of stdout itself rather than of an exception's type.
+
+    🐛 [2026-09-25] (self-measured, CI) On Windows under Python 3.8 a write into a closed pipe raises
+    `OSError: [Errno 22] Invalid argument`, not `BrokenPipeError`, so a check on the type alone
+    missed it there and the command still exited 120. A flush that fails is the one answer that
+    holds on every platform.
+    """
+    try:
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        return True
+    except AttributeError:
+        return False
+    return False
+
+
+def _to_devnull():
+    try:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def _quiet_broken_pipe(kind, value, tb, _previous=sys.excepthook):
-    if isinstance(kind, type) and issubclass(kind, BrokenPipeError):
-        try:
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-        except (OSError, ValueError, AttributeError):
-            pass
+    if isinstance(kind, type) and (issubclass(kind, BrokenPipeError)
+                                   or (issubclass(kind, OSError)
+                                       and getattr(value, "errno", None) == errno.EINVAL
+                                       and _stdout_is_gone())):
+        _to_devnull()
         return
     _previous(kind, value, tb)
 
@@ -52,15 +77,8 @@ def _flush_or_let_go():
     runs before that flush, so the flush happens here, where it can be answered. The command's own
     exit status is left as it was: the reader stopping early is not the command failing.
     """
-    try:
-        sys.stdout.flush()
-    except BrokenPipeError:
-        try:
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-        except (OSError, ValueError, AttributeError):
-            pass
-    except (OSError, ValueError, AttributeError):
-        pass
+    if _stdout_is_gone():
+        _to_devnull()
 
 
 # 🐛 [2026-09-25] (R108, 2026-09-25) Hooks run `git status` while the person, an editor or another
