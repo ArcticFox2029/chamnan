@@ -1842,6 +1842,12 @@ LAST_CONFIG_KEYS_KEPT = []
 # the behaviour they expected not happening. List of `(key, value, wants)` tuples.
 LAST_CONFIG_KEYS_IGNORED = []
 
+# Unknown keys `ensure()` kept because they are close to a real one, as `(key, meant)` pairs — a
+# typo does nothing, and it is named at session start rather than dropped (R231).
+LAST_CONFIG_KEYS_MISSPELT = []
+# How close an unknown key must be to a real one to be taken for its typo; see `_merged`.
+CONFIG_TYPO_CUTOFF = 0.85
+
 
 def _newer_version_has_been_here(root):
     """True when `.version` names a build newer than the one running.
@@ -2006,6 +2012,27 @@ def ensure(root=None):
                 if k not in DEFAULT_CONFIG:
                     merged[k] = v
                     kept_newer.append(k)
+        else:
+            # 🐛 [2026-09-25] (R231, 2026-09-25) A MISSPELT key was dropped like a retired one:
+            # `{"log_retention_dayz": 30}` vanished from the file on the next session, the 7-day
+            # default went on deleting logs, and nothing said a word. A key close to a real one is
+            # a typo far more often than a retired option, so it is kept as written and named with
+            # the key it was probably meant to be. The two closest real keys
+            # (`log_retention_days` / `session_retention_days`) score exactly 0.8, and a cutoff is
+            # inclusive, so it sits above that: no real key reads as another's typo, while a
+            # one-letter slip on even a three-letter key (`maps`, 0.857) is still caught.
+            # Skipped when a newer build has been here: its keys are kept above.
+            import difflib
+            misspelt = []
+            for k, v in current.items():
+                if k in DEFAULT_CONFIG:
+                    continue
+                near = difflib.get_close_matches(str(k), list(DEFAULT_CONFIG), n=1, cutoff=CONFIG_TYPO_CUTOFF)
+                if near:
+                    merged[k] = v
+                    misspelt.append((k, near[0]))
+            if misspelt:
+                LAST_CONFIG_KEYS_MISSPELT[:] = misspelt
         if kept_newer:
             LAST_CONFIG_KEYS_KEPT[:] = sorted(kept_newer)
         if merged == current:

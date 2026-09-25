@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A misspelt setting is named instead of deleted.** chamnan removed any key in `config.json`
+  that it did not know, which is right for an old setting and wrong for a typo. With
+  `"log_retention_dayz": 30`, the key disappeared on the next session and the 7-day default kept
+  deleting logs, with no message. A key that is close to a real one is now kept as you wrote it,
+  and the session start says `log_retention_dayz` — did you mean `log_retention_days`?
 - **Subagent costs are recorded on older Claude Code too.** Claude Code 2.1.63 renamed the tool
   that starts a subagent from `Task` to `Agent`. chamnan listened only for `Agent`, so on an older
   Claude Code it never recorded what a subagent cost or which model it ran on. It now listens for

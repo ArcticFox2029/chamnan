@@ -2801,6 +2801,17 @@ def main():
             out.insert(0, f"_⚠ `.chamnan/config.json` has settings this build cannot use: "
                           f"{_named}. The file has NOT been changed; fix the value and it takes "
                           "effect on the next session._\n")
+        if ws.LAST_CONFIG_KEYS_MISSPELT:
+            # A key close to a real one is kept in the file rather than dropped, and does nothing
+            # until it is renamed (R231). Names are scrubbed like the two warnings above.
+            _shown = ws.LAST_CONFIG_KEYS_MISSPELT[:KEPT_KEYS_NAMED]
+            _named = "; ".join(f"`{mdblock.as_quoted(redact.scrub(str(k)), 40)}` — did you mean "
+                               f"`{meant}`?" for k, meant in _shown)
+            if len(ws.LAST_CONFIG_KEYS_MISSPELT) > len(_shown):
+                _named += f" (+{len(ws.LAST_CONFIG_KEYS_MISSPELT) - len(_shown)} more)"
+            out.insert(0, f"_⚠ `.chamnan/config.json` has settings chamnan does not know, so they "
+                          f"do nothing: {_named} Each is kept in the file as written; rename it and "
+                          "it takes effect on the next session._\n")
         if any(OPEN_MARK in part for part in out):
             out.insert(0, FRAMING + "\n")
             # Everything after position 0 has just moved. index_slot is an index into this list.
