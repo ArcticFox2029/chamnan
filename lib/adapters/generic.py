@@ -125,6 +125,13 @@ def install(root, body, command=""):
         if not closed:
             raise ValueError(f"{path} opens a chamnan region and never closes it; "
                              f"refusing to guess where it was meant to end")
+        # 🐛 [2026-09-25] (R86, 2026-09-25) A second region -- a paste, a merge that kept both sides --
+        # was left in place: the first was replaced and the second stayed stale for good, so the
+        # agent read two chamnan blocks that disagreed. Which one to keep is the same guess as
+        # above, and the same answer: say so and stop.
+        if START in tail:
+            raise ValueError(f"{path} holds more than one chamnan region; remove all but one "
+                             f"and run this again")
         # One blank line between the region and whatever they wrote after it. Without it their next
         # heading butts against the end marker, which renders in most parsers but reads as damage
         # in the diff -- and this file is one a person opens by hand.

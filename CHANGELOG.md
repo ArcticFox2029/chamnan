@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **An `AGENTS.md` with two chamnan regions is refused instead of half-updated.** When a paste
+  or a merge left a second `<!-- chamnan:start -->` region in the file, the first was replaced and
+  the second stayed stale, so the agent read two chamnan blocks that disagreed. `chamnan-context
+  --write` now stops and says so, leaving the file untouched, as it already did for a region that
+  never closes.
 - **Redacting a long base64url string no longer takes seconds.** A 200 KB value made of letters,
   digits, `-` and `_` (a JWT fixture, an inline token dump) took 16.0 s to scrub, because every
   secret word found inside it by chance re-walked the whole string. It now takes 3.2 s, and 50 KB
