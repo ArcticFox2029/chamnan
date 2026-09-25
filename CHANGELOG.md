@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Scheduled resumes keep their time when you travel or the clocks change.** `chamnan-schedule`
+  used to store a plain local time without a time zone. A resume set for two hours later in Bangkok
+  fired after one hour once the machine was in Tokyo, and a daylight-saving change moved it the same
+  way. Times are now stored with their time zone and compared as exact moments. Schedules made
+  before this update are still read as local time.
 - **A merge conflict in `MAP.md` now tells you how to fix it.** When two branches each rebuild the
   map, merging them always conflicts in it. Because the map is generated, the fix is to rebuild it,
   and the session start now says so: run `chamnan-map`, then `git add .chamnan/MAP.md`.

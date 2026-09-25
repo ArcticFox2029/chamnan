@@ -52,6 +52,22 @@ _DURATION = re.compile(r"\A\s*(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s
 _CLOCK = re.compile(r"\A\s*(\d{1,2})[:.](\d{2})\s*(am|pm)?\s*\Z", re.I)
 
 
+# 🐛 [2026-09-25] (R119, 2026-09-25) Every appointment was a NAIVE local time, compared with a naive
+# `datetime.now()`. So it was a wall-clock reading, not an instant: set "in 2h" in Bangkok, move the
+# machine to Tokyo, and it fired after one hour -- measured -- and a daylight-saving change moves it
+# the same way. `due()` below claimed the opposite. An appointment is now stored with its UTC
+# offset and every comparison is between instants. A record written before this has no offset
+# and is read as local time, which is what it always meant.
+def _aware(dt):
+    """`dt` as an instant: unchanged if it carries a zone, else read as this machine's local time."""
+    return dt if dt.tzinfo is not None else dt.astimezone()
+
+
+def _instant(text):
+    """The appointment in a record's `when` as an instant. ValueError when it is not a time."""
+    return _aware(datetime.fromisoformat(str(text or "")))
+
+
 def parse_when(text, now=None):
     """`1h32m`, `45m`, `2h`, `90s`, `1d`, or a wall clock like `3:50am` / `15:04`.
 
@@ -59,7 +75,7 @@ def parse_when(text, now=None):
     tomorrow — which is what somebody typing `9:00` at midnight means, and getting that wrong would
     fire the schedule immediately and look like the feature is broken.
     """
-    now = now or datetime.now()
+    now = _aware(now or datetime.now())
     text = (text or "").strip()
     if not text:
         return None
@@ -335,7 +351,7 @@ def reset_time(payload, now=None, limit_kind=None):
     The earliest future reset is the useful default: it is the first documented window at which
     work may continue. `limit_kind` makes the choice explicit where a caller needs another window.
     """
-    now = now or datetime.now()
+    now = _aware(now or datetime.now())
     observations = reset_observations(payload, now=now)
     if limit_kind:
         observations = [item for item in observations
@@ -472,9 +488,9 @@ def describe(rec, now=None):
     tell" resolves to still watching, because a false "gone" costs a live job the user cancels, while
     a false "watching" only withholds a warning.
     """
-    now = now or datetime.now()
+    now = _aware(now or datetime.now())
     try:
-        due = datetime.fromisoformat(str(rec.get("when") or ""))
+        due = _instant(rec.get("when")).astimezone()
     except ValueError:
         return "%s — unreadable time, nothing will fire" % (rec.get("id") or "?")
     left = due - now
@@ -558,13 +574,13 @@ def due(rows, now=None):
     late and would have no way to know. Comparing against the clock is correct across suspend,
     hibernate, a timezone change, and a clock set backwards.
     """
-    now = now or datetime.now()
+    now = _aware(now or datetime.now())
     out = []
     for r in rows:
         if (r.get("status") or "pending") != "pending":
             continue
         try:
-            if datetime.fromisoformat(str(r.get("when") or "")) <= now:
+            if _instant(r.get("when")) <= now:
                 out.append(r)
         except ValueError:
             continue
@@ -578,9 +594,9 @@ def lateness(rec, now=None):
     is the honest outcome — and a caller that printed "fired on time" regardless would be the same
     shape as reporting drift of zero because the file it compares against was missing.
     """
-    now = now or datetime.now()
+    now = _aware(now or datetime.now())
     try:
-        return max(0, int((now - datetime.fromisoformat(str(rec.get("when") or ""))).total_seconds()))
+        return max(0, int((now - _instant(rec.get("when"))).total_seconds()))
     except ValueError:
         return 0
 
