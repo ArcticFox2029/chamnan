@@ -71,6 +71,14 @@ BUG = "\U0001F41B"
 
 # ---------------------------------------------------------------- reading what is already there
 
+def _count(v):
+    """A count read from a log field, or 0 when the field holds anything that is not a number."""
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def rows(name):
     """One log, as a list of dicts. Missing or unreadable is an empty list, said once by caller."""
     path = LOGS / name
@@ -84,9 +92,15 @@ def rows(name):
                 if not line:
                     continue
                 try:
-                    out.append(json.loads(line))
+                    rec = json.loads(line)
                 except ValueError:
                     continue
+                # 🐛 [2026-09-25] (R196, 2026-09-25) A line that parses but is not an object -- a list, a
+                # bare number -- reached `.get()` in a caller and the whole build stopped, so the
+                # dashboard silently froze at its last good build. Every reader here now skips it,
+                # the way append_jsonl already drops it on write.
+                if isinstance(rec, dict):
+                    out.append(rec)
     except OSError:
         return []
     return out
@@ -138,6 +152,8 @@ def _session_origin(path):
                 try:
                     rec = json.loads(line)
                 except ValueError:
+                    continue
+                if not isinstance(rec, dict):
                     continue
                 cwd = cwd or rec.get("cwd")
                 entry = entry or rec.get("entrypoint")
@@ -379,6 +395,8 @@ def _usage_of(path, start=0, prev=None):
                 try:
                     rec = json.loads(line)
                 except ValueError:
+                    continue
+                if not isinstance(rec, dict):
                     continue
                 # 🐛 [2026-09-25] (self-measured) The day was the first ten characters of a UTC stamp,
                 # so everything done before 07:00 at +07:00 was booked to the day before. The
@@ -719,12 +737,14 @@ def series():
                     r = json.loads(line)
                 except ValueError:
                     continue
+                if not isinstance(r, dict):
+                    continue
                 day[p.stem]["local_calls"] += 1
-                day[p.stem]["local_chars"] += int(r.get("saved_chars") or 0)
+                day[p.stem]["local_chars"] += _count(r.get("saved_chars"))
                 w = when_of({"ts": r.get("ts")})
                 if w:
                     slots[_slot(w)]["local_calls"] += 1
-                    slots[_slot(w)]["local_chars"] += int(r.get("saved_chars") or 0)
+                    slots[_slot(w)]["local_chars"] += _count(r.get("saved_chars"))
         except OSError:
             continue
 
@@ -1076,8 +1096,10 @@ def local_model():
                         r = json.loads(line)
                     except ValueError:
                         continue
+                    if not isinstance(r, dict):
+                        continue
                     calls += 1
-                    chars += int(r.get("saved_chars") or 0)
+                    chars += _count(r.get("saved_chars"))
             except OSError:
                 continue
             days.append({"day": p.stem, "calls": calls, "chars": chars})

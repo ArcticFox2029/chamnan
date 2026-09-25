@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **One unreadable log line no longer stops the dashboard from updating.** A line that was valid
+  JSON but not a record, or a count field holding text, stopped the dashboard's build. It runs
+  quietly at the end of each session, so the page simply stayed at its last good build. Such
+  lines are now skipped, the way the logs' own writer already drops them.
 - **The test suite gives the same answer on your machine as on CI.** It built its test repositories
   with your own git settings in effect, so a `commit.gpgsign = true` in your `~/.gitconfig` failed
   checks there that passed everywhere else, including under `tools/verify_release.py`. The suite
