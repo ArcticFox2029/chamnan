@@ -189,11 +189,19 @@ def _git_files(root, depth=0):
     """
     import pathlib
     import subprocess
+    import workspace as ws
     root = pathlib.Path(root)
+    # `git -C <dir>` reads that directory's own config, and a directory can choose what git runs;
+    # every git call in this package asks first (check: EVERY `git -C <root>` CALLER FIRST ASKS).
+    try:
+        if not ws.git_can_speak_for(root):
+            return None
+    except Exception:            # noqa: BLE001 -- an index is never worth a failed build
+        return None
 
     def ls(*args):
         out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", *args],
-                             capture_output=True, timeout=60)
+                             stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
         if out.returncode != 0:
             return None
         return [p for p in out.stdout.decode("utf-8", "surrogateescape").split("\0") if p]

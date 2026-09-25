@@ -10393,14 +10393,17 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # Raised 2026-09-24 from 29 to 30, found by CI on the 1.31.1 check branch. `workspace`'s driver
 # stand-down asks `git config --show-scope --get-regexp` which attribute drivers a repository's own
 # config names, a TWENTY-SECOND purpose: no other site reads config to neutralise it.
+# Raised 2026-09-25 from 30 to 31, found by CI on the 1.32.0 check branch. `gotcha.index` asks
+# `git ls-files` which files the repository keeps, so the dashboard's lesson index reads those and
+# not ignored ones -- a TWENTY-THIRD purpose, indexing the repository's own recorded lessons.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 30, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 31, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Thirty call sites serve twenty-two read-only paths"
+      and "Thirty-one call sites serve twenty-three read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
