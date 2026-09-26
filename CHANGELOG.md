@@ -25,6 +25,8 @@ already reports the last released number while running newer code.
   Read was written by parsing and rewriting the entire log, which at its 2,000-record bound was
   19 ms and about 370 KB written per call. It now appends one line and trims only when the log is a
   quarter past its bound: 1.3 ms per call. The scratch-script log changed the same way.
+  The same hook also stopped importing three modules a Read never uses, which took its median
+  from 228-243 ms to 214-221 ms across three interleaved rounds.
 
 - **The redactor no longer blanks out ordinary code beside a secret word.** A key containing
   `key`, `token` or `password` made the value after it look like a credential even when that value

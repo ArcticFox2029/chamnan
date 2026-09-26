@@ -32,7 +32,6 @@ import edge would ever show. And it is not stored as a derived artefact: the log
 correlation is computed on read, so there is nothing to regenerate, invalidate, or merge.
 """
 import json
-import subprocess
 import workspace as ws
 import time
 from collections import Counter, defaultdict
@@ -296,6 +295,9 @@ def _git_edits(root, now, cutoff):
     event ever saw. Merged, not chosen between -- picking the newer source alone would drop
     uncommitted work the moment anything was committed.
     """
+    # Imported here, the one place it is used: the file-pointer hook imports this module on every
+    # Read for `line()`, which never runs git, and `subprocess` is ~10 ms of import (R81, 2026-09-26).
+    import subprocess
     try:
         out = subprocess.run(
             # 🐛 The workspace's own bookkeeping is excluded, and without it this answered with

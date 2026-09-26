@@ -9,7 +9,6 @@ rebuilding their own — and a machine move carries it along with the clone.
 import re
 import hashlib
 import json
-import secrets
 import time
 import contextlib
 import pathlib
@@ -3549,6 +3548,9 @@ def nonce_for(session_id):
     to stop being identical (R1, the duplicate-body sweep).
     """
     if not session_id:
+        # Imported here: `secrets` pulls in random, hmac and base64, ~7 ms that every hook paid at
+        # import for a fallback almost no call reaches (R81, 2026-09-26).
+        import secrets
         return secrets.token_hex(3)          # no id in the payload: fall back to a random marker
     return hashlib.blake2s(str(session_id).encode("utf-8"), digest_size=3).hexdigest()
 

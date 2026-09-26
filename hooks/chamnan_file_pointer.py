@@ -86,8 +86,12 @@ def _dependency_note(root, rel, target, tool, tool_input):
     See `deps.added_back`. The file on disk is the before; the Write's content, or the file with
     the Edit applied, is the after -- so only a name the edit itself adds is ever reported.
     """
+    # The tool first: `deps` brings `subprocess` with it, ~10 ms that every Read paid for a check
+    # only an Edit or Write of a manifest can pass (R81, 2026-09-26).
+    if tool not in ("Edit", "Write"):
+        return ""
     import deps
-    if tool not in ("Edit", "Write") or target.name.lower() not in deps.MANIFEST_NAMES:
+    if target.name.lower() not in deps.MANIFEST_NAMES:
         return ""
     try:
         current = target.read_text(encoding="utf-8-sig", errors="replace") if target.is_file() else ""
