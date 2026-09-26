@@ -1999,6 +1999,17 @@ def _scan(root):
         # line is useful; a traceback is not, and it takes the other 195 files with it.
         try:
             doc, funcs, classes, consts = _extract_one(source, path, lang)
+            # \U0001f41b [2026-09-25] (R217, 2026-09-25) `text = raw.decode(bom or "utf-8-sig",
+            # errors="replace")` in `indexable()` turns every byte a source encoding doesn't own
+            # into U+FFFD, and a comment or docstring read out of that text carried the replacement
+            # characters straight into MAP.md — a Shift-JIS file's Japanese opening comment came out
+            # `��タ�@...`, mojibake committed into the index rather than left out
+            # of it. Guessing the real encoding is out of scope here (see `_bom_encoding` above,
+            # which only reads what the file itself declares); the fix is to not emit text that is
+            # already known to be wrong. Line count and symbol counts stand regardless — only the
+            # one-line description is dropped.
+            if "�" in doc:
+                doc = ""
             # _sfc_extraction_source is a no-op for every extension but .svelte/.vue/.astro, so this
             # stays the plain `_is_empty_module(source, lang)` everywhere else. For those three, an
             # empty extraction (no <script>, no frontmatter) must count as nothing-to-describe here

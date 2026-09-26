@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A non-UTF-8 source file's summary is no longer injected into the map as mojibake.** Every file
+  is decoded with `errors="replace"`, so a real but undeclared encoding — Shift-JIS, say — turned
+  the wrong bytes into U+FFFD, and that replacement text was written straight into `MAP.md` as the
+  file's one-line description. The description is now dropped whenever it carries U+FFFD; the
+  line count and symbol counts are unaffected, and no encoding is guessed.
+
 - **The redactor no longer treats "author" as the secret word "auth".** `author`, `authors`,
   `authored`, `authority` and `AUTHOR_EMAIL` were all one letter short of the word boundary the
   exclusion needed, so a commit's own `Co-Authored-By:` trailer and any `GIT_AUTHOR_EMAIL=...` came
