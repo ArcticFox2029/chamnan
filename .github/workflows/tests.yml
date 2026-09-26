@@ -27,6 +27,10 @@ jobs:
   suite:
     name: ${{ matrix.os }} · python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    # Unset, a hung leg runs for GitHub's default of 360 minutes before anything reports it. The
+    # slowest leg has finished in 21-23 minutes on every run on record, so an hour is headroom,
+    # not a squeeze (R93, 2026-09-26).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
