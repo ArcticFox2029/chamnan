@@ -42283,6 +42283,61 @@ try:
           "CONTENT_TYPE" not in _t_map298 and "HTTP_HOST" not in _t_map298)
 finally:
     _sh298.rmtree(_t_repo298, ignore_errors=True)
+# ---- 299_a_log_append_writes_one_line_not_the_whole_file.py
+# ------------------ a log append writes one line, not the whole file
+# 🐛 [2026-09-26] (R59, 2026-09-26) `ws.append_jsonl` parsed and rewrote the whole log on every call,
+# and the file-pointer hook calls it on every Read. At the 2,000-record ceiling that was 19 ms and
+# ~370 KB written per call to add one line. It now appends, and trims only a quarter past `keep`.
+# Asserted on the file itself: the bytes before the new line are untouched, the bound still holds,
+# a torn tail does not swallow the next record, and read-only mode writes nothing.
+import json as _js299, os as _os299, shutil as _sh299, subprocess as _sp299, tempfile as _tf299   # noqa: E402
+from pathlib import Path as _P299                                                                  # noqa: E402
+
+_t_root299 = _P299(_tf299.mkdtemp(prefix="chamnan-append-"))
+try:
+    _sp299.run(["git", "init", "-q", str(_t_root299)], capture_output=True, timeout=60)
+    _t_log299 = _t_root299 / ".chamnan" / "logs" / "probe.jsonl"
+    _t_log299.parent.mkdir(parents=True)
+    _t_log299.write_text("".join(_js299.dumps({"i": i, "pad": "x" * 150}) + "\n" for i in range(2000)),
+                         encoding="utf-8")
+    _t_before299 = _t_log299.read_bytes()
+    ws.append_jsonl(_t_root299, "logs/probe.jsonl", {"i": "new"}, 2000)
+    _t_after299 = _t_log299.read_bytes()
+    check("A LOG APPEND AT ITS CEILING LEAVES EVERY EARLIER BYTE AS IT WAS AND ADDS ONE LINE",
+          _t_after299.startswith(_t_before299)
+          and _t_after299[len(_t_before299):] == b'{"i":"new"}\n',
+          saw=(len(_t_before299), len(_t_after299), _t_after299[len(_t_before299):][:80]))
+
+    _t_log299.write_text("", encoding="utf-8")
+    _t_peak299 = 0
+    for _t_i299 in range(700):
+        ws.append_jsonl(_t_root299, "logs/probe.jsonl", {"i": _t_i299}, 100)
+        _t_peak299 = max(_t_peak299, _t_log299.read_bytes().count(b"\n"))
+    _t_rows299 = [_js299.loads(l) for l in _t_log299.read_text(encoding="utf-8").splitlines()]
+    check("...WHILE THE LOG STAYS BOUNDED, AT MOST A QUARTER PAST keep, AND ENDS ON THE NEWEST RECORD",
+          _t_peak299 <= 125 and len(_t_rows299) >= 100 and _t_rows299[-1] == {"i": 699},
+          saw=(_t_peak299, len(_t_rows299), _t_rows299[-1:]))
+
+    _t_log299.write_text('{"i":1}\n{"i":2,"half', encoding="utf-8")
+    ws.append_jsonl(_t_root299, "logs/probe.jsonl", {"i": 3}, 100)
+    _t_lines299 = _t_log299.read_text(encoding="utf-8").splitlines()
+    check("...AND A TORN LAST LINE COSTS ONLY ITSELF: THE NEXT RECORD LANDS ON A LINE OF ITS OWN",
+          _t_lines299[-1] == '{"i":3}' and _t_lines299[0] == '{"i":1}', saw=_t_lines299)
+
+    _t_frozen299 = _t_log299.read_bytes()
+    _t_prev299 = _os299.environ.get("CHAMNAN_READ_ONLY")
+    _os299.environ["CHAMNAN_READ_ONLY"] = "1"
+    try:
+        _t_ro299 = ws.append_jsonl(_t_root299, "logs/probe.jsonl", {"i": 4}, 100)
+    finally:
+        if _t_prev299 is None:
+            _os299.environ.pop("CHAMNAN_READ_ONLY", None)
+        else:
+            _os299.environ["CHAMNAN_READ_ONLY"] = _t_prev299
+    check("...AND READ-ONLY MODE APPENDS NOTHING AND SAYS SO",
+          _t_ro299 is False and _t_log299.read_bytes() == _t_frozen299, saw=_t_ro299)
+finally:
+    _sh299.rmtree(_t_root299, ignore_errors=True)
 # ---- 29_the_gate_reads_both_streams.py
 # ------------------------------------------- "0 tracebacks" over a run that crashed
 # 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
@@ -42327,6 +42382,376 @@ finally:
 # and the gate has to say which rather than fall silent.
 check("...and a run that ends with neither totals nor a traceback is reported as ending early",
       "ended early rather than failing" in _t_gate)
+# ---- 300_a_read_does_not_import_what_only_an_edit_needs.py
+# ------------------ a Read does not import what only an Edit, or a fallback, needs
+# 🐛 [2026-09-26] (R81, 2026-09-26) The file-pointer hook runs on every Read, and it imported three
+# things a Read never uses: `deps` (and `subprocess` with it) for a manifest check only an Edit or
+# Write can pass, `subprocess` again through `coedit` for a git call `coedit.line` never makes, and
+# `secrets` in `workspace` for a marker fallback almost no call reaches. Measured interleaved, three
+# rounds of 20: 228-243 ms median before, 214-221 ms after. Asserted on what the interpreter
+# actually loaded, so a new top-level import anywhere on the path fails here, not in a stopwatch.
+import json as _js300, re as _re300, subprocess as _sp300, sys as _sy300, tempfile as _tf300     # noqa: E402
+from pathlib import Path as _P300                                                             # noqa: E402
+
+_t_root300 = _P300(_tf300.mkdtemp(prefix="chamnan-readimports-"))
+_sp300.run(["git", "init", "-q", str(_t_root300)], capture_output=True, timeout=60)
+(_t_root300 / "app.py").write_text("def main():\n    pass\n", encoding="utf-8")
+_t_payload300 = _js300.dumps({"cwd": str(_t_root300), "session_id": "imports", "hook_event_name": "PreToolUse",
+                              "tool_name": "Read", "tool_input": {"file_path": str(_t_root300 / "app.py")}})
+_t_run300 = _sp300.run([_sy300.executable, "-X", "importtime", str(ROOT / "hooks" / "chamnan_file_pointer.py")],
+                       input=_t_payload300, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", cwd=str(_t_root300), timeout=120,
+                       env=dict(os.environ, CHAMNAN_READ_ONLY="1"))
+_t_loaded300 = set(_re300.findall(r"(?m)^import time:\s+\d+ \|\s+\d+ \|\s+(\S+)\s*$", _t_run300.stderr))
+check("THE FILE-POINTER HOOK RAN UNDER -X importtime AND REPORTED WHAT IT LOADED",
+      "workspace" in _t_loaded300, saw=_t_run300.stderr[-300:])
+check("...AND A READ LOADS NEITHER subprocess, secrets NOR deps",
+      not ({"subprocess", "secrets", "deps"} & _t_loaded300),
+      saw=sorted({"subprocess", "secrets", "deps"} & _t_loaded300))
+shutil.rmtree(_t_root300, ignore_errors=True)
+# ---- 301_every_home_lookup_survives_a_missing_home.py
+# ------------------ every home-directory lookup survives a machine with no resolvable home
+# 🐛 [2026-09-26] (R103, 2026-09-26) `Path.home()` raises RuntimeError when neither $HOME nor a
+# passwd entry resolves -- a container running as an arbitrary uid, a stripped daemon environment.
+# `host.py` was fixed for it on its own; `boundary._scratch_roots` (run on every boundary check) and
+# `handoff.project_dir` were the identical call beside it, unguarded. Asserted over the whole set:
+# every `Path.home()` in lib/, hooks/ and bin/ sits inside a `try` that catches RuntimeError.
+import ast as _ast301                                                                  # noqa: E402
+
+_t_bare301 = []
+_t_seen301 = 0
+for _t_f301 in sorted(list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").glob("*.py"))
+                      + [p for p in (ROOT / "bin").iterdir() if p.is_file()]):
+    try:
+        _t_tree301 = _ast301.parse(_t_f301.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        continue
+    _t_guarded301 = set()
+    for _t_n301 in _ast301.walk(_t_tree301):
+        if isinstance(_t_n301, _ast301.Try) and any(
+                _h.type is None or any(isinstance(_x, _ast301.Name) and _x.id in ("RuntimeError", "Exception")
+                                       for _x in (_h.type.elts if isinstance(_h.type, _ast301.Tuple)
+                                                  else [_h.type]))
+                for _h in _t_n301.handlers):
+            for _b in _t_n301.body:
+                _t_guarded301 |= {id(_c) for _c in _ast301.walk(_b)}
+    for _t_n301 in _ast301.walk(_t_tree301):
+        if (isinstance(_t_n301, _ast301.Call) and isinstance(_t_n301.func, _ast301.Attribute)
+                and _t_n301.func.attr == "home" and not _t_n301.args):
+            _t_seen301 += 1
+            if id(_t_n301) not in _t_guarded301:
+                _t_bare301.append("%s:%d" % (_t_f301.relative_to(ROOT), _t_n301.lineno))
+check("THE SWEEP FOUND THE HOME LOOKUPS IT IS ABOUT", _t_seen301 >= 4, saw=_t_seen301)
+check("...AND EVERY Path.home() IS INSIDE A try THAT CATCHES RuntimeError", not _t_bare301,
+      saw=_t_bare301)
+# ---- 302_a_printed_dashboard_is_readable_on_white_paper.py
+# ------------------ a printed dashboard is readable on white paper
+# 🐛 [2026-09-26] (R158, 2026-09-26) Printing or saving the dashboard as PDF drops background colours
+# by default, and the default theme is dark: its text, #e8ebf1, came out on white paper at 1.19:1.
+# A print block now gives every theme the light theme's tokens. Asserted from the stylesheet: the
+# block exists, it covers the default :root, and every text colour in it reaches 4.5:1 on its
+# own paper colour -- so a later token change that breaks print fails here, not on somebody's page.
+import re as _re302                                                                    # noqa: E402
+
+_t_css302 = (ROOT / "statistic" / "report" / "app.css").read_text(encoding="utf-8")
+_t_m302 = _re302.search(r"@media print\s*\{(.*?)\n\}", _t_css302, _re302.S)
+check("THE DASHBOARD STYLESHEET HAS A PRINT BLOCK", bool(_t_m302))
+_t_body302 = _t_m302.group(1) if _t_m302 else ""
+check("...THAT RETHEMES THE DEFAULT :root, NOT ONLY THE LIGHT ONE",
+      bool(_re302.search(r"(?m)^\s*:root\s*[,{]", _t_body302)), saw=_t_body302[:200])
+_t_tok302 = dict(_re302.findall(r"--([a-z0-9]+):\s*(#[0-9a-fA-F]{6})", _t_body302))
+
+
+def _t_lum302(h):
+    c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def _t_ratio302(a, b):
+    hi, lo = sorted((_t_lum302(a), _t_lum302(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+_t_low302 = [(t, bg, round(_t_ratio302(_t_tok302[t], _t_tok302[bg]), 2))
+             for t in ("ink", "dim", "faint", "accent", "warm", "good") if t in _t_tok302
+             for bg in ("bg", "panel", "panel2") if bg in _t_tok302
+             if _t_ratio302(_t_tok302[t], _t_tok302[bg]) < 4.5]
+check("...AND EVERY TEXT COLOUR IN IT REACHES 4.5:1 ON THE PRINTED PAPER",
+      len(_t_tok302) >= 9 and not _t_low302, saw=(_t_low302, sorted(_t_tok302)))
+# ---- 303_a_rare_query_word_outweighs_a_common_one.py
+# ------------------ a rare query word outweighs a common one
+# 🐛 [2026-09-26] (R173 acc4, 2026-09-26) Every wanted word added the same weight to a score whether
+# it turned up in 3 entries or 800, so a query mixing a rare word with a common one let the common
+# word's sheer bulk in ONE document outrank the rare word's exact hit elsewhere. `_hits()`/`query()`
+# now weight each ASCII term by its inverse document frequency over entries carrying a body, computed
+# for the wanted terms only and never written back to the index. Measured on this workspace's own
+# 1,319-entry index (`.chamnan/logs/recall_known_item.py`, 219 known-item trials): MRR 0.578 -> 0.642,
+# top1 39.7% -> 46.1%. Asserted here on a small synthetic index, so the property holds without
+# depending on the real stores' current content.
+import recall as _rc303                                                                # noqa: E402
+
+# Ten entries carry a body: nine of them carry "common" (df=9, low idf), one carries the rare
+# "zephyr" once (df=1, high idf). Entry A's single rare hit must outscore entry B's fifteen
+# common hits.
+_t_idx303 = {"entries": [
+    {"path": "a.md", "kind": "lesson", "weight": 1.0, "title": "Entry A", "blurb": "",
+     "body": {"zephyr": 1}, "text": ""},
+    {"path": "b.md", "kind": "lesson", "weight": 1.0, "title": "Entry B", "blurb": "",
+     "body": {"common": 15}, "text": ""},
+] + [
+    {"path": "filler%d.md" % i, "kind": "lesson", "weight": 1.0, "title": "Filler %d" % i,
+     "blurb": "", "body": {"common": 2}, "text": ""}
+    for i in range(7)
+]}
+_t_res303 = _rc303.query(_t_idx303, ["zephyr", "common"], limit=20)
+_t_order303 = [e["path"] for _s, e, _w in _t_res303]
+check("A RARE QUERY WORD ('zephyr', in 1 of 10 entries) OUTRANKS A COMMON ONE ('common', in 9 of "
+      "10, present 15x in the one entry that is mostly about it)",
+      bool(_t_order303) and _t_order303[0] == "a.md", saw=_t_order303[:3])
+check("...AND THE COMMON WORD'S OWN ENTRY STILL PLACES BELOW THE RARE WORD'S ENTRY",
+      "a.md" in _t_order303 and "b.md" in _t_order303
+      and _t_order303.index("a.md") < _t_order303.index("b.md"), saw=_t_order303)
+
+# A single-word query where every entry carries the SAME word at the same document frequency: idf
+# is then one constant scalar applied to every entry alike, so it cannot change which entry outranks
+# which -- only the raw per-entry count (the diminishing-returns formula already in `_hits`) can.
+_t_counts303 = {"d1.md": 1, "d2.md": 5, "d3.md": 20, "d4.md": 2, "d5.md": 9}
+_t_idx2_303 = {"entries": [
+    {"path": p, "kind": "lesson", "weight": 1.0, "title": "D", "blurb": "", "body": {"widget": n},
+     "text": ""}
+    for p, n in _t_counts303.items()
+]}
+_t_res2_303 = _rc303.query(_t_idx2_303, ["widget"], limit=20)
+_t_order2_303 = [e["path"] for _s, e, _w in _t_res2_303]
+# The order the pre-idf diminishing formula alone produces: highest raw count first.
+_t_expected303 = sorted(_t_counts303, key=lambda p: -(1 + min(_t_counts303[p], 20) ** 0.5))
+check("A SINGLE-WORD QUERY OVER EQUALLY-RARE WORDS RANKS IN THE SAME ORDER AS BEFORE idf "
+      "(A CONSTANT MULTIPLIER DOES NOT REORDER)", _t_order2_303 == _t_expected303,
+      saw=(_t_order2_303, _t_expected303))
+# ---- 304_a_word_that_starts_with_author_is_not_the_secret_word_auth.py
+# ------------------ a word that starts with "author" is not the secret word "auth"
+# 🐛 [2026-09-26] (R81, 2026-09-25) `auth(?!ors?\b|entic|orit)` only excluded "author"/"authors" as
+# a WHOLE word: `\b` needs a word boundary right after the "or", which "authored", "authority" and
+# "AUTHOR_EMAIL" never reach — an "e", another letter, or "_" all count as more word, so `\b` never
+# fires and the lookahead's exclusion never applies. Measured on this account's own transcripts:
+# 910 of 17,808 Bash commands were changed, most of them commit trailers — every one of a session's
+# own `Co-Authored-By: ...` lines and every `GIT_AUTHOR_EMAIL=...` in a commit env came back with
+# "auth" itself blotted out. "authorization"/"authorize" must still read as the secret word, since
+# those are the credential-flavoured forms ("Authorization: Bearer ...", an OAuth grant).
+sys.path.insert(0, str(ROOT / "lib"))
+import redact as _rd304                                                              # noqa: E402
+
+_t_trailers304 = [
+    "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+    "Co-authored-by: Somchai Jaidee <s@x.th>",
+    'GIT_AUTHOR_EMAIL="t@x.y"',
+]
+_t_changed304 = [(l, _rd304.scrub(l)) for l in _t_trailers304 if _rd304.scrub(l) != l]
+check("A COMMIT TRAILER NAMING 'AUTHOR' (Co-Authored-By, GIT_AUTHOR_EMAIL) COMES BACK UNCHANGED",
+      _t_changed304 == [], saw=_t_changed304)
+
+# Built at runtime rather than written out: this file is folded into the suite it scans, and a
+# literal secret-shaped string in a check is found by the redactor's own self-scan.
+_t_bearer304 = "".join(chr(97 + (i * 7) % 26) for i in range(40))
+_t_authz304 = f"Authorization: Bearer {_t_bearer304}"
+_t_authz_scrubbed304 = _rd304.scrub(_t_authz304)
+check("'AUTHORIZATION: BEARER <TOKEN>' IS STILL REDACTED",
+      _rd304.PLACEHOLDER in _t_authz_scrubbed304 and _t_bearer304 not in _t_authz_scrubbed304,
+      saw=_t_authz_scrubbed304)
+
+_t_authtok304 = "".join(chr(97 + (i * 5) % 26) for i in range(24))
+_t_authassign304 = f'auth_token = "{_t_authtok304}"'
+_t_authassign_scrubbed304 = _rd304.scrub(_t_authassign304)
+check("'AUTH_TOKEN = \"...\"' IS STILL REDACTED",
+      _rd304.PLACEHOLDER in _t_authassign_scrubbed304 and _t_authtok304 not in _t_authassign_scrubbed304,
+      saw=_t_authassign_scrubbed304)
+# ---- 305_a_non_utf8_files_summary_is_not_injected_as_mojibake.py
+# ------------------ a non-UTF-8 source file's summary is not injected into the map as mojibake
+# 🐛 [2026-09-26] (R217, 2026-09-25) `indexable()` decodes every source file with
+# `raw.decode(bom or "utf-8-sig", errors="replace")`, so a file written in a real, undeclared
+# encoding -- Shift-JIS, say, saved by an editor that has no reason to announce itself -- turns
+# every byte the decoder does not own into U+FFFD. That replacement text was then read straight
+# out as the file's one-line summary and written into `.chamnan/MAP.md`: `tool.py` (3L, 1fn) —
+# `��タ�@...`, mojibake committed into an index every session reads at start.
+# `_scan()` now drops the description whenever it carries U+FFFD, keeping the file's line count
+# and symbol counts -- encoding is never guessed, the file is simply not offered a false summary.
+import subprocess as _sp305                                                    # noqa: E402
+import shutil as _sh305                                                        # noqa: E402
+import sys as _sy305                                                           # noqa: E402
+import tempfile as _tf305                                                      # noqa: E402
+from pathlib import Path as _Pt305                                             # noqa: E402
+
+_MAP305 = ROOT / "bin" / "chamnan-map"
+
+_d305 = _Pt305(_tf305.mkdtemp(prefix="chamnan-map-sjis-"))
+try:
+    _sp305.run(["git", "init", "-q"], cwd=_d305, capture_output=True)
+    # A Japanese comment line, built at runtime, encoded to real Shift-JIS bytes -- not a literal
+    # non-ASCII string pasted into this file.
+    _jp305 = "".join(chr(c) for c in
+                      (0x8a2d, 0x5b9a, 0x30d5, 0x30a1, 0x30a4, 0x30eb, 0x3092,
+                       0x8aad, 0x307f, 0x8fbc, 0x3080))
+    _sjis305 = ("# " + _jp305 + "\n").encode("shift_jis") + b"def f(): pass\n"
+    (_d305 / "sjis.py").write_bytes(_sjis305)
+    (_d305 / "utf8.py").write_text("# " + _jp305 + "\ndef g():\n    pass\n", encoding="utf-8")
+    _r305 = _sp305.run([_sy305.executable, str(_MAP305)], cwd=_d305, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace")
+    _mapmd305 = (_d305 / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+finally:
+    _sh305.rmtree(_d305, ignore_errors=True)
+
+check("chamnan-map RAN CLEANLY OVER THE SHIFT-JIS FIXTURE",
+      _r305.returncode == 0, saw=(_r305.returncode, _r305.stderr[-500:]))
+check("MAP.md HAS NO U+FFFD REPLACEMENT CHARACTER ANYWHERE",
+      "�" not in _mapmd305,
+      saw="a non-UTF-8 file's decode artefact reached the committed index")
+check("...AND THE UTF-8 FILE'S REAL JAPANESE SUMMARY IS STILL PRESENT",
+      _jp305 in _mapmd305, saw="a genuine, correctly-decoded description was lost alongside it")
+# ---- 306_a_calendar_heatmap_cell_is_readable_by_a_screen_reader.py
+# ------------------ a calendar heatmap cell is readable by a screen reader, not only by a mouse
+# 🐛 [2026-09-26] (R187, 2026-09-25) `calendar()` in the dashboard gave each of its cells only a
+# `title` -- read on mouse hover and by nothing else -- while `bars()` beside it already gives its
+# bars an accessible name. 168 cells of pure colour carried no accessible name at all. Each cell now
+# carries `role="img"` and an `aria-label` holding the same text its `title` already had. No
+# `tabindex` is added: 168 sequential tab stops over one heatmap would be worse than the silence it
+# replaces, which `bars()`'s own focusable-button treatment (reserved for something a reader can
+# actually act on) does not attempt here either.
+import re as _re306                                                            # noqa: E402
+
+_src306 = (ROOT / "statistic" / "report" / "app.js").read_text(encoding="utf-8")
+_m306 = _re306.search(r"^function calendar\([^)]*\)\s*\{", _src306, _re306.M)
+check("calendar() IS STILL A TOP-LEVEL FUNCTION IN app.js, SO THIS CHECK MEANS SOMETHING",
+      _m306 is not None, saw="calendar() was not found -- this check cannot see the function at all")
+
+_body306 = ""
+if _m306:
+    _next306 = _re306.search(r"^function \w+\(", _src306[_m306.end():], _re306.M)
+    _body306 = _src306[_m306.end(): _m306.end() + (_next306.start() if _next306 else len(_src306))]
+
+check("EACH CALENDAR CELL SETS role=\"img\"",
+      bool(_re306.search(r'role:\s*"img"', _body306)), saw=_body306[:400])
+check("EACH CALENDAR CELL SETS AN aria-label",
+      bool(_re306.search(r'"aria-label":', _body306)), saw=_body306[:400])
+check("...AND NO tabindex IS ADDED TO A CELL (168 tab stops would be worse than none)",
+      "tabindex" not in _body306, saw=_body306[:400])
+# ---- 307_atomic_write_text_leaves_the_old_file_intact_on_a_full_disk.py
+# ------------------ atomic_write_text leaves the old file intact, and nothing extra behind, on a full disk
+# 🎯 [R173 claudeaccount2, 2026-09-25] Pins a property `atomic_write_text` already has, rather than a
+# fix: `os.replace` failing with ENOSPC (errno 28, a full disk) is an `OSError`, not the
+# `PermissionError` `_replace_with_retry` retries on, so it propagates straight to the outer
+# `except Exception` in `atomic_write_text` -- the temp file is unlinked, `LAST_WRITE_ERROR` is set,
+# and `False` is returned with the destination untouched. Asserted here so a future change to either
+# function cannot quietly reopen a half-written file or an orphaned `.tmp`.
+import os as _os307, shutil as _sh307, tempfile as _tf307                      # noqa: E402
+from pathlib import Path as _P307                                              # noqa: E402
+
+sys.path.insert(0, str(ROOT / "lib"))
+import workspace as _ws307                                                     # noqa: E402
+
+_d307 = _P307(_tf307.mkdtemp(prefix="chamnan-atomic-enospc-"))
+try:
+    _dest307 = _d307 / "store.md"
+    _dest307.write_text("the original content\n", encoding="utf-8")
+    _before307 = sorted(p.name for p in _d307.iterdir())
+
+    _real_replace307 = _os307.replace
+
+    def _enospc307(*_a, **_kw):
+        raise OSError(28, "No space left on device")
+
+    _os307.replace = _enospc307
+    try:
+        _t_result307 = _ws307.atomic_write_text(_dest307, "the new content that never lands\n")
+    finally:
+        _os307.replace = _real_replace307
+
+    check("atomic_write_text RETURNS False WHEN os.replace RAISES OSError(28)",
+          _t_result307 is False, saw=_t_result307)
+    check("...AND THE DESTINATION STILL HOLDS ITS OLD CONTENT",
+          _dest307.read_text(encoding="utf-8") == "the original content\n",
+          saw=_dest307.read_text(encoding="utf-8"))
+    check("...AND NO EXTRA FILE (e.g. an orphaned .tmp) IS LEFT IN THE DIRECTORY",
+          sorted(p.name for p in _d307.iterdir()) == _before307,
+          saw=sorted(p.name for p in _d307.iterdir()))
+finally:
+    _sh307.rmtree(_d307, ignore_errors=True)
+# ---- 308_chamnan_map_and_the_session_start_hook_survive_a_network_denying_sandbox.py
+# ------------------ chamnan-map and the session-start hook run cleanly under a network-denying sandbox
+# 🎯 [R163 claudeaccount2, 2026-09-25] Pins a property both already have, rather than a fix: neither
+# tool needs the network to index a repository or open a session, so both must run to completion
+# under a `sandbox-exec` profile that denies it outright. macOS only -- `sandbox-exec` is not a tool
+# every machine this suite runs on has, so this reads like check 282 does for PowerShell: skipped
+# with a printed `·` line everywhere else, run for real here.
+import json as _js308, shutil as _sh308, subprocess as _sp308, tempfile as _tf308        # noqa: E402
+from pathlib import Path as _P308                                                        # noqa: E402
+
+if sys.platform != "darwin":
+    print("  · not on macOS, so the sandboxed run of chamnan-map and the session-start hook "
+          "was skipped")
+else:
+    _t_sbx308 = _sh308.which("sandbox-exec")
+    if not _t_sbx308:
+        print("  · sandbox-exec is not on PATH here, so the sandboxed run was skipped")
+    else:
+        _t_profile308 = "(version 1)(allow default)(deny network*)"
+        _t_map308 = ROOT / "bin" / "chamnan-map"
+        _t_hook308 = ROOT / "hooks" / "chamnan_session_start.py"
+
+        _t_dir308 = _P308(_tf308.mkdtemp(prefix="chamnan-sandbox-"))
+        try:
+            _sp308.run(["git", "init", "-q"], cwd=_t_dir308, capture_output=True)
+            (_t_dir308 / "app.py").write_text("# a scratch file\ndef f():\n    pass\n",
+                                              encoding="utf-8")
+
+            _t_map_run308 = _sp308.run(
+                [_t_sbx308, "-p", _t_profile308, sys.executable, str(_t_map308)],
+                cwd=_t_dir308, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                stdin=_sp308.DEVNULL, timeout=120)
+            check("bin/chamnan-map EXITS 0 UNDER (deny network*)",
+                  _t_map_run308.returncode == 0, saw=(_t_map_run308.returncode,
+                                                       _t_map_run308.stderr[-400:]))
+            check("...WITH NO TRACEBACK",
+                  "Traceback" not in _t_map_run308.stderr
+                  and "Traceback" not in _t_map_run308.stdout,
+                  saw=_t_map_run308.stderr[-400:])
+
+            _t_payload308 = _js308.dumps({"cwd": str(_t_dir308), "session_id": "sandboxcheck308"})
+            _t_hook_run308 = _sp308.run(
+                [_t_sbx308, "-p", _t_profile308, sys.executable, str(_t_hook308)],
+                cwd=_t_dir308, input=_t_payload308, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=120)
+            check("hooks/chamnan_session_start.py EXITS 0 UNDER (deny network*), GIVEN A CWD PAYLOAD",
+                  _t_hook_run308.returncode == 0, saw=(_t_hook_run308.returncode,
+                                                       _t_hook_run308.stderr[-400:]))
+            check("...WITH NO TRACEBACK",
+                  "Traceback" not in _t_hook_run308.stderr
+                  and "Traceback" not in _t_hook_run308.stdout,
+                  saw=_t_hook_run308.stderr[-400:])
+        finally:
+            _sh308.rmtree(_t_dir308, ignore_errors=True)
+# ---- 309_an_owner_header_is_authorship_too.py
+# ------------------ an `Owner:` header is authorship too, and must not reach the summary
+# 🐛 (R171, 2026-09-26) AUTHORSHIP_HEADER covered authors/maintainers/contributors/copyright
+# holder/e-mails/contacts, but not `Owner:` -- a real convention seen in
+# corpus/edge/user-impact/published/owner_contact.py, whose first line is
+# `Owner: Siriporn Wattana <siriporn.w@...>, ext 4417.` `leading_comment()` returned that whole
+# line (name, email and extension) as the file's summary, and chamnan commits MAP.md and injects
+# it at session start -- so an address nobody chose to publish ends up in front of a model. Owners
+# and `point of contact` are now recognised alongside the others already covered.
+_src309 = (
+    "# Owner: Somchai Jaidee <s@x.example>, ext 1234.\n"
+    "# Handles inbound webhook retries with exponential backoff.\n"
+    "def f(): pass\n"
+)
+_summary309 = mapper.leading_comment(_src309)
+
+check("THE OWNER HEADER'S ADDRESS DOES NOT REACH THE SUMMARY",
+      "s@x.example" not in _summary309 and "Somchai Jaidee" not in _summary309,
+      saw=_summary309)
+check("THE REAL DESCRIPTION LINE BELOW IT IS STILL USED",
+      _summary309 == "Handles inbound webhook retries with exponential backoff.",
+      saw=_summary309)
 # ---- 30_a_reassuring_tail_does_not_exempt_a_credential.py
 # ------------------------------------------- "password" in the key, and a noun after it
 # 🐛 [2026-09-09] A key ending in one of ~50 ordinary nouns — `type`, `id`, `name`, `field`, `path`
@@ -42411,6 +42836,161 @@ for _line_30 in ('user_id = "12345"', 'field_name = "email_address"', 'path_type
         _t_ordinary.append(_line_30)
 check("...and a key with no credential word in it is untouched, whatever its value looks like",
       not _t_ordinary, saw="\n".join(_t_ordinary) or None)
+# ---- 310_chamnan_setup_prints_the_update_command_and_runs_nothing.py
+# ------------------ chamnan-setup prints the update command and runs nothing, under either flag
+# 🐛 (R180, 2026-09-26) The README's auditor row (README.md:1932) promises "nothing in the plugin
+# ever invokes" the `claude` CLI, and that is a security claim, not a convenience one -- so
+# `chamnan-setup --apply` running `claude plugin update chamnan` itself (added earlier the same day)
+# was the wrong fix for the underlying bug (`--apply` doing nothing at all). The right fix is the
+# one this checks: `--apply` and `--dry-run` both PRINT the exact per-host command and run nothing;
+# `--apply` adds one line telling the user to run it themselves. This drives the real entry point
+# end to end, with a fake `claude` on PATH that would record any invocation -- and asserts the log
+# stays empty under both flags.
+import json as _js310, os as _os310, shutil as _sh310, subprocess as _sp310    # noqa: E402
+import sys as _sy310, tempfile as _tf310                                       # noqa: E402
+from pathlib import Path as _P310                                              # noqa: E402
+
+_SETUP310 = ROOT / "bin" / "chamnan-setup"
+
+_home310 = _P310(_tf310.mkdtemp(prefix="chamnan-setup-home-"))
+_bin310 = _P310(_tf310.mkdtemp(prefix="chamnan-setup-fakebin-"))
+_log310 = _bin310 / "claude-calls.log"
+try:
+    # An older plugin.json a host's settings.json will point at -- older than whatever this
+    # checkout's real .claude-plugin/plugin.json reports, so both hosts below read as BEHIND.
+    _old310 = _home310 / "old-chamnan"
+    (_old310 / ".claude-plugin").mkdir(parents=True)
+    (_old310 / ".claude-plugin" / "plugin.json").write_text(
+        _js310.dumps({"version": "0.0.1"}), encoding="utf-8")
+
+    def _settings310(marketplace_path):
+        return _js310.dumps({
+            "enabledPlugins": {"chamnan@chamnan": True},
+            "extraKnownMarketplaces": {
+                "chamnan": {"source": {"source": "directory", "path": str(marketplace_path)}}},
+        })
+
+    # Two hosts: the default (~/.claude, which gets no CLAUDE_CONFIG_DIR prefix) and a second one
+    # under ~/.config (which gets CLAUDE_CONFIG_DIR pointed at it).
+    _default_host310 = _home310 / ".claude"
+    _default_host310.mkdir(parents=True)
+    (_default_host310 / "settings.json").write_text(_settings310(_old310), encoding="utf-8")
+
+    _work_host310 = _home310 / ".config" / "claude-work"
+    _work_host310.mkdir(parents=True)
+    (_work_host310 / "settings.json").write_text(_settings310(_old310), encoding="utf-8")
+
+    # A fake `claude` that only ever records what it was called with -- proof of an invocation
+    # that must never happen under either flag.
+    _fake_claude310 = _bin310 / "claude"
+    _fake_claude310.write_text(
+        "#!/bin/sh\n"
+        'echo "$@|CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR}" >> "%s"\n'
+        "exit 0\n" % _log310, encoding="utf-8")
+    _fake_claude310.chmod(0o755)
+
+    _env310 = dict(_os310.environ)
+    _env310["HOME"] = str(_home310)
+    _env310["PATH"] = str(_bin310) + _os310.pathsep + _env310.get("PATH", "")
+
+    def _run310(*extra_args):
+        return _sp310.run(
+            [_sy310.executable, str(_SETUP310), *extra_args],
+            env=_env310, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=_sp310.DEVNULL, timeout=120)
+
+    def _log_calls310():
+        return _log310.read_text(encoding="utf-8").splitlines() if _log310.exists() else []
+
+    # --- --dry-run: prints the exact commands, calls the fake claude zero times
+    _dry310 = _run310("--dry-run")
+    check("--dry-run PRINTS THE DEFAULT HOST'S COMMAND WITH NO CLAUDE_CONFIG_DIR PREFIX",
+          "claude plugin update chamnan" in _dry310.stdout
+          and "CLAUDE_CONFIG_DIR=" not in _dry310.stdout.split(
+              "claude plugin update chamnan")[0].splitlines()[-1],
+          saw=_dry310.stdout)
+    check("--dry-run PRINTS THE SECOND HOST'S COMMAND WITH ITS CLAUDE_CONFIG_DIR",
+          f"CLAUDE_CONFIG_DIR={_work_host310} claude plugin update chamnan" in _dry310.stdout,
+          saw=_dry310.stdout)
+    check("--dry-run NEVER CALLS THE (fake) claude BINARY", not _log_calls310(),
+          saw=_log_calls310())
+    check("--dry-run DOES NOT ADD THE 'run it yourself' LINE",
+          "run the command(s) above yourself" not in _dry310.stdout, saw=_dry310.stdout)
+
+    # --- --apply: prints the SAME commands, still calls the fake claude zero times, adds one line
+    _apply310 = _run310("--apply")
+    check("--apply ALSO PRINTS THE DEFAULT HOST'S COMMAND WITH NO CLAUDE_CONFIG_DIR PREFIX",
+          "claude plugin update chamnan" in _apply310.stdout
+          and "CLAUDE_CONFIG_DIR=" not in _apply310.stdout.split(
+              "claude plugin update chamnan")[0].splitlines()[-1],
+          saw=_apply310.stdout)
+    check("--apply ALSO PRINTS THE SECOND HOST'S COMMAND WITH ITS CLAUDE_CONFIG_DIR",
+          f"CLAUDE_CONFIG_DIR={_work_host310} claude plugin update chamnan" in _apply310.stdout,
+          saw=_apply310.stdout)
+    check("--apply NEVER CALLS THE (fake) claude BINARY EITHER", not _log_calls310(),
+          saw=_log_calls310())
+    check("--apply SAYS chamnan DOES NOT RUN THE claude CLI ITSELF",
+          "does not run the claude cli itself" in _apply310.stdout.lower()
+          and "run the command(s) above yourself" in _apply310.stdout,
+          saw=_apply310.stdout)
+
+    # --- --host restricts the printed set to one, still without calling anything
+    _hostrun310 = _run310("--apply", "--host", str(_work_host310))
+    check("--apply --host <dir> PRINTS ONLY THAT HOST'S COMMAND",
+          f"CLAUDE_CONFIG_DIR={_work_host310} claude plugin update chamnan" in _hostrun310.stdout
+          and _hostrun310.stdout.count("claude plugin update chamnan") == 1,
+          saw=_hostrun310.stdout)
+    check("--apply --host <dir> STILL CALLS THE (fake) claude ZERO TIMES", not _log_calls310(),
+          saw=_log_calls310())
+finally:
+    _sh310.rmtree(_home310, ignore_errors=True)
+    _sh310.rmtree(_bin310, ignore_errors=True)
+# ---- 311_gotcha_by_file_is_sorted_by_path_not_count.py
+# ------------------ gotcha.index()'s by_file is sorted by path, not by count
+# 🐛 (R221, 2026-09-25) `"by_file": per_file.most_common(40)` ordered by count, so a routine recount
+# reorders the whole committed state/gotcha_index.json for a handful of real count changes -- a
+# 574-line diff for ~10 count changes, because most_common's tie-breaking on equal counts follows
+# insertion order (directory-walk order), which shuffles session to session. The SET of the 40
+# heaviest files is still chosen by count; what is stored is that same set sorted by path.
+# statistic/report/features.html is the one reader that needs count order for its bar chart, and it
+# now sorts its own copy before rendering rather than relying on this list's order.
+import shutil as _sh311, subprocess as _sp311, tempfile as _tf311                # noqa: E402
+from pathlib import Path as _P311                                                # noqa: E402
+
+sys.path.insert(0, str(ROOT / "lib"))
+import gotcha as _gc311                                                          # noqa: E402
+
+_d311 = _P311(_tf311.mkdtemp(prefix="chamnan-gotcha-byfile-"))
+try:
+    _sp311.run(["git", "init", "-q"], cwd=_d311, capture_output=True)
+    _sp311.run(["git", "config", "user.email", "a@b.c"], cwd=_d311, capture_output=True)
+    _sp311.run(["git", "config", "user.name", "t"], cwd=_d311, capture_output=True)
+    # 45 files, counts 1..45 by filename order (a00 -> 1 mark, a44 -> 45 marks) -- so the top 40 by
+    # count are a05.py..a44.py, and a00.py..a04.py (the 5 lightest) are dropped.
+    _mark311 = "\U0001F41B"
+    for _i311 in range(45):
+        _count311 = _i311 + 1
+        _lines311 = [f"# {_mark311} lesson number {_j311} about file a{_i311:02d}\n"
+                     for _j311 in range(_count311)]
+        (_d311 / f"a{_i311:02d}.py").write_text("".join(_lines311), encoding="utf-8")
+    _sp311.run(["git", "add", "-A"], cwd=_d311, capture_output=True)
+    _sp311.run(["git", "commit", "-q", "-m", "fixture"], cwd=_d311, capture_output=True)
+
+    _idx311 = _gc311.index(_d311)
+    _by_file311 = _idx311.get("by_file") or []
+
+    check("by_file HOLDS AT MOST 40 ENTRIES", len(_by_file311) <= 40, saw=len(_by_file311))
+    check("by_file IS SORTED BY PATH (not by count)",
+          [row[0] for row in _by_file311] == sorted(row[0] for row in _by_file311),
+          saw=[row[0] for row in _by_file311])
+    _expected_files311 = {f"a{_i311:02d}.py" for _i311 in range(5, 45)}
+    check("by_file HOLDS THE 40 HIGHEST-COUNT FILES, NOT THE FIRST 40 BY SOME OTHER ORDER",
+          {row[0] for row in _by_file311} == _expected_files311,
+          saw=sorted(row[0] for row in _by_file311))
+    _counts_ok311 = all(row[1] == int(row[0][1:3]) + 1 for row in _by_file311)
+    check("...AND EACH ONE'S COUNT IS STILL CORRECT", _counts_ok311, saw=_by_file311)
+finally:
+    _sh311.rmtree(_d311, ignore_errors=True)
 # ---- 31_the_generic_separator_has_one_name.py
 # ------------------------------------------- derive the population, assert it was found
 # A reader of the published write-up proposed this, and it is the half of his critique that the
