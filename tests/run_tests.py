@@ -41967,6 +41967,79 @@ try:
           saw=[l for l in _t_map293.splitlines() if "binary" in l][:2])
 finally:
     _sh293.rmtree(_t_repo293, ignore_errors=True)
+# ---- 293_an_agent_putting_back_a_removed_package_is_told.py
+# ------------------ an agent putting back a package the repository removed is told so
+# 🎯 [2026-09-26] (owner) `deps.removals` was built on 2026-09-23 from the owner's direction -- an agent
+# proposing a library has no idea the team removed it -- and nothing ever called it, while the
+# README said an agent would be told. Two defects sat under it: every revision older than a move of
+# the manifest was read at today's path and came back empty, and the name readers took
+# `package.json`'s "name" and "version", `setup.py`'s `install_requires` and every TOML key as
+# packages. Built for real: a package is dropped, the manifest then moves into a subfolder, and an
+# Edit that puts the package back must be told which commit removed it; an Edit adding a package
+# never listed must be told nothing.
+import json as _js293, shutil as _sh293, subprocess as _sp293, tempfile as _tf293     # noqa: E402
+from pathlib import Path as _P293                                                    # noqa: E402
+
+sys.path.insert(0, str(ROOT / "lib"))
+import deps as _dp293                                                                # noqa: E402
+
+check("package.json: only dependency tables are packages, not name, version or scripts",
+      _dp293.names('{"name": "app", "version": "1.0.0", "scripts": {"test": "jest"},'
+                   ' "dependencies": {"react": "^18"}, "devDependencies": {"jest": "^29"}}',
+                   "package.json") == {"react", "jest"})
+check("pyproject.toml: PEP 621 dependencies and optional groups, not [project] keys",
+      _dp293.names('[project]\nname = "app"\nversion = "1"\nrequires-python = ">=3.8"\n'
+                   'dependencies = [\n  "httpx>=0.27",\n  "rich",\n]\n'
+                   '[project.optional-dependencies]\ndev = ["pytest"]\n', "pyproject.toml")
+      == {"httpx", "rich", "pytest"})
+check("Cargo.toml and Poetry: keys of dependency tables, not [package] or python",
+      _dp293.names('[package]\nname = "x"\nedition = "2021"\n[dependencies]\nserde = "1"\n', "Cargo.toml")
+      == {"serde"}
+      and _dp293.names('[tool.poetry.dependencies]\npython = "^3.9"\nrequests = "^2"\n', "pyproject.toml")
+      == {"requests"})
+check("setup.py and Gemfile are read by their own shapes",
+      _dp293.names('setup(name="x", install_requires=["click>=8", "attrs"])', "setup.py") == {"click", "attrs"}
+      and _dp293.names('source "https://rubygems.org"\ngem "rails", "~> 7"\n', "Gemfile") == {"rails"})
+
+_t_repo293 = _P293(_tf293.mkdtemp(prefix="chamnan-depsback-"))
+try:
+    _t_env293 = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                     GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+
+    def _t_g293(*a):
+        return _sp293.run(["git", *a], cwd=str(_t_repo293), env=_t_env293, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", stdin=_sp293.DEVNULL)
+
+    _t_g293("init", "-q")
+    (_t_repo293 / ".chamnan").mkdir()
+    (_t_repo293 / "requirements.txt").write_text("flask>=3\nrequests>=2\n", encoding="utf-8")
+    _t_g293("add", "requirements.txt")
+    _t_g293("commit", "-qm", "Start with flask and requests")
+    (_t_repo293 / "requirements.txt").write_text("flask>=3\nhttpx>=0.27\n", encoding="utf-8")
+    _t_g293("commit", "-qam", "Drop requests: it blocked the event loop, httpx replaces it")
+    (_t_repo293 / "app").mkdir()
+    _t_g293("mv", "requirements.txt", "app/requirements.txt")
+    _t_g293("commit", "-qm", "Move the app into app/")
+    check("A PACKAGE DROPPED BEFORE THE MANIFEST MOVED IS STILL FOUND AS REMOVED",
+          "requests" in _dp293.removals(str(_t_repo293), manifests=("app/requirements.txt",)),
+          saw=_dp293.removals(str(_t_repo293), manifests=("app/requirements.txt",)))
+
+    def _t_edit293(new_line):
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": new_line,
+                   "tool_input": {"file_path": str(_t_repo293 / "app" / "requirements.txt"),
+                                  "old_string": "httpx>=0.27\n", "new_string": "httpx>=0.27\n" + new_line + "\n"}}
+        return _sp293.run([sys.executable, str(ROOT / "hooks" / "chamnan_file_pointer.py")],
+                          input=_js293.dumps(payload), env=dict(_t_env293, CLAUDE_PROJECT_DIR=str(_t_repo293)),
+                          cwd=str(_t_repo293), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120).stdout
+
+    _t_back293 = _t_edit293("requests>=2.31")
+    check("...AND AN EDIT PUTTING IT BACK IS TOLD WHICH COMMIT REMOVED IT AND WHY",
+          "`requests`" in _t_back293 and "blocked the event loop" in _t_back293, saw=_t_back293[:300])
+    check("...WHILE AN EDIT ADDING A PACKAGE NEVER LISTED IS TOLD NOTHING ABOUT REMOVALS",
+          "listed before and removed" not in _t_edit293("pydantic>=2"))
+finally:
+    _sh293.rmtree(_t_repo293, ignore_errors=True)
 # ---- 294_gitignore_fallback_agrees_with_git_on_excluded_parents.py
 # ------------------ the no-git .gitignore walk agrees with git on an excluded parent directory
 # 🐛 [2026-09-25] (R207, 2026-09-25) git cannot re-include a file whose parent directory is
@@ -42002,6 +42075,42 @@ try:
               saw={r: v for r, v in _t_git294.items() if v != _t_cases294[r]})
 finally:
     _sh294.rmtree(_t_root294, ignore_errors=True)
+# ---- 294_the_home_folder_is_never_a_root_found_by_walking_up.py
+# ------------------ the home folder is never a repository found by walking up
+# 🐛 [2026-09-26] (self-measured) A `~/.chamnan`, made there by accident, claimed every folder under home
+# that had no `.git`: a session in one recorded its logs into it, and `chamnan-map` began indexing
+# the whole home directory. A `.git` in home (dotfiles kept in git) would do the same. Run in a
+# subprocess with HOME pointed at a scratch folder that holds both, so the real home is never used.
+import json as _js294, shutil as _sh294, subprocess as _sp294, tempfile as _tf294     # noqa: E402
+from pathlib import Path as _P294                                                    # noqa: E402
+
+_t_home294 = _P294(_tf294.mkdtemp(prefix="chamnan-home-")).resolve()
+try:
+    (_t_home294 / ".chamnan").mkdir()
+    (_t_home294 / ".git").mkdir()
+    (_t_home294 / "notes" / "draft").mkdir(parents=True)
+    (_t_home294 / "code" / "repo" / ".git").mkdir(parents=True)
+    (_t_home294 / "code" / "repo" / "src").mkdir()
+    _t_code294 = ("import sys, json; sys.path.insert(0, %r); import workspace as ws\n"
+                  "print(json.dumps([str(ws.find_root(p)) for p in sys.argv[1:]]))" % str(ROOT / "lib"))
+    _t_starts294 = [_t_home294 / "notes" / "draft", _t_home294 / "code" / "repo" / "src", _t_home294]
+    _t_run294 = _sp294.run([sys.executable, "-c", _t_code294, *map(str, _t_starts294)],
+                           env=dict(os.environ, HOME=str(_t_home294), USERPROFILE=str(_t_home294)),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           stdin=_sp294.DEVNULL, timeout=60)
+    try:
+        _t_got294 = [_P294(p).resolve() for p in _js294.loads(_t_run294.stdout.strip().splitlines()[-1])]
+    except (ValueError, IndexError):
+        _t_got294 = []
+    check("A FOLDER UNDER HOME WITH NO .git IS NOT CLAIMED BY A WORKSPACE OR .git IN HOME",
+          len(_t_got294) == 3 and _t_got294[0] == _t_starts294[0],
+          saw=(_t_got294, _t_run294.stderr[-300:]))
+    check("...A REAL REPOSITORY UNDER HOME STILL RESOLVES TO ITSELF",
+          len(_t_got294) == 3 and _t_got294[1] == _t_home294 / "code" / "repo", saw=_t_got294)
+    check("...AND STARTING IN HOME ON PURPOSE STILL WORKS", len(_t_got294) == 3 and _t_got294[2] == _t_home294,
+          saw=_t_got294)
+finally:
+    _sh294.rmtree(_t_home294, ignore_errors=True)
 # ---- 295_a_misspelt_config_key_is_named_not_dropped.py
 # ------------------ a misspelt config key is kept and named, not dropped in silence
 # 🐛 [2026-09-25] (R231, 2026-09-25) `ensure()` dropped every key not in DEFAULT_CONFIG as a
@@ -42050,6 +42159,128 @@ try:
           saw=[l for l in _t_out295.splitlines() if "config.json" in l][:3])
 finally:
     _sh295.rmtree(_t_ws295.parent, ignore_errors=True)
+# ---- 295_a_name_in_code_beside_a_secret_word_is_not_redacted.py
+# ------------------ a name in code beside a secret word is not redacted; an unquoted secret still is
+# 🐛 [2026-09-26] (R71, 2026-09-24) On the corpus, 100 of 304 removed spans (planted secrets aside)
+# were code, not credentials: a Swift argument label repeating its variable, an object field naming
+# another variable, a subscript lookup, a type annotation. They are 33 now, with the recall report
+# byte-identical and the corpus's 52 redaction checks passing. Both halves are asserted, because
+# the easy way to pass the first is to stop redacting unquoted values at all.
+sys.path.insert(0, str(ROOT / "lib"))
+import redact as _rd295                                                              # noqa: E402
+
+_t_kept295 = ["        idempotencyKey: idempotencyKey,",
+              "    orderingKey: shipment,",
+              "partition_key = shipment_id",
+              "_accessToken = json['access_token'] as String?;",
+              "  pushToken: string | null,",
+              "geo-service: { var: OF_GEO_GRPC_ADDR, value_key: of_geo_grpc_addr }",
+              "        self.api_key = api_key",
+              "    case .issueToken: return value"]
+_t_changed295 = [l for l in _t_kept295 if _rd295.scrub(l) != l]
+check("A VARIABLE, FIELD, LOOKUP OR TYPE BESIDE A SECRET WORD IS LEFT AS WRITTEN",
+      _t_changed295 == [], saw=[(l, _rd295.scrub(l)) for l in _t_changed295])
+_t_secret295 = ["DB_PASSWORD=my_secret_value",
+                "password = correcthorsebattery",
+                "password=password",
+                "api_token: hunter2isnotgood",
+                "SECRET_KEY=plain_words_here,"]
+_t_leaked295 = [l for l in _t_secret295 if "REDACTED" not in _rd295.scrub(l)]
+check("...WHILE AN UNQUOTED VALUE IN AN .env LINE, AN INI LINE OR WITH A DIGIT IS STILL REDACTED",
+      _t_leaked295 == [], saw=_t_leaked295)
+# ---- 296_a_skill_saved_with_a_bom_keeps_its_description.py
+# ------------------ a skill saved with a byte-order mark keeps its description and its identity
+# 🐛 [2026-09-26] (R246, 2026-09-26) `skill_overlap` read skill files as `utf-8` while every other
+# reader in the package used `utf-8-sig`. A skill saved with a BOM -- Windows editors, PowerShell
+# 5.1 -- had its front matter hidden behind U+FEFF: the description came back as "﻿---", and
+# its digest differed from the same skill without the mark, so a duplicate copy was not seen as one.
+# Built for real: the same skill twice, one with a BOM, through the inventory itself.
+import shutil as _sh296, tempfile as _tf296                                          # noqa: E402
+from pathlib import Path as _P296                                                    # noqa: E402
+import skill_overlap as _so296                                                       # noqa: E402
+
+_t_root296 = _P296(_tf296.mkdtemp(prefix="chamnan-skillbom-"))
+try:
+    (_t_root296 / ".chamnan" / "skills").mkdir(parents=True)
+    _t_body296 = ("---\nname: deploy\ndescription: Deploy the app to staging safely\n---\n"
+                  "Run the checks, then deploy.\n")
+    (_t_root296 / ".chamnan" / "skills" / "plain.md").write_bytes(_t_body296.encode("utf-8"))
+    (_t_root296 / ".chamnan" / "skills" / "marked.md").write_bytes(b"\xef\xbb\xbf" + _t_body296.encode("utf-8"))
+    _t_inv296 = _so296.inventory(_t_root296, home=_t_root296 / "nohome")
+    _t_by296 = {r["name"]: r for r in _t_inv296 if r.get("store") == "workspace"}
+    check("A SKILL SAVED WITH A BYTE-ORDER MARK KEEPS ITS FRONT-MATTER DESCRIPTION",
+          _t_by296.get("marked", {}).get("description") == "Deploy the app to staging safely",
+          saw={k: v.get("description") for k, v in _t_by296.items()})
+    check("...and reads as the same skill as its unmarked copy",
+          bool(_t_by296.get("marked")) and _t_by296["marked"].get("digest")
+          == _t_by296.get("plain", {}).get("digest"),
+          saw={k: v.get("digest") for k, v in _t_by296.items()})
+    # The set, not the member: the plugin and snapshot stores are read the same way.
+    import re as _re296
+    _t_src296 = (ROOT / "lib" / "skill_overlap.py").read_text(encoding="utf-8")
+    _t_bare296 = _re296.findall(r'read_text\(encoding="utf-8"[,)]', _t_src296)
+    check("...and no store in the inventory is read without stripping the mark",
+          not _t_bare296, saw=_t_bare296)
+finally:
+    _sh296.rmtree(_t_root296, ignore_errors=True)
+# ---- 297_the_suite_leaves_nothing_in_the_system_temp.py
+# ------------------ a run leaves nothing in the system temp directory
+# 🐛 [2026-09-26] (R4, 2026-09-26) The suite's own temp root caught in-process fixtures only.
+# Measured on this machine: 1,327 leftover `chamnan-*` directories (128 MB) -- 170 git-config files
+# made above the redirect, whole roots of killed runs, and every fixture a slice or smoke run made,
+# since neither had a root at all. One leaky check run through a slice left 2 new directories
+# without the redirect and 0 with it. Asserted here: the run has a root, children are pointed at
+# it, and no temp directory in the suite is made before the root exists.
+import re as _re297, subprocess as _sp297, tempfile as _tf297                        # noqa: E402
+
+_t_root297 = _tf297.tempdir or ""
+check("A RUN HAS ITS OWN TEMP ROOT, SO EVERY FIXTURE IT MAKES GOES WITH IT AT EXIT",
+      bool(_t_root297) and "chamnan-suite-" in _t_root297, saw=_t_root297)
+_t_child297 = _sp297.run([sys.executable, "-c", "import tempfile; print(tempfile.gettempdir())"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         stdin=_sp297.DEVNULL, timeout=60).stdout.strip()
+check("...and a child process it starts makes its temp files there too",
+      bool(_t_root297) and os.path.realpath(_t_child297) == os.path.realpath(_t_root297),
+      saw=(_t_child297, _t_root297))
+_t_src297 = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+# Code lines only: the comment recording the old leak names the call it is about.
+_t_line297 = next((l.strip() for l in _t_src297.splitlines()
+                   if _re297.search(r"tempfile\.mk[ds]temp\(", l) and not l.lstrip().startswith("#")), "")
+check("...and the first temp directory the suite makes IS that root, so nothing escapes before it",
+      _t_line297.startswith("_TMP_ROOT = tempfile.mkdtemp("), saw=_t_line297)
+# ---- 298_env_reads_by_every_measured_shape.py
+# ------------------ environment reads written with from-import getenv, setdefault or pop are listed
+# 🐛 [2026-09-26] (R18, 2026-09-26) The map's environment section missed `getenv("X")` after
+# `from os import getenv`, and `os.environ.setdefault`/`.pop`. Measured before adding over a real
+# virtualenv's site-packages and chamnan-corpus: 10 matches, every one a real environment read.
+# The bare `environ["X"]` form was measured in the same pass and refused -- every match was a WSGI
+# request key -- so this also pins that it stays out. Built for real through chamnan-map.
+import shutil as _sh298, subprocess as _sp298, tempfile as _tf298                     # noqa: E402
+from pathlib import Path as _P298                                                    # noqa: E402
+
+_t_repo298 = _P298(_tf298.mkdtemp(prefix="chamnan-envshapes-"))
+try:
+    (_t_repo298 / ".git").mkdir()
+    (_t_repo298 / "settings.py").write_text(
+        "import os\nfrom os import getenv\n"
+        "a = getenv(\"SHAPE_FROM_IMPORT\")\n"
+        "b = os.environ.setdefault(\"SHAPE_SETDEFAULT\", \"1\")\n"
+        "c = os.environ.pop(\"SHAPE_POP\", None)\n", encoding="utf-8")
+    (_t_repo298 / "wsgi_app.py").write_text(
+        "def app(environ, start_response):\n"
+        "    return environ[\"CONTENT_TYPE\"], environ.get(\"HTTP_HOST\")\n", encoding="utf-8")
+    _sp298.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_t_repo298),
+               capture_output=True, stdin=_sp298.DEVNULL, timeout=120)
+    _t_map298 = (_t_repo298 / ".chamnan" / "MAP.md").read_text(encoding="utf-8") \
+        if (_t_repo298 / ".chamnan" / "MAP.md").is_file() else ""
+    _t_want298 = ["SHAPE_FROM_IMPORT", "SHAPE_SETDEFAULT", "SHAPE_POP"]
+    check("AN ENVIRONMENT READ BY FROM-IMPORT getenv, setdefault OR pop IS LISTED IN THE MAP",
+          all(v in _t_map298 for v in _t_want298),
+          saw=[v for v in _t_want298 if v not in _t_map298])
+    check("...while a WSGI request key read through a bare `environ` is not taken for one",
+          "CONTENT_TYPE" not in _t_map298 and "HTTP_HOST" not in _t_map298)
+finally:
+    _sh298.rmtree(_t_repo298, ignore_errors=True)
 # ---- 29_the_gate_reads_both_streams.py
 # ------------------------------------------- "0 tracebacks" over a run that crashed
 # 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
