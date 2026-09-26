@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-setup --apply` now actually updates the hosts it reports as behind.** It has reported
+  every host on the machine and what is stale since it was written, but `--apply` and `--dry-run`
+  were both read only to suppress a hint line — neither ever ran an update. `--dry-run` now prints
+  the exact `claude plugin update chamnan` command for each host behind (with `CLAUDE_CONFIG_DIR`
+  set for every host but the default one) and runs nothing; `--apply` runs them and exits non-zero
+  if any failed; `--host <dir>` restricts either to one host.
+
 - **An `Owner:` header no longer reaches the map as a summary.** `AUTHORSHIP_HEADER` stepped over
   `Author:`, `Maintainer:`, `Contact:` and similar headers so the real description below them was
   used instead, but not `Owner:` or `Point of contact:` — both real conventions, and both carry a

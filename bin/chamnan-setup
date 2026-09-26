@@ -40,6 +40,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -200,6 +201,75 @@ def stale_artefacts(root):
     return out
 
 
+def _is_default_host(host_path):
+    """Whether `host_path` is the one `CLAUDE_CONFIG_DIR` names by NOT being set at all."""
+    try:
+        return host_path.resolve() == (Path.home() / ".claude").resolve()
+    except OSError:
+        return host_path == Path.home() / ".claude"
+
+
+def _update_command_str(host_path):
+    """The exact command line this host's update runs — what `--dry-run` prints verbatim."""
+    if _is_default_host(host_path):
+        return "claude plugin update chamnan"
+    return f"CLAUDE_CONFIG_DIR={host_path} claude plugin update chamnan"
+
+
+def _update_env(host_path):
+    """The subprocess environment for one host's update.
+
+    `CLAUDE_CONFIG_DIR` is unset for the default host (`~/.claude`) and pointed at every other
+    one — that is how a single `claude` binary is told which of the several config directories on
+    this machine to act on. `HOME` is set explicitly rather than inherited, so this matches
+    `Path.home()` even when a caller has overridden only that, not the environment variable.
+    """
+    env = dict(os.environ)
+    env["HOME"] = str(Path.home())
+    if _is_default_host(host_path):
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    else:
+        env["CLAUDE_CONFIG_DIR"] = str(host_path)
+    return env
+
+
+def apply_updates(behind, dry_run):
+    """Print (`--dry-run`) or run (`--apply`) `claude plugin update chamnan` for each host behind.
+
+    Returns 0 when every host succeeded (or this was a dry run), 1 otherwise. `claude` not being on
+    PATH is checked once, up front, for both modes — a dry run that printed commands built around a
+    binary that does not exist would be a false promise, not a preview.
+    """
+    if shutil.which("claude") is None:
+        print("  `claude` is not on PATH -- cannot update any host")
+        return 1
+    failed = 0
+    for r in behind:
+        host_path = Path(r["path"])
+        cmd_str = _update_command_str(host_path)
+        if dry_run:
+            print(f"  DRY RUN  {cmd_str}")
+            continue
+        try:
+            proc = subprocess.run(
+                ["claude", "plugin", "update", "chamnan"],
+                env=_update_env(host_path), stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"  FAILED   {cmd_str}   ({e})")
+            failed += 1
+            continue
+        if proc.returncode == 0:
+            print(f"  OK       {cmd_str}")
+        else:
+            print(f"  FAILED   {cmd_str}   (exit {proc.returncode})")
+            tail = proc.stderr.strip().splitlines()
+            if tail:
+                print(f"           {tail[-1]}")
+            failed += 1
+    return 1 if failed else 0
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="chamnan-setup")
     ap.add_argument("--json", action="store_true")
@@ -243,7 +313,21 @@ def main(argv):
     if not (a.apply or a.dry_run):
         print(f"  {len(behind)} host(s) behind — `chamnan-setup --apply` moves them, "
               f"`--dry-run` shows what it would write")
-    return 1
+        return 1
+
+    targets = behind
+    if a.host:
+        wanted = Path(a.host).expanduser()
+        try:
+            wanted = wanted.resolve()
+        except OSError:
+            pass
+        targets = [r for r in behind
+                   if Path(r["path"]).resolve() == wanted or Path(r["path"]) == wanted]
+        if not targets:
+            print(f"  --host {a.host} matches no host currently behind")
+            return 1
+    return apply_updates(targets, dry_run=a.dry_run)
 
 
 if __name__ == "__main__":
