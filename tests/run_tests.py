@@ -33681,8 +33681,10 @@ for _fault175, _break175 in _FAULTS175.items():
             # a fault is exactly the failure this file exists to catch, so it must be reported, not
             # stepped over.
             try:
+                # From the fixture, as the host spawns a hook: from anywhere else, a crash under
+                # the fault was recorded in whatever workspace encloses the runner's own directory.
                 _r175 = _sp175.run([_sy175.executable, str(_PKG175 / "hooks" / _hook175)],
-                                   input=_payload175(_hook175, _d175), capture_output=True,
+                                   input=_payload175(_hook175, _d175), capture_output=True, cwd=_d175,
                                    text=True, encoding="utf-8", errors="replace", timeout=60)
             except _sp175.TimeoutExpired:
                 _ran175 += 1
