@@ -297,11 +297,20 @@ def index(root):
             rows.append({"file": rel, "line": line, "at": when, "text": text})
     rows.sort(key=lambda r: (r["at"] or "", r["file"], r["line"]), reverse=True)
     dated = sum(1 for r in rows if r["at"])
+    # 🐛 [2026-09-26] `most_common(40)` orders by count, so a routine recount reorders this list
+    # even when only one file's count actually moved -- a 574-line diff in the committed
+    # state/gotcha_index.json for ~10 real count changes, because most_common's tie-breaking on
+    # equal counts follows insertion order, which itself depends on directory walk order. The set
+    # of the 40 heaviest files is still selected by count; what is STORED is that same set sorted by
+    # path, so the diff is proportional to what changed. statistic/report/features.html is the one
+    # reader that needs count order for its bar chart, and it now sorts its own copy before
+    # rendering rather than relying on this list's order.
+    by_file = sorted(per_file.most_common(40))
     return {
         "marks": len(rows), "dated": dated, "files": len(per_file),
         "note": (f"{dated} of {len(rows)} marks carry a date; the rest are counted in the total "
                  f"but not in the timeline"),
-        "by_file": per_file.most_common(40),
+        "by_file": by_file,
         "by_month": sorted(per_month.items()),
         "recent": rows[:_RECENT],
     }

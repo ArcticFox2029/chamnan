@@ -21,6 +21,14 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The lesson index's `by_file` no longer reorders itself on every routine recount.** It was
+  sorted by count, so two files landing on the same count (common, since most files carry very
+  few) broke ties by directory-walk order — which drifts session to session. A 574-line diff for
+  about 10 real count changes was measured. The 40 heaviest files are still selected by count; what
+  is stored is that same set sorted by path, so the diff is now proportional to what changed. The
+  dashboard's bar chart, which does need count order to draw tallest-first, now sorts its own copy
+  before rendering.
+
 - **`chamnan-setup --apply` now actually updates the hosts it reports as behind.** It has reported
   every host on the machine and what is stale since it was written, but `--apply` and `--dry-run`
   were both read only to suppress a hint line — neither ever ran an update. `--dry-run` now prints

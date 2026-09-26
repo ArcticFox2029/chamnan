@@ -136,7 +136,7 @@ M.append(panel("which files keep earning a lesson",
   "ไฟล์ไหนโดนซ้ำบ่อยที่สุด",
   `lib/gotcha.py · the 10 heaviest of ${n(ls.files)} file(s) carrying a lesson`,
   [
-    hbars((ls.by_file || []).slice(0, 10).map((r, i) => ({
+    hbars([...(ls.by_file || [])].sort((a, b) => b[1] - a[1]).slice(0, 10).map((r, i) => ({
       label: r[0], value: r[1], text: `${n(r[1])} ${T("lessons", "บทเรียน")}`,
       colour: PAL[i % PAL.length] }))),
     ls.note ? el("p", { class: "src", style: "margin:12px 0 0" }, ls.note) : null,
