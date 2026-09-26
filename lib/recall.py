@@ -445,7 +445,7 @@ def query(index, words, limit=6):
     raw = index.get("entries") if isinstance(index, dict) else None
     entries = raw if isinstance(raw, list) else []
 
-    # 🐛 [2026-09-26] (R173 acc4, 2026-09-26) Every wanted word added the same weight to a score
+    # 🐛 [2026-09-26] (R173, 2026-09-26) Every wanted word added the same weight to a score
     # whether it turned up in 3 entries or 800, so a query mixing a rare word with a common one let
     # the common word's sheer bulk in one document outrank the rare word's exact hit somewhere else.
     # Measured on this workspace's own index (`.chamnan/logs/recall_known_item.py`, 219 known-item
