@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A calendar heatmap cell in the dashboard is now readable by a screen reader.** Each cell carried
+  only a `title`, which a mouse hover reads and nothing else does — 168 cells of pure colour with no
+  accessible name. Each cell now also carries `role="img"` and an `aria-label` holding the same text.
+  No `tabindex` is added; 168 sequential tab stops over one heatmap would be worse than the silence
+  it replaces.
+
 - **A non-UTF-8 source file's summary is no longer injected into the map as mojibake.** Every file
   is decoded with `errors="replace"`, so a real but undeclared encoding — Shift-JIS, say — turned
   the wrong bytes into U+FFFD, and that replacement text was written straight into `MAP.md` as the

@@ -365,10 +365,19 @@ function calendar(rowsIn) {
       el("span", { class: "calday" }, r.day.slice(5)),
       el("div", { class: "calcells" }, r.cells.map((v, h) => {
         const w = v ? Math.round(18 + 82 * Math.sqrt(v / max)) : 0;
+        /* 🐛 [2026-09-26] (R187, 2026-09-25) Each cell carried only a `title`, which a mouse
+           hover reads and a screen reader does not — 168 cells of colour with no accessible name
+           at all. `role="img"` plus an `aria-label` carrying the same text gives each cell a name
+           without adding a tab stop: 168 sequential stops for one heatmap would be worse than the
+           silence it replaces, which is why `bars()`'s own focusable-button treatment is not
+           reused here. */
+        const label = `${r.day} ${String(h).padStart(2, "0")}:00 · ${n(v)}`;
         return el("span", {
           class: v ? "" : "empty",
           style: v ? `background:color-mix(in srgb, ${band(h)} ${w}%, var(--panel2))` : "",
-          title: `${r.day} ${String(h).padStart(2, "0")}:00 · ${n(v)}`,
+          title: label,
+          role: "img",
+          "aria-label": label,
         });
       })))));
   const key = el("div", { class: "calkey" },
