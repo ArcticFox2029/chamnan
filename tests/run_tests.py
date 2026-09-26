@@ -42894,6 +42894,9 @@ try:
 
     _env310 = dict(_os310.environ)
     _env310["HOME"] = str(_home310)
+    # Windows: Path.home() reads USERPROFILE, not HOME (Python 3.8+) -- without this the child
+    # surveyed the runner's real home and found every host current (CI, 2026-09-27).
+    _env310["USERPROFILE"] = str(_home310)
     _env310["PATH"] = str(_bin310) + _os310.pathsep + _env310.get("PATH", "")
 
     def _run310(*extra_args):
