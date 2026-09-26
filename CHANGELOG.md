@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A `.chamnan` or `.git` in your home folder no longer claims every folder under it.** chamnan
+  finds a project by walking up from where it starts. It walked past the home folder, so a stray
+  `~/.chamnan`, or dotfiles kept in git at `~`, turned any folder without its own `.git` into part
+  of one enormous project: a session there wrote its logs into home, and `chamnan-map` began
+  indexing the entire home directory. The walk now stops before the home folder. Starting in home
+  on purpose still works.
 - **An agent putting back a package your repository removed is told so.** When an edit adds a
   package to `requirements.txt`, `pyproject.toml`, `package.json` or another dependency file, and
   that file listed the package before and dropped it, the agent is told which commit removed it

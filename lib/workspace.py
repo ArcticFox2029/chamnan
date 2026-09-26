@@ -687,7 +687,20 @@ def find_root(start=None):
     A `.git` is the stronger statement of "this is a repository". Nearest wins; workspace breaks the
     tie."""
     here = Path(start or os.getcwd()).resolve()
+    # 🐛 [2026-09-26] (self-measured) The walk went past the home folder. A `~/.chamnan` -- made there
+    # by accident, by a tool run from the wrong directory -- then claimed every folder under home
+    # that had no `.git`: a session in such a folder recorded its logs into it, and `chamnan-map`
+    # started indexing the entire home directory. A `.git` in home (dotfiles kept in git) does the
+    # same. Home and everything above it is never a repository found by walking UP; starting there
+    # on purpose still works.
+    try:
+        home = Path.home().resolve()
+        above = {home, *home.parents}
+    except (OSError, RuntimeError, KeyError):
+        above = set()
     for candidate in (here, *here.parents):
+        if candidate != here and candidate in above:
+            break
         if (candidate / WORKSPACE_DIRNAME).is_dir():
             return candidate
         if any((candidate / m).exists() for m in VCS_MARKERS):
