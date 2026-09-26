@@ -726,7 +726,15 @@ _LATIN_SECRET_WORDS = (
     # `entic` covers authentication, authenticate, authenticates, authenticated, authenticator and
     # authenticity in one: only `authentication` was excluded, so a sentence saying what a gate
     # "authenticates" lost its last word. Prose is the other half of this module's trade.
-    r"|(?<![A-Za-z])auth(?!ors?\b|entic|orit)"
+    # \U0001f41b [2026-09-26] The `ors?\b` half only excluded "author"/"authors" as a WHOLE word --
+    # `\b` needs a word boundary right after the "or", which "authored", "authority" and
+    # "AUTHOR_EMAIL" never reach (an "e", another letter, or "_" all count as more word). Measured:
+    # a commit trailer's own "Co-Authored-By" and "GIT_AUTHOR_EMAIL" were both flagged. Replaced
+    # with a lookahead keyed on what comes AFTER "or" instead of on a boundary after it: any
+    # "auth" + "or..." is excluded UNLESS that "or" is followed by "is"/"iz" (authorize,
+    # authorise, authorization all keep the word secret; author, authors, authored, authority and
+    # AUTHOR_EMAIL do not). (R81, 2026-09-25)
+    r"|(?<![A-Za-z])auth(?!or(?!i[sz])|entic)"
     # 🐛 [2026-09-08] Every branch above needs a separator or a capital to find the second
     # component, and one whole family of spellings has neither: `APIKEY=`, `DBPASSWORD=`,
     # `SECRETKEY=` are how environment variables are written in real `.env` files and CI settings,

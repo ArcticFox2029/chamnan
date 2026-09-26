@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The redactor no longer treats "author" as the secret word "auth".** `author`, `authors`,
+  `authored`, `authority` and `AUTHOR_EMAIL` were all one letter short of the word boundary the
+  exclusion needed, so a commit's own `Co-Authored-By:` trailer and any `GIT_AUTHOR_EMAIL=...` came
+  back with "auth" blotted out — measured at 910 of 17,808 Bash commands in one account's
+  transcripts, most of them commit trailers. `Authorization: Bearer ...` and `auth_token = ...`
+  still read as credentials.
+
 - **`chamnan-recall` no longer lets a common word outrank a rare one.** Every query word added the
   same weight to a score whether it appeared in 3 stored entries or 800, so a rare exact hit could
   lose to a common word's sheer bulk in an unrelated document. Ranking now weights each word by its
