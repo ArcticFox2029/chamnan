@@ -844,8 +844,9 @@ def main():
         if not held:
             return 0
         prior = []
-        if log.is_file():
-            for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        _raw = log.read_bytes() if log.is_file() else b""
+        if _raw:
+            for line in _raw.decode("utf-8-sig", errors="replace").splitlines():
                 try:
                     _rec = json.loads(line)
                     # A line that is valid JSON but not an object -- a stray number left by a
@@ -889,9 +890,17 @@ def main():
         }
         if file_path:
             entry["file"] = file_path
-        prior.append(entry)
-        ws.atomic_write_text(
-            log, "\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n")
+        # 🐛 [2026-09-26] (R59) Rewritten whole on every qualifying call -- ~200 KB at the 300-entry
+        # bound to add one line. Appended now, and rewritten down to the bound only once the file
+        # is a quarter past it, which is the shape `ws.append_jsonl` took the same day.
+        if _raw.count(b"\n") < KEEP_ENTRIES + KEEP_ENTRIES // 4:
+            with open(log, "ab") as _fh:
+                _fh.write((b"\n" if not _raw.endswith(b"\n") and _raw else b"")
+                          + (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"))
+        else:
+            prior.append(entry)
+            ws.atomic_write_text(
+                log, "\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n")
 
     # Only the exact threshold speaks. Firing on every later repeat would turn a useful nudge into
     # noise the user learns to scroll past. Outside the lock: `say()` only writes to stdout.

@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Logging a Read no longer rewrites the whole log.** The file-pointer hook's record of each
+  Read was written by parsing and rewriting the entire log, which at its 2,000-record bound was
+  19 ms and about 370 KB written per call. It now appends one line and trims only when the log is a
+  quarter past its bound: 1.3 ms per call. The scratch-script log changed the same way.
+
 - **The redactor no longer blanks out ordinary code beside a secret word.** A key containing
   `key`, `token` or `password` made the value after it look like a credential even when that value
   was code: an argument label repeating its own name, an object field naming another variable, a
