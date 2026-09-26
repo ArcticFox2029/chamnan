@@ -571,7 +571,9 @@ AUTHORSHIP_HEADER = re.compile(
     # 🐛 Stepping over `Author:` alone was not enough, and the realistic header is the one that got
     # through: `# Author: Jane Roe` followed by `# Email: jane@example.com` published the address on
     # the next line instead. Contact fields carry exactly what the author line does.
-    r"|e-?mails?|contacts?)\s*::?"
+    # `owners?` and `point of contact` are the same header under a different name: a repo's
+    # CODEOWNERS-style convention writes `Owner:` above the same name-and-address shape.
+    r"|e-?mails?|contacts?|owners?|point\s+of\s+contact)\s*::?"
     r"|^\s*written\s+by\b", re.I)
 # A line that is essentially just an address is a contact line without the label — some headers
 # write the address alone under the name. Anchored on the whole line being one address so a summary

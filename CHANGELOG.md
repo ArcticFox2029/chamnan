@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **An `Owner:` header no longer reaches the map as a summary.** `AUTHORSHIP_HEADER` stepped over
+  `Author:`, `Maintainer:`, `Contact:` and similar headers so the real description below them was
+  used instead, but not `Owner:` or `Point of contact:` — both real conventions, and both carry a
+  name and an email the same way. `Owner: Jane Roe <jane@example.com>, ext 4417.` was published
+  into `MAP.md` verbatim; it is now recognised and stepped over like the others.
+
 - **A calendar heatmap cell in the dashboard is now readable by a screen reader.** Each cell carried
   only a `title`, which a mouse hover reads and nothing else does — 168 cells of pure colour with no
   accessible name. Each cell now also carries `role="img"` and an `aria-label` holding the same text.
