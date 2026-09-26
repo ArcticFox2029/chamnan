@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **No home directory is no longer a crash.** In a container running as an arbitrary user, with no
+  `HOME` and no passwd entry, the boundary check, the session hand-off, `chamnan-doctor` and
+  `chamnan-setup` each raised on looking up the home directory. They now carry on without it.
+
 - **Logging a Read no longer rewrites the whole log.** The file-pointer hook's record of each
   Read was written by parsing and rewriting the entire log, which at its 2,000-record bound was
   19 ms and about 370 KB written per call. It now appends one line and trims only when the log is a
