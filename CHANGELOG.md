@@ -21,6 +21,14 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **An agent putting back a package your repository removed is told so.** When an edit adds a
+  package to `requirements.txt`, `pyproject.toml`, `package.json` or another dependency file, and
+  that file listed the package before and dropped it, the agent is told which commit removed it
+  and its message, before the edit runs. The README described this, but nothing had been calling
+  the part that reads the history. Two defects in that part are fixed with it: it read every
+  revision from before a move of the file at today's path, so it found nothing older than the
+  move; and it counted `package.json`'s `name` and `version`, `setup.py`'s `install_requires` and
+  every TOML key as packages, while missing PEP 621 `dependencies = [...]`.
 - **More environment variables are found.** The map's environment section now also lists
   variables read with `getenv("X")` after `from os import getenv`, and with
   `os.environ.setdefault` or `os.environ.pop`. A plain `environ["X"]` is still left out on

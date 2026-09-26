@@ -20,6 +20,7 @@ So this compares the SET OF NAMES between two revisions of a manifest. A package
 when its name was listed before and is not listed after — which reformatting, comment translation,
 re-ordering, a version bump and a file move all leave alone.
 """
+import json
 import re
 import subprocess
 
@@ -35,39 +36,100 @@ MANIFESTS = (
 # project has worked through, near enough that a decision from three years ago is not presented as
 # current practice.
 WINDOW = 600
+# The file names a manifest can have, for a caller that sees one path and must decide whether it
+# is a manifest at all.
+MANIFEST_NAMES = frozenset(m.rsplit("/", 1)[-1].lower() for m in MANIFESTS)
 MAX_COMMITS_REPORTED = 3
 
 # A requirement line: the name, then whatever constraint follows. Stops at the first character that
 # cannot be part of a name, so `ollama>=0.6.0  # comment` yields `ollama`.
-_PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:[<>=!~\[;]|$)")
-_JSON_NAME = re.compile(r'^\s*"([^"]+)"\s*:\s*"')
-_GO_NAME = re.compile(r"^\s*([a-z0-9][\w./-]*)\s+v\d")
-_TOML_NAME = re.compile(r'^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=')
+_PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:[<>=!~\[;@(]|$)")
+_GO_NAME = re.compile(r"^\s*(?:require\s+)?([a-z0-9][\w./-]*)\s+v\d")
+_GEM_NAME = re.compile(r"""^\s*gem\s+["']([^"']+)["']""")
+_TOML_KEY = re.compile(r"""^\s*["']?([A-Za-z0-9][A-Za-z0-9._-]*)["']?\s*=\s*(.*)$""")
+_STRING = re.compile(r"""["']([^"']+)["']""")
+_JSON_TABLES = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
+                "require", "require-dev")
+
+
+def _requirement(text):
+    """The package name at the start of a requirement string (`httpx>=0.27; python_version>'3'`)."""
+    m = _PY_NAME.match(text.strip())
+    return m.group(1).lower() if m else ""
+
+
+def _toml_names(text):
+    """Names from a TOML manifest, read by TABLE rather than by any `key =` line.
+
+    🐛 [2026-09-26] (self-measured) Every `key = value` line counted as a package, so `name`,
+    `version` and `requires-python` from `[project]` and `edition` from `[package]` were "listed",
+    while PEP 621's `dependencies = ["httpx>=0.27", ...]` -- the form most new Python projects
+    use -- contributed only the word `dependencies`. Now: in a table whose name ends in
+    `dependencies` (Cargo, Poetry, PDM, `[dependency-groups]`) or is `packages`/`dev-packages`
+    (Pipfile), a key is a package -- unless its value is an array, when the key is a group name
+    and the array's strings are the packages. In `[project]`, only `dependencies` counts, and
+    `[project.optional-dependencies]` holds groups of arrays.
+    """
+    out, table, in_array = set(), "", False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if in_array:
+            out.update(n for n in map(_requirement, _STRING.findall(line)) if n)
+            in_array = "]" not in line
+            continue
+        if line.startswith("["):
+            table = line.strip("[]").strip().strip('"').lower()
+            continue
+        m = _TOML_KEY.match(line)
+        if not m:
+            continue
+        key, value = m.group(1).lower(), m.group(2).strip()
+        deps_table = table.endswith("dependencies") or table in ("packages", "dev-packages")
+        if value.startswith("[") and (deps_table or (table == "project" and key == "dependencies")):
+            out.update(n for n in map(_requirement, _STRING.findall(value)) if n)
+            in_array = "]" not in value
+        elif deps_table and not (key == "python" and "poetry" in table):
+            out.add(key)
+    return out
 
 
 def names(text, manifest):
     """The package names a manifest lists, as a set. Unknown shapes return an empty set.
 
-    Comments are dropped before matching for the Python shapes, because this repository's own
-    requirements file carries a paragraph of explanation after most entries — in two languages,
-    across one commit that rewrote all of them.
+    Each format is read by its own structure. 🐛 [2026-09-26] (self-measured) It used to match every
+    line against a pattern, so `package.json`'s `"name"`, `"version"` and each script were read as
+    packages, `setup.py`'s `install_requires=[` became a package called `install_requires`, and a
+    `Gemfile` matched nothing at all.
     """
-    out = set()
     if not text:
-        return out
-    lower = manifest.lower()
+        return set()
+    lower = manifest.lower().rsplit("/", 1)[-1]
+    if lower.endswith(".json"):
+        try:
+            data = json.loads(text)
+        except (ValueError, RecursionError):
+            return set()
+        if not isinstance(data, dict):
+            return set()
+        return {str(k).lower() for t in _JSON_TABLES if isinstance(data.get(t), dict)
+                for k in data[t] if k != "php" and not str(k).startswith("ext-")}
+    if lower.endswith(".toml") or lower == "pipfile":
+        return _toml_names(text)
+    if lower == "setup.py":
+        block = re.search(r"install_requires\s*=\s*\[(.*?)\]", text, re.S)
+        return {n for n in map(_requirement, _STRING.findall(block.group(1)))} - {""} if block else set()
+    out = set()
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0] if lower.endswith((".txt", ".toml", "Pipfile".lower())) else raw
+        line = raw.split("#", 1)[0]
         if not line.strip() or line.lstrip().startswith(("-", "//")):
             continue
-        for pattern in ((_PY_NAME,) if lower.endswith(".txt")
-                        else (_JSON_NAME,) if lower.endswith(".json")
-                        else (_GO_NAME,) if lower.endswith(".mod")
-                        else (_TOML_NAME, _PY_NAME)):
-            m = pattern.match(line)
-            if m:
-                out.add(m.group(1).strip().lower())
-                break
+        pattern = (_GO_NAME if lower.endswith(".mod") else _GEM_NAME if lower == "gemfile"
+                   else _PY_NAME)
+        m = pattern.match(line)
+        if m:
+            out.add(m.group(1).strip().lower())
     return out
 
 
@@ -89,23 +151,46 @@ def _run(root, args):
     return r.stdout if r.returncode == 0 else ""
 
 
-def removals(root, window=WINDOW):
+def added_back(root, rel, current, new):
+    """{package: (subject, date)} for packages `new` adds to manifest `rel` that it once listed and removed.
+
+    🎯 [2026-09-26] (owner) The delivery `removals` never had. Built on 2026-09-23 from the owner's
+    direction -- *an agent proposing a library has no idea the team removed it* -- the reader shipped
+    and nothing ever called it, while the README said an agent would be told. The owner, 2026-09-26:
+    *"ทำต่อสาย"*. Only the one manifest being edited is walked, and only when the edit adds a name.
+    """
+    added = names(new, rel) - names(current, rel)
+    if not added:
+        return {}
+    gone = removals(root, manifests=(rel,))
+    return {n: gone[n][0] for n in sorted(added) if n in gone}
+
+
+def removals(root, window=WINDOW, manifests=None):
     """{package: [(commit subject, date), ...]} for names a manifest listed and then stopped listing.
 
     Walks each manifest's own revisions newest-first and compares consecutive name sets. `--follow`
-    keeps a file's history across the move that this repository's own history contains, and without
-    it every entry in the moved file reads as removed on the day of the move.
+    keeps a file's history across a move, and each revision is read at the path it had THEN.
+    🐛 [2026-09-26] (self-measured) It read every revision at today's path, so across the one move
+    this docstring cites -- the app moving into `miki-hybridge-ai/` -- all 19 older revisions of
+    its requirements file read as empty and were skipped: 0 removals found in a history that had
+    them. `--name-only` gives the path each commit had.
     """
     found = {}
-    for manifest in MANIFESTS:
-        log = _run(root, ["log", "--follow", "--no-merges", "-n", str(window),
-                          "--format=%H\t%ad\t%s", "--date=short", "--", manifest])
-        revs = [line.split("\t", 2) for line in log.splitlines() if line.count("\t") >= 2]
+    for manifest in (manifests or MANIFESTS):
+        log = _run(root, ["log", "--follow", "--no-merges", "-n", str(window), "--name-only",
+                          "--format=%x00%H\t%ad\t%s", "--date=short", "--", manifest])
+        revs = []
+        for rec in log.split("\x00")[1:]:
+            head, _, rest = rec.partition("\n")
+            path = next((l.strip() for l in rest.splitlines() if l.strip()), "")
+            if head.count("\t") >= 2 and path:
+                revs.append(head.split("\t", 2) + [path])
         if len(revs) < 2:
             continue
         for newer, older in zip(revs, revs[1:]):
-            after = names(_run(root, ["show", f"{newer[0]}:./{manifest}"]), manifest)
-            before = names(_run(root, ["show", f"{older[0]}:./{manifest}"]), manifest)
+            after = names(_run(root, ["show", f"{newer[0]}:{newer[3]}"]), manifest)
+            before = names(_run(root, ["show", f"{older[0]}:{older[3]}"]), manifest)
             # Both sides must be readable. An empty `after` is what a deleted or renamed manifest
             # looks like, and calling every package in it removed on that commit is the same
             # mistake as reading `-` lines.

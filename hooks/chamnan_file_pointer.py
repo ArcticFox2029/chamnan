@@ -80,6 +80,37 @@ def _note_query(payload):
     return 0
 
 
+def _dependency_note(root, rel, target, tool, tool_input):
+    """A notice when an Edit or Write adds a package this manifest once listed and removed, else "".
+
+    See `deps.added_back`. The file on disk is the before; the Write's content, or the file with
+    the Edit applied, is the after -- so only a name the edit itself adds is ever reported.
+    """
+    import deps
+    if tool not in ("Edit", "Write") or target.name.lower() not in deps.MANIFEST_NAMES:
+        return ""
+    try:
+        current = target.read_text(encoding="utf-8-sig", errors="replace") if target.is_file() else ""
+    except OSError:
+        current = ""
+    if tool == "Write":
+        new = tool_input.get("content") or ""
+    else:
+        old, rep = tool_input.get("old_string") or "", tool_input.get("new_string") or ""
+        if not old or old not in current:
+            return ""
+        new = current.replace(old, rep) if tool_input.get("replace_all") else current.replace(old, rep, 1)
+    back = deps.added_back(root, rel, current, new)
+    if not back:
+        return ""
+    lines = [f"chamnan: this edit adds to `{rel}` a package this repository listed before and removed:"]
+    for name, (subject, date) in list(back.items())[:5]:
+        lines.append(f"  · `{name}` — removed {date}, in the commit \u201c{subject}\u201d")
+    lines.append("Read why it was removed before adding it back: `git log -S <name> -- "
+                 + rel + "` shows that commit.")
+    return "\n".join(lines)
+
+
 def main():
     started = time.time()
     try:
@@ -121,6 +152,21 @@ def main():
         return 0
 
     session_id = payload.get("session_id") or ""
+    # A package being put back into a manifest this repository once took it out of. Checked on every
+    # such edit, not once per session like the pointer below: it is about the edit, not the file.
+    _back = _dependency_note(root, rel, target, _tool, payload.get("tool_input") or {})
+    if _back:
+        import redact  # deferred; see the import block
+        try:
+            import turn
+            if not turn.claim(payload, wsdir):
+                return 0
+        except Exception:
+            pass
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": redact.for_a_terminal(redact.scrub(_back))}}))
+        return 0
     if pointer.already_pointed(wsdir, session_id, rel):
         return 0
 
