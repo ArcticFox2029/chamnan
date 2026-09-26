@@ -25,6 +25,7 @@ already corrupted text twice by splitting it as though it did -- a 3-character k
 and a food keyword resolved ชีสเค้ก to เค้ก. A query that is not ASCII is not tokenised: it is
 looked for whole, which is slower per term and cannot be wrong in that way.
 """
+import math
 import re
 import unicodedata
 
@@ -386,15 +387,20 @@ def stale_by(ws, index):
     return behind
 
 
-def _hits(entry, wanted, phrases):
-    """Score one entry, and the fields that earned it. Returns `(score, why)`."""
+def _hits(entry, wanted, phrases, idf=None):
+    """Score one entry, and the fields that earned it. Returns `(score, why)`.
+
+    `idf` is an optional `{term: weight}` for terms in `wanted`. It is `None` for every caller
+    that predates it, and a missing term inside a supplied dict scores at 1.0 either way, so
+    nothing but `query()` itself has to change.
+    """
     score, why = 0.0, []
     fields = (("title", entry.get("title", "")), ("blurb", entry.get("blurb", "")))
     for name, value in fields:
         low = value.lower()
         for w in wanted:
             if w in terms(low):
-                score += FIELD_WEIGHT[name]
+                score += FIELD_WEIGHT[name] * (idf.get(w, 1.0) if idf else 1.0)
                 why.append(name)
         for p in phrases:
             if p in value:
@@ -406,7 +412,7 @@ def _hits(entry, wanted, phrases):
         if n:
             # Diminishing: a word used forty times is not forty times more relevant than one used
             # four times, and without this the longest document wins every query.
-            score += FIELD_WEIGHT["body"] * (1 + min(n, 20) ** 0.5)
+            score += FIELD_WEIGHT["body"] * (1 + min(n, 20) ** 0.5) * (idf.get(w, 1.0) if idf else 1.0)
             why.append("body")
     text = entry.get("text", "")
     for p in phrases:
@@ -437,11 +443,28 @@ def query(index, words, limit=6):
     # reached `.get` on an int — both a raw `AttributeError` traceback and exit 1, past the
     # command's own "no index yet" sentence. A file on disk is a shape nobody promised.
     raw = index.get("entries") if isinstance(index, dict) else None
+    entries = raw if isinstance(raw, list) else []
+
+    # 🐛 [2026-09-26] (R173 acc4, 2026-09-26) Every wanted word added the same weight to a score
+    # whether it turned up in 3 entries or 800, so a query mixing a rare word with a common one let
+    # the common word's sheer bulk in one document outrank the rare word's exact hit somewhere else.
+    # Measured on this workspace's own index (`.chamnan/logs/recall_known_item.py`, 219 known-item
+    # trials of "find the entry these 3 of its own body words came from"): MRR 0.578 -> 0.642,
+    # top1 39.7% -> 46.1%, top3 72.1% -> 79.0%; the Thai/substring `phrases` path is untouched.
+    # IDF is computed here, for the wanted ASCII terms only (cheap -- never the whole vocabulary),
+    # and is never written back into the index: `build()`'s output on disk does not change shape.
+    docs_with_body = [e for e in entries if isinstance(e, dict) and e.get("body")]
+    n_docs = len(docs_with_body)
+    idf = {}
+    for w in wanted:
+        df = sum(1 for e in docs_with_body if w in e["body"])
+        idf[w] = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
+
     scored = []
-    for e in raw if isinstance(raw, list) else []:
+    for e in entries:
         if not isinstance(e, dict):
             continue
-        s, why = _hits(e, wanted, phrases)
+        s, why = _hits(e, wanted, phrases, idf)
         if s > 0:
             scored.append((s, e, sorted(set(why))))
     # Score first, then kind weight is already in the score, then path for a stable order between

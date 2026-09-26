@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-recall` no longer lets a common word outrank a rare one.** Every query word added the
+  same weight to a score whether it appeared in 3 stored entries or 800, so a rare exact hit could
+  lose to a common word's sheer bulk in an unrelated document. Ranking now weights each word by its
+  inverse document frequency. Measured on this workspace's own 1,319-entry index (219 known-item
+  trials): MRR 0.578 -> 0.642, top1 39.7% -> 46.1%, top3 72.1% -> 79.0%.
+
 - **A printed or PDF-saved dashboard is readable.** Printing drops background colours, so the
   default dark theme came out as pale text on white paper (1.2:1). Print now always uses the
   light theme's colours, every one of them at least 4.5:1 on white.
