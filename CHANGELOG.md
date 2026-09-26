@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The redactor no longer blanks out ordinary code beside a secret word.** A key containing
+  `key`, `token` or `password` made the value after it look like a credential even when that value
+  was code: `idempotencyKey: idempotencyKey,`, `orderingKey: shipment,`,
+  `partition_key = shipment_id`, `json['access_token']`, `pushToken: string | null`. On the test
+  corpus, 100 of the 304 removed values were code like this; 33 are now. Nothing it caught before
+  is missed: the recall report is identical line for line, and an unquoted value in a `.env` line,
+  in an INI line or with a digit in it is still removed.
 - **A `.chamnan` or `.git` in your home folder no longer claims every folder under it.** chamnan
   finds a project by walking up from where it starts. It walked past the home folder, so a stray
   `~/.chamnan`, or dotfiles kept in git at `~`, turned any folder without its own `.git` into part

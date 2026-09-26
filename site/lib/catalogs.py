@@ -154,8 +154,15 @@ ENV_IN_CODE = re.compile(
     # Python `os.environ["X"]` is how you say the variable is REQUIRED, and `.get()` is how you
     # say it is optional. The ones most worth listing were the ones not listed.
     r"""(?:os\.environ\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
-    r"""|os\.environ(?:\.get)?\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
-    r"""|os\.getenv\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
+    # 🐛 [2026-09-26] (R18, 2026-09-26) `setdefault`/`pop` and a bare `getenv(` (from
+    # `from os import getenv`) were missed. Measured over a real virtualenv's site-packages and
+    # chamnan-corpus before adding: 3 and 7 matches, every one a real environment read. The bare
+    # `environ[...]`/`environ.get(` forms were measured too and REFUSED: all three `environ[`
+    # matches were WSGI request keys (`CONTENT_TYPE`), which is the request dict, not the process
+    # environment. Vite's `import.meta.env.X` and `const {X} = process.env` had no sample at all,
+    # so they stay out until one is measured.
+    r"""|os\.environ(?:\.get|\.setdefault|\.pop)?\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
+    r"""|(?<![\w.])(?:os\.)?getenv\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
     r"""|process\.env\.([A-Z][A-Z0-9_]{2,})"""
     r"""|process\.env\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
     r"""|ENV\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""

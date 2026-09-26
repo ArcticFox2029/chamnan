@@ -1789,6 +1789,55 @@ _DEFAULT_CREDENTIALS = frozenset("""
     letmein qwerty abc123 iloveyou postgres mysql oracle sysadmin
 """.split())
 
+# Words that stand where a value would, in code, and are never a credential: a keyword a case label
+# returns, or the type a TypeScript/Python annotation names.
+_CODE_WORDS = frozenset((
+    "return", "true", "false", "null", "nil", "none", "undefined", "self", "this", "new", "await",
+    "string", "number", "boolean", "bool", "any", "unknown", "void", "never", "object",
+    "int", "str", "float", "bytes", "optional"))
+_SUBSCRIPT_REF = re.compile(r"""^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\[['"][\w.-]+['"]\]!?$""")
+_CODE_NAME = re.compile(r"^[A-Za-z_$][A-Za-z_$]*(?:\.[A-Za-z_$][A-Za-z_$]*)*$")
+
+
+def _is_a_code_reference(match):
+    """True when an UNQUOTED value is a name in code -- a variable, a field, a lookup -- not a secret.
+
+    🐛 [2026-09-26] (R71, 2026-09-24) Measured on the corpus: 100 of 304 removed spans (planted
+    secrets aside) were code, not credentials -- `idempotencyKey: idempotencyKey,` (a Swift argument
+    label), `orderingKey: shipment,`, `partition_key = shipment_id`, `json['access_token'] as
+    String?`, `pushToken: string | null`, `value_key: of_geo_grpc_addr }`. Each is a secret WORD in
+    the key and a reference in the value; redacting it hides nothing and breaks the line a reader
+    needs. What decides it is the context a literal never has: a trailing `,` `)` `}` (an argument
+    or an object field), or `name = other_name` with spaces in code. Kept out on purpose, so a real
+    unquoted secret still goes: any value with a digit, any key in UPPER_CASE (an `.env` line), and
+    a plain word after a spaced `=` (`password = correcthorse` in an INI file). The quoted rule is
+    untouched: a quoted value is a literal.
+    """
+    raw = match.group(2) or ""
+    value = raw.rstrip(",;!")
+    if _SUBSCRIPT_REF.match(value.rstrip(")}")):
+        return True
+    value = value.rstrip(")}]")
+    if value.lower() in _CODE_WORDS:
+        return True
+    written = re.sub(r"^['\"]+|['\"\s:=]+$", "", _full_key_at(match).strip())
+    key = written.lower()           # `_bare_key` lowercases, and the case is the whole point below
+    letters = re.sub(r"[^A-Za-z]", "", written)
+    if not letters or letters.isupper() or not _CODE_NAME.match(value):
+        return False
+    after = match.string[match.end():match.end() + 4].lstrip()[:1]
+    listed = raw[-1:] in ",)}" or after in (",", ")", "}")
+    spaced = re.search(r"\s=\s*$", match.group(1) or "") is not None
+    shaped = "_" in value or "." in value or re.search(r"[a-z][A-Z]", value) is not None
+    same = (re.sub(r"[^a-z]", "", value.lower())
+            == re.sub(r"[^a-z]", "", key.lower().rsplit(".", 1)[-1]))
+    if listed:
+        return True
+    if same and value.lower() not in _DEFAULT_CREDENTIALS:
+        return True
+    return shaped and spaced
+
+
 def _value_is_the_key_itself(key_part, value):
     """Whether the value is just the key's own name — a label, never a credential.
 
@@ -3029,6 +3078,7 @@ def scrub(text, windowed=True, *, _unmask=True):
         or _is_documented_prose(m)
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         or _names_where_it_lives(m.group(2))
+        or _is_a_code_reference(m)
         # The tail is appended only when the whole value became a PLACEHOLDER. When
         # `_redact_literals_in` rewrites the value instead, what it returns already CONTAINS that
         # tail -- appending it again duplicated the bracket, which the same idempotence relation
