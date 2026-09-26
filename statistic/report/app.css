@@ -21,6 +21,18 @@
   --ink: #161924; --dim: #5f6879; --faint: #6a717d; --grey: #c6ccd8;
   --accent: #4f6eb5; --warm: #a65f2d; --good: #347e54;
 }
+/* 🐛 [2026-09-26] (R158, 2026-09-26) Printing, or saving as PDF, drops background colours by
+   default, so the dark theme -- the default -- came out as #e8ebf1 text on white paper, about
+   1.2:1. Paper is light whatever the screen was: print always takes the light theme's tokens,
+   which already meet 4.5:1 on white (R141). */
+@media print {
+  :root, :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff; --panel: #ffffff; --panel2: #ffffff; --line: #d0d5de;
+    --ink: #161924; --dim: #5f6879; --faint: #6a717d; --grey: #c6ccd8;
+    --accent: #4f6eb5; --warm: #a65f2d; --good: #347e54;
+  }
+}
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);

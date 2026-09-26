@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A printed or PDF-saved dashboard is readable.** Printing drops background colours, so the
+  default dark theme came out as pale text on white paper (1.2:1). Print now always uses the
+  light theme's colours, every one of them at least 4.5:1 on white.
+
 - **No home directory is no longer a crash.** In a container running as an arbitrary user, with no
   `HOME` and no passwd entry, the boundary check, the session hand-off, `chamnan-doctor` and
   `chamnan-setup` each raised on looking up the home directory. They now carry on without it.
