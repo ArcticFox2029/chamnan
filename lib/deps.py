@@ -46,7 +46,7 @@ MAX_COMMITS_REPORTED = 3
 _PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:[<>=!~\[;@(]|$)")
 _GO_NAME = re.compile(r"^\s*(?:require\s+)?([a-z0-9][\w./-]*)\s+v\d")
 _GEM_NAME = re.compile(r"""^\s*gem\s+["']([^"']+)["']""")
-_TOML_KEY = re.compile(r"""^\s*["']?([A-Za-z0-9][A-Za-z0-9._-]*)["']?\s*=\s*(.*)$""")
+_TOML_LINE = re.compile(r"""^\s*["']?([A-Za-z0-9][A-Za-z0-9._-]*)["']?\s*=\s*(.*)$""")
 _STRING = re.compile(r"""["']([^"']+)["']""")
 _JSON_TABLES = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
                 "require", "require-dev")
@@ -82,7 +82,7 @@ def _toml_names(text):
         if line.startswith("["):
             table = line.strip("[]").strip().strip('"').lower()
             continue
-        m = _TOML_KEY.match(line)
+        m = _TOML_LINE.match(line)
         if not m:
             continue
         key, value = m.group(1).lower(), m.group(2).strip()

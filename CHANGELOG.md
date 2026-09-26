@@ -23,8 +23,8 @@ already reports the last released number while running newer code.
 
 - **The redactor no longer blanks out ordinary code beside a secret word.** A key containing
   `key`, `token` or `password` made the value after it look like a credential even when that value
-  was code: `idempotencyKey: idempotencyKey,`, `orderingKey: shipment,`,
-  `partition_key = shipment_id`, `json['access_token']`, `pushToken: string | null`. On the test
+  was code: an argument label repeating its own name, an object field naming another variable, a
+  lookup with a quoted key, a TypeScript type annotation. On the test
   corpus, 100 of the 304 removed values were code like this; 33 are now. Nothing it caught before
   is missed: the recall report is identical line for line, and an unquoted value in a `.env` line,
   in an INI line or with a digit in it is still removed.

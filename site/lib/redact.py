@@ -1795,6 +1795,7 @@ _CODE_WORDS = frozenset((
     "return", "true", "false", "null", "nil", "none", "undefined", "self", "this", "new", "await",
     "string", "number", "boolean", "bool", "any", "unknown", "void", "never", "object",
     "int", "str", "float", "bytes", "optional"))
+_EXPRESSION_KEYWORDS = frozenset(("return", "await", "new"))
 _SUBSCRIPT_REF = re.compile(r"""^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\[['"][\w.-]+['"]\]!?$""")
 _CODE_NAME = re.compile(r"^[A-Za-z_$][A-Za-z_$]*(?:\.[A-Za-z_$][A-Za-z_$]*)*$")
 
@@ -1818,24 +1819,49 @@ def _is_a_code_reference(match):
     if _SUBSCRIPT_REF.match(value.rstrip(")}")):
         return True
     value = value.rstrip(")}]")
-    if value.lower() in _CODE_WORDS:
+    after = match.string[match.end():match.end() + 4].lstrip()[:1]
+    # A keyword that opens an expression (`case .issueToken: return value`) is code whatever follows
+    # it. Any other code word has to END the value: `password: unknown ask the platform team` is
+    # prose whose first word happens to be a TypeScript type, and the words after it give it away.
+    if value.lower() in _EXPRESSION_KEYWORDS:
+        return True
+    if value.lower() in _CODE_WORDS and (raw[-1:] in ",;)}]" or after in ("", ",", ";", ")", "}",
+                                                                           "]", "|", "=", "?", ">")):
         return True
     written = re.sub(r"^['\"]+|['\"\s:=]+$", "", _full_key_at(match).strip())
     key = written.lower()           # `_bare_key` lowercases, and the case is the whole point below
     letters = re.sub(r"[^A-Za-z]", "", written)
     if not letters or letters.isupper() or not _CODE_NAME.match(value):
         return False
-    after = match.string[match.end():match.end() + 4].lstrip()[:1]
-    listed = raw[-1:] in ",)}" or after in (",", ")", "}")
     spaced = re.search(r"\s=\s*$", match.group(1) or "") is not None
     shaped = "_" in value or "." in value or re.search(r"[a-z][A-Z]", value) is not None
     same = (re.sub(r"[^a-z]", "", value.lower())
             == re.sub(r"[^a-z]", "", key.lower().rsplit(".", 1)[-1]))
+    listed = raw[-1:] in ",)}" or after in (",", ")", "}")
+    # Inside `{ … }` a trailing comma is an object field, and a plain word there is a value like any
+    # other: `{"password": secretvaluehere, "x": 1}`. Only a parameter list makes a bare word a name.
+    if listed and not shaped and not same and _nearest_opener(match.string, match.start()) == "{":
+        listed = False
     if listed:
         return True
     if same and value.lower() not in _DEFAULT_CREDENTIALS:
         return True
     return shaped and spaced
+
+
+def _nearest_opener(text, at):
+    """The innermost bracket still open at `at` on its line -- `(`, `[`, `{` -- or '' when none is."""
+    depth = {")": 0, "]": 0, "}": 0}
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    for ch in reversed(text[text.rfind("\n", 0, at) + 1:at]):
+        if ch in depth:
+            depth[ch] += 1
+        elif ch in pairs:
+            if depth[pairs[ch]]:
+                depth[pairs[ch]] -= 1
+            else:
+                return ch
+    return ""
 
 
 def _value_is_the_key_itself(key_part, value):
