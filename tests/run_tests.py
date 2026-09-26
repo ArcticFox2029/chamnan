@@ -22130,15 +22130,18 @@ check("...and one record stays far smaller than the block it describes",
 
 _bl = Path(tempfile.mkdtemp(prefix="chamnan-blocklog-")) / "r"
 (_bl / ".chamnan").mkdir(parents=True)
-for _i in range(_blocklog.KEEP + 25):
+# 🐛 [2026-09-26] (R59, 2026-09-26) append_jsonl now appends and trims only a quarter past KEEP, so
+# the bound is KEEP * 1.25 between trims, not KEEP exactly; enough records are written to force a trim.
+_bl_n = _blocklog.KEEP + _blocklog.KEEP // 4 + 25
+for _i in range(_bl_n):
     _blocklog.record(_bl, f"### S\n[repo:x]\nx{_i}\n[/repo:x]\n", ceiling=9000,
                      when="2026-09-07T00:00:00")
 _bl_file = _bl / ".chamnan" / _blocklog.LOG
 _bl_lines = _bl_file.read_text(encoding="utf-8").splitlines()
 check("THE LOG IS BOUNDED BY RECORD COUNT AND CANNOT GROW WITHOUT LIMIT",
-      len(_bl_lines) == _blocklog.KEEP)
+      _blocklog.KEEP <= len(_bl_lines) <= _blocklog.KEEP + _blocklog.KEEP // 4, saw=len(_bl_lines))
 check("...and the newest record is the one kept, not the oldest",
-      f'x{_blocklog.KEEP + 24}' in _bl_lines[-1] or _blocklog.trend(_bl, 1))
+      f'x{_bl_n - 1}' in _bl_lines[-1] or _blocklog.trend(_bl, 1))
 # Telemetry that can break a session is worse than none.
 # A path that cannot be created on EITHER platform. `/nonexistent-…` is not that: on Windows it
 # resolves against the current drive and `mkdir(parents=True)` happily succeeds, so the record was
