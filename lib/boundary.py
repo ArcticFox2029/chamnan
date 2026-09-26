@@ -65,8 +65,14 @@ def _scratch_roots():
         v = os.environ.get(var)
         if v:
             out.append(pathlib.Path(v))
-    out += [pathlib.Path("/tmp"), pathlib.Path("/private/tmp"), pathlib.Path("/var/folders"),
-            pathlib.Path.home() / ".claude"]
+    out += [pathlib.Path("/tmp"), pathlib.Path("/private/tmp"), pathlib.Path("/var/folders")]
+    # 🐛 [2026-09-26] (R103) `Path.home()` raises when neither $HOME nor a passwd entry resolves
+    # -- a container running as an arbitrary uid -- and this ran unguarded on every boundary check,
+    # the case `host.py` had already been fixed for. No home means no `~/.claude` to exempt.
+    try:
+        out.append(pathlib.Path.home() / ".claude")
+    except (RuntimeError, OSError, KeyError):
+        pass
     return out
 
 

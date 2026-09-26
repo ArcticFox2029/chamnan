@@ -65,7 +65,10 @@ def _git(root, *args):
 
 def which_plugin(lines):
     """Which checkout each host's settings point at, and what version it is."""
-    homes = [Path.home() / ".claude"]
+    try:
+        homes = [Path.home() / ".claude"]
+    except (RuntimeError, OSError, KeyError):   # no resolvable home: only CLAUDE_CONFIG_DIR is left
+        homes = []
     cfg = os.environ.get("CLAUDE_CONFIG_DIR")
     if cfg:
         homes.insert(0, Path(cfg))

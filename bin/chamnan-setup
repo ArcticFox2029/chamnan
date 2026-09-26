@@ -72,7 +72,11 @@ def host_dirs():
     a four-way skew that eleven releases of in-session notices did not.
     """
     seen, out = set(), []
-    for d in [Path.home() / ".claude"] + sorted((Path.home() / ".config").glob("claude*")):
+    try:
+        home = Path.home()
+    except (RuntimeError, OSError, KeyError):   # no $HOME and no passwd entry: nothing to walk
+        return out
+    for d in [home / ".claude"] + sorted((home / ".config").glob("claude*")):
         if d.is_dir() and d not in seen:
             seen.add(d)
             out.append(d)
@@ -134,7 +138,7 @@ def survey():
     for h in host_dirs():
         v, origin = installed_version(h)
         rows.append({
-            "host": str(h).replace(str(Path.home()), "~"),
+            "host": str(h).replace(str(h.parent.parent if h.parent.name == ".config" else h.parent), "~"),
             "path": str(h),
             "origin": origin,
             "version": v,

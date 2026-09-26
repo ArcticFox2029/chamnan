@@ -168,7 +168,11 @@ def project_dir(repo, config_dir=None):
     is lossy -- a folder whose own name contains a dash is indistinguishable from a separator -- so
     this builds the name and checks whether it exists rather than trying to parse one back.
     """
-    base = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    try:
+        # Guarded for the reason `boundary._scratch_roots` is: no resolvable home, no transcripts.
+        base = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    except (RuntimeError, OSError, KeyError):
+        return None
     try:
         encoded = str(Path(repo).resolve()).replace(os.sep, "-").replace("/", "-")
     except (OSError, ValueError):
