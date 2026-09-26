@@ -945,16 +945,33 @@ def append_jsonl(root, rel, row, keep):
         a legitimately different shape.
 
     Telemetry must never be the thing that breaks a session, so every failure returns False.
+
+    🐛 [2026-09-26] (R59, 2026-09-26) Every call parsed the whole file and rewrote all of it, and
+    the file-pointer hook calls this on every Read. Measured at the 2,000-record ceiling
+    `pointer.jsonl` and `long_reads.jsonl` carry: 19 ms and ~370 KB written per call, to add one
+    ~190-byte line -- the write amplification a published agent CLI was measured paying at 11 MB/s.
+    Now a call appends its line, and only one that finds the file a quarter past `keep` parses and
+    rewrites it down to `keep`. The file therefore holds up to 1.25 x `keep` between trims. A torn
+    tail (a writer killed mid-line) is closed with a newline first, so it costs that line and not
+    the next one too; it never parses, so the trim drops it like any other broken line.
     """
     try:
+        if read_only():
+            return False
         log = workspace(root) / rel
         log.parent.mkdir(parents=True, exist_ok=True)
         with exclusive(log) as held:
             if not held:
                 return False
+            raw = log.read_bytes() if log.is_file() else b""
+            if raw.count(b"\n") < keep + max(keep // 4, 1):
+                line = json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n"
+                with open(log, "ab") as fh:
+                    fh.write((b"\n" if raw and not raw.endswith(b"\n") else b"") + line.encode("utf-8"))
+                return True
             prior = []
-            if log.is_file():
-                for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            if raw:
+                for line in raw.decode("utf-8-sig", errors="replace").splitlines():
                     try:
                         one = json.loads(line)
                     except (json.JSONDecodeError, RecursionError):
