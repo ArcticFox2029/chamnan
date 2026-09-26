@@ -29,12 +29,15 @@ already reports the last released number while running newer code.
   dashboard's bar chart, which does need count order to draw tallest-first, now sorts its own copy
   before rendering.
 
-- **`chamnan-setup --apply` now actually updates the hosts it reports as behind.** It has reported
-  every host on the machine and what is stale since it was written, but `--apply` and `--dry-run`
-  were both read only to suppress a hint line — neither ever ran an update. `--dry-run` now prints
-  the exact `claude plugin update chamnan` command for each host behind (with `CLAUDE_CONFIG_DIR`
-  set for every host but the default one) and runs nothing; `--apply` runs them and exits non-zero
-  if any failed; `--host <dir>` restricts either to one host.
+- **`chamnan-setup --apply` and `--dry-run` now both print the update command for every host
+  behind, and neither runs it.** It has reported every host on the machine and what is stale since
+  it was written, but `--apply` and `--dry-run` were both read only to suppress a hint line —
+  neither ever printed or ran an update. An earlier same-day fix had `--apply` run `claude plugin
+  update chamnan` itself, which the README's own auditor row rules out: "nothing in the plugin ever
+  invokes" the `claude` CLI is a security claim, not a convenience one. So both modes print the
+  exact command for each host behind (with `CLAUDE_CONFIG_DIR` set for every host but the default
+  one) and run nothing; `--apply` adds one line saying chamnan does not run the claude CLI itself
+  and the command is the user's to run; `--host <dir>` restricts either to one host.
 
 - **An `Owner:` header no longer reaches the map as a summary.** `AUTHORSHIP_HEADER` stepped over
   `Author:`, `Maintainer:`, `Contact:` and similar headers so the real description below them was

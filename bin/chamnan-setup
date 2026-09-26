@@ -24,9 +24,9 @@ sees its own config directory and nothing else. This walks all of them.
 
     chamnan-setup                    report every host, its version, and what is stale
     chamnan-setup --json             the same, for the VS Code extension to render
-    chamnan-setup --apply            update the hosts that are behind
+    chamnan-setup --apply            print the update command for each host that is behind
     chamnan-setup --apply --host ~/.claude     just that one
-    chamnan-setup --dry-run          what --apply would write, and nothing else
+    chamnan-setup --dry-run          the same commands, without the "run them yourself" line
 
 **Three categories, and the third is not ours to touch.** Category 1 is the plugin code itself.
 Category 2 is what a version bump can invalidate — the adapter instruction files and the agent
@@ -39,8 +39,6 @@ Nothing here calls a model or reaches the network.
 import argparse
 import json
 import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -204,70 +202,38 @@ def stale_artefacts(root):
 def _is_default_host(host_path):
     """Whether `host_path` is the one `CLAUDE_CONFIG_DIR` names by NOT being set at all."""
     try:
-        return host_path.resolve() == (Path.home() / ".claude").resolve()
+        home = Path.home()
+    except (RuntimeError, OSError, KeyError):   # no $HOME and no passwd entry: treat as non-default
+        return False
+    try:
+        return host_path.resolve() == (home / ".claude").resolve()
     except OSError:
-        return host_path == Path.home() / ".claude"
+        return host_path == home / ".claude"
 
 
 def _update_command_str(host_path):
-    """The exact command line this host's update runs — what `--dry-run` prints verbatim."""
+    """The exact command line this host's update runs — what `--dry-run` AND `--apply` print
+    verbatim. Neither mode ever runs it: this package does not invoke the `claude` CLI itself (see
+    the README's auditor row), so printing the command and leaving it to the user IS the feature.
+    """
     if _is_default_host(host_path):
         return "claude plugin update chamnan"
     return f"CLAUDE_CONFIG_DIR={host_path} claude plugin update chamnan"
 
 
-def _update_env(host_path):
-    """The subprocess environment for one host's update.
-
-    `CLAUDE_CONFIG_DIR` is unset for the default host (`~/.claude`) and pointed at every other
-    one — that is how a single `claude` binary is told which of the several config directories on
-    this machine to act on. `HOME` is set explicitly rather than inherited, so this matches
-    `Path.home()` even when a caller has overridden only that, not the environment variable.
-    """
-    env = dict(os.environ)
-    env["HOME"] = str(Path.home())
-    if _is_default_host(host_path):
-        env.pop("CLAUDE_CONFIG_DIR", None)
-    else:
-        env["CLAUDE_CONFIG_DIR"] = str(host_path)
-    return env
-
-
 def apply_updates(behind, dry_run):
-    """Print (`--dry-run`) or run (`--apply`) `claude plugin update chamnan` for each host behind.
+    """Print `claude plugin update chamnan` for each host behind, and run nothing.
 
-    Returns 0 when every host succeeded (or this was a dry run), 1 otherwise. `claude` not being on
-    PATH is checked once, up front, for both modes — a dry run that printed commands built around a
-    binary that does not exist would be a false promise, not a preview.
+    Identical output for `--dry-run` and `--apply` — the only difference is the one extra line
+    `--apply` adds explaining that chamnan does not run the claude CLI itself. Printing always
+    succeeds, so this always returns 0; the "exit 1 while a host is behind" rule lives in `main`,
+    against `behind` before this is ever called.
     """
-    if shutil.which("claude") is None:
-        print("  `claude` is not on PATH -- cannot update any host")
-        return 1
-    failed = 0
     for r in behind:
-        host_path = Path(r["path"])
-        cmd_str = _update_command_str(host_path)
-        if dry_run:
-            print(f"  DRY RUN  {cmd_str}")
-            continue
-        try:
-            proc = subprocess.run(
-                ["claude", "plugin", "update", "chamnan"],
-                env=_update_env(host_path), stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, timeout=300)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            print(f"  FAILED   {cmd_str}   ({e})")
-            failed += 1
-            continue
-        if proc.returncode == 0:
-            print(f"  OK       {cmd_str}")
-        else:
-            print(f"  FAILED   {cmd_str}   (exit {proc.returncode})")
-            tail = proc.stderr.strip().splitlines()
-            if tail:
-                print(f"           {tail[-1]}")
-            failed += 1
-    return 1 if failed else 0
+        print(f"  {_update_command_str(Path(r['path']))}")
+    if not dry_run:
+        print("  chamnan does not run the claude CLI itself -- run the command(s) above yourself")
+    return 0
 
 
 def main(argv):
@@ -311,8 +277,8 @@ def main(argv):
         print("  every host is on the checkout's version")
         return 0
     if not (a.apply or a.dry_run):
-        print(f"  {len(behind)} host(s) behind — `chamnan-setup --apply` moves them, "
-              f"`--dry-run` shows what it would write")
+        print(f"  {len(behind)} host(s) behind — `chamnan-setup --apply` prints the update "
+              f"command for each, `--dry-run` shows the same without the closing line")
         return 1
 
     targets = behind
