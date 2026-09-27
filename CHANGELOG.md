@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-schedule --caffeinate` now says what it actually holds off.** Its help promised to
+  "hold the machine awake until it fires", but `caffeinate -i` prevents idle sleep only: closing the
+  lid or choosing Sleep still sleeps the Mac, and the run then fires late, on wake. The help now
+  says so, so nobody closes the lid trusting it.
+
 - **The lesson index's `by_file` no longer reorders itself on every routine recount.** It was
   sorted by count, so two files landing on the same count (common, since most files carry very
   few) broke ties by directory-walk order — which drifts session to session. A 574-line diff for

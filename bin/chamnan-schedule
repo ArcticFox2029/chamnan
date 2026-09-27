@@ -16,8 +16,9 @@ Options for `set`:
                       harness, a router, or any model with no CLI of its own
   --reset-json <p>    read `rate_limits.*.resets_at` or `rateLimits.*.resetsAt` from JSON
   --reset-window <n>  choose one named window instead of the earliest future reset
-  --caffeinate        macOS only: hold the machine awake until it fires. Opt-in, because
-                      keeping a laptop awake for hours is your decision and not a default.
+  --caffeinate        macOS only: keep the machine from idle-sleeping until it fires. Closing
+                      the lid or choosing Sleep still sleeps it, and the run then waits for
+                      wake. Opt-in, because keeping a laptop awake for hours is your decision.
 
 **A schedule, never an auto-renew.** Nothing here notices that a limit was hit, nothing decides on
 its own that work should resume, and nothing repeats unless you ask for a repeat. The owner's
