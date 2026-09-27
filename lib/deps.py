@@ -46,7 +46,11 @@ MAX_COMMITS_REPORTED = 3
 _PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:[<>=!~\[;@(]|$)")
 _GO_NAME = re.compile(r"^\s*(?:require\s+)?([a-z0-9][\w./-]*)\s+v\d")
 _GEM_NAME = re.compile(r"""^\s*gem\s+["']([^"']+)["']""")
-_TOML_LINE = re.compile(r"""^\s*["']?([A-Za-z0-9][A-Za-z0-9._-]*)["']?\s*=\s*(.*)$""")
+# Quote captured separately (group 1) rather than just made optional on both sides, so a reader can
+# tell a QUOTED dotted key (`"zope.interface" = ...`, one package whose real name has a dot) apart
+# from an UNQUOTED one (`serde.workspace = ...`, Cargo's inline-table shorthand, where the dot is
+# TOML structure and the package is only the first segment) -- see the R27 🐛 below.
+_TOML_LINE = re.compile(r"""^\s*(["']?)([A-Za-z0-9][A-Za-z0-9._-]*)["']?\s*=\s*(.*)$""")
 _STRING = re.compile(r"""["']([^"']+)["']""")
 _JSON_TABLES = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
                 "require", "require-dev")
@@ -124,6 +128,18 @@ def _toml_names(text):
     multi-line array whose first item was `"rich; extra == 'x]'"` returned only `{rich}`, losing
     `click` on the next line, because the `]` inside the marker closed the array early. Both cuts
     now walk the line tracking quote state and only act outside a string.
+
+    🐛 [2026-09-27] (R137 acc4, 2026-09-27) A dotted key inside a dependencies table (Cargo's
+    `serde.workspace = true`, `rand.version = "0.8"` inline-table shorthand) was added to `out`
+    whole -- `serde.workspace`, `rand.version` -- because nothing distinguished it from a genuinely
+    dotted package name written the quoted way (Poetry's `"zope.interface" = "^5"`). Measured with
+    `.chamnan/logs/deps_names_vs_tomllib.py` on `Work-Mode/chamnan-corpus/corpus/edge/gateway-agent/
+    Cargo.toml`: 6 names wrong. Consequence: `removals()` diffs name SETS between revisions, so a
+    member moving `serde = "1"` to `serde.workspace = true` read as `serde` REMOVED and
+    `serde.workspace` added -- a routine Cargo workspace refactor reported as a dependency drop.
+    Fixed by keeping the key's own quote character (see `_TOML_LINE` above): an UNQUOTED dotted key
+    takes only its first segment as the package name; a QUOTED one stays whole, because TOML only
+    lets a literal dot survive unescaped inside quotes.
     """
     out, table, in_array = set(), "", False
     for raw in text.splitlines():
@@ -140,13 +156,14 @@ def _toml_names(text):
         m = _TOML_LINE.match(line)
         if not m:
             continue
-        key, value = m.group(1).lower(), m.group(2).strip()
+        quoted, key, value = m.group(1), m.group(2).lower(), m.group(3).strip()
+        name = key.split(".", 1)[0] if not quoted and "." in key else key
         deps_table = table.endswith("dependencies") or table in ("packages", "dev-packages")
         if value.startswith("[") and (deps_table or (table == "project" and key == "dependencies")):
             out.update(n for n in map(_requirement, _STRING.findall(value)) if n)
             in_array = _array_still_open(value)
-        elif deps_table and not (key == "python" and "poetry" in table):
-            out.add(key)
+        elif deps_table and not (name == "python" and "poetry" in table):
+            out.add(name)
     return out
 
 
