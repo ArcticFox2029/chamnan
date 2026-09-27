@@ -50125,13 +50125,54 @@ with _ho_big.open("w", encoding="utf-8") as _fh:
     _fh.write(('{"timestamp": "2020-01-01T00:00:00.000Z", "pad": "' + "x" * 500 + '"}\n')
               * 4000)
     _fh.write('{"timestamp": "2026-09-22T18:00:00.000Z"}\n')
-_ho_t0 = time.time()
-_ho_read = _ho.last_response_at(_ho_big)
-_ho_ms = (time.time() - _ho_t0) * 1000
+# 🐛 [2026-09-27] (self-measured) This asserted a wall-clock bound, `< 250 ms`, and a Windows
+# runner took 504 ms on the release-1.33 check run -- the first open of a freshly written 2 MB file
+# is scanned there, whatever the reader does. What the check means is "reads the tail, not the
+# file", so it now counts the bytes the function actually read.
+_ho_bytes = []
+_ho_path_open = Path.open
+
+
+def _ho_counting_open(self, *args, **kwargs):
+    _real = _ho_path_open(self, *args, **kwargs)
+
+    class _Counted:
+        def __enter__(self):
+            _real.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return _real.__exit__(*exc)
+
+        def seek(self, *a):
+            return _real.seek(*a)
+
+        def readline(self, *a):
+            data = _real.readline(*a)
+            _ho_bytes.append(len(data))
+            return data
+
+        def read(self, *a):
+            data = _real.read(*a)
+            _ho_bytes.append(len(data))
+            return data
+
+    return _Counted()
+
+
+Path.open = _ho_counting_open
+try:
+    _ho_t0 = time.time()
+    _ho_read = _ho.last_response_at(_ho_big)
+    _ho_ms = (time.time() - _ho_t0) * 1000
+finally:
+    Path.open = _ho_path_open
+_ho_size = _ho_big.stat().st_size
 check("the newest timestamp is read from a large transcript",
       _ho_read is not None and _ho_read.year == 2026 and _ho_read.month == 9,
       saw=f"read {_ho_read!r}")
-check("...without reading the whole file", _ho_ms < 250, saw=f"{_ho_ms:.0f} ms")
+check("...without reading the whole file", 0 < sum(_ho_bytes) <= _ho._TAIL_BYTES < _ho_size // 2,
+      saw=f"read {sum(_ho_bytes):,} of {_ho_size:,} bytes in {_ho_ms:.0f} ms")
 # A partial last line is what a transcript being written right now looks like.
 with _ho_big.open("a", encoding="utf-8") as _fh:
     _fh.write('{"timestamp": "2026-09-2')
