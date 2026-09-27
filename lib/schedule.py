@@ -88,8 +88,23 @@ def parse_when(text, now=None):
             hour = 0
         if hour > 23 or minute > 59:
             return None
-        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return target + timedelta(days=1) if target <= now else target
+        # 🐛 [2026-09-27] (R145 acc4, 2026-09-27) `now.replace(hour=, minute=)` kept `now`'s own
+        # FIXED offset (from `_aware`'s `.astimezone()`), so the wall-clock target carried whichever
+        # UTC offset was in force at the moment `parse_when` was CALLED, not the one in force on the
+        # date it fires. Measured with TZ=America/Los_Angeles: at 2026-03-07 23:00, "9:00" fired at
+        # 09:00-08:00 = 10:00 local after spring-forward; at 2026-10-31 23:00, "9:00" fired at
+        # 08:00 local, an hour early after fall-back. Durations are elapsed time from `now` and were
+        # already correct -- left alone below. Fixed by building the target as a NAIVE local wall
+        # time on the right date first, then calling `.astimezone()` on THAT naive value: Python
+        # resolves a naive datetime's offset against the system zone at ITS OWN date, not `now`'s.
+        # A nonexistent local time (02:30 on the spring-forward day) is not rejected -- `.astimezone()`
+        # folds it forward to the next valid instant (measured: 02:30 -> 03:30-07:00 on this machine).
+        naive_now = now.replace(tzinfo=None)
+        candidate = naive_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        target = candidate.astimezone()
+        if target <= now:
+            target = (candidate + timedelta(days=1)).astimezone()
+        return target
     m = _DURATION.match(text)
     if not m or not any(m.groups()):
         return None
