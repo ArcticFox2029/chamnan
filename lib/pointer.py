@@ -376,7 +376,7 @@ def mark_pointed(wsdir, session_id, rel_path):
         except Exception:
             d = None
         if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):
-            # 🐛 [2026-09-27] (R118 acc2, 2026-09-27) Text that does not parse, or parses to the
+            # 🐛 [2026-09-27] (R118 acc5, 2026-09-27) Text that does not parse, or parses to the
             # wrong shape, used to fall straight into a fresh `{"session", "paths": []}` and lose
             # every path this session had already been shown — the same "parse fails, write fresh
             # over it, nothing kept" shape `schedule._rewrite` had. Keep a copy before it happens;

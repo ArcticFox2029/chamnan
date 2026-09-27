@@ -584,7 +584,7 @@ def record_written(path, version=None):
             except (ValueError, RecursionError):
                 data = None
             if not isinstance(data, dict):
-                # 🐛 [2026-09-27] (R118 acc2, 2026-09-27) Text that failed to parse, or parsed to
+                # 🐛 [2026-09-27] (R118 acc5, 2026-09-27) Text that failed to parse, or parsed to
                 # something other than an object, fell straight through to `data = {}`, and the
                 # write below then put a ledger holding only THIS one entry on disk — every other
                 # file's write-provenance record gone, silently. Same shape as `schedule._rewrite`'s

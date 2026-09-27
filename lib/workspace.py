@@ -1717,7 +1717,7 @@ def preserve_before_rewrite(path, text, why):
     """Keep a corrupt store's bytes before a `rewrite_shared` mutate replaces them with fresh
     content. Returns where the copy went, or "" when there was nothing to keep or the copy failed.
 
-    🐛 [2026-09-27] (R118 acc2, 2026-09-27) `_quarantine` above is for the READ side —
+    🐛 [2026-09-27] (R118 acc5, 2026-09-27) `_quarantine` above is for the READ side —
     `load_json(..., quarantine=True)` moves a store aside the moment it fails to parse. The REWRITE
     side had no equivalent: `schedule._rewrite` calls `ws.rewrite_shared(p, lambda text:
     _dump(change(_rows_from(text))))`, and `_rows_from` returns `[]` for text that is not valid

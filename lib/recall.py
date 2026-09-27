@@ -107,7 +107,7 @@ def terms(text):
     return out
 
 
-# 🎯 [2026-09-27] (R91 acc4, 2026-09-27) A crude suffix strip, not a real stemmer -- exactly
+# 🎯 [2026-09-27] (R91 acc2, 2026-09-27) A crude suffix strip, not a real stemmer -- exactly
 # enough to group `boundary`/`boundaries` and `redact`/`redactor`/`redaction`/`redacted` without a
 # dependency. Words ending in "ss" are excluded (a plural-looking "ss" strip would mangle short
 # words like "process"), and the result must stay at least 4 characters so it cannot collapse
@@ -509,7 +509,7 @@ def query(index, words, limit=6):
             df = sum(1 for t, ti, b in norm_fields if p in t or p in ti or p in b)
             pidf[p] = math.log(1 + (n_entries - df + 0.5) / (df + 0.5))
 
-    # 🎯 [2026-09-27] (R91 acc4, 2026-09-27) An exact word match found only the entries carrying
+    # 🎯 [2026-09-27] (R91 acc2, 2026-09-27) An exact word match found only the entries carrying
     # that literal form -- `boundaries` never found the 11 entries that only say `boundary`, and the
     # redact/redactor/redaction/redacted family spread 24 entries over four forms nobody's query
     # covered at once. Every OTHER indexed form sharing a wanted word's stem is now scored too, at

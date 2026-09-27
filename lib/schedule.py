@@ -569,7 +569,7 @@ def _rewrite(root, change):
     of two writers wins, and a lock without it still lets a crash leave a torn file. Two shells
     scheduling at once is the ordinary case here, not the exotic one.
 
-    🐛 [2026-09-27] (R118 acc2, 2026-09-27) `_rows_from` returns `[]` for text that is not valid
+    🐛 [2026-09-27] (R118 acc5, 2026-09-27) `_rows_from` returns `[]` for text that is not valid
     JSON or has the wrong shape — the same degraded answer it gives an EMPTY file, on purpose, so
     `add()`/`update()` can still work from nothing. But that means a CORRUPT `scheduled.json` reads
     as an empty schedule too, and the very next `add()` writes a fresh file holding only the new
