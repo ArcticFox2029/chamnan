@@ -4040,6 +4040,26 @@ def for_a_terminal(text):
     return text.translate(_TERMINAL_SAFE)
 
 
+# Character-name prefixes Unicode gives to what is, in ordinary use, one writing system.
+# Japanese text moves between Han (kanji), Hiragana and Katakana — full- and half-width, plus the
+# prolonged sound mark U+30FC — inside a single word; Korean text moves between Hangul and Han the
+# same way. `unicodedata.name()` gives each of those a different first word (CJK, HIRAGANA,
+# KATAKANA, HANGUL, and HALFWIDTH for the half-width Katakana/Hangul block), so without this they
+# read as mixed-script on ordinary Japanese or Korean text.
+# 🐛 [2026-09-27] (R209 acc5, 2026-09-27)
+_CJK_HANGUL_SCRIPT_GROUP = "CJK/HANGUL"
+_CJK_HANGUL_NAME_PREFIXES = ("CJK", "HIRAGANA", "KATAKANA", "HALFWIDTH", "HANGUL")
+
+
+def _script_group(name):
+    """Canonicalise a `unicodedata.name()` first word for the Japanese/Korean script merge above.
+    Every other prefix (LATIN, CYRILLIC, THAI, ...) passes through unchanged."""
+    prefix = name.split()[0]
+    if prefix.startswith(_CJK_HANGUL_NAME_PREFIXES):
+        return _CJK_HANGUL_SCRIPT_GROUP
+    return prefix
+
+
 def mixed_script_segment(text):
     """The first path segment mixing two scripts, or None. Detection only — nothing is rewritten.
 
@@ -4061,7 +4081,7 @@ def mixed_script_segment(text):
                 continue
             name = unicodedata.name(ch, "")
             if name:
-                scripts.add(name.split()[0])
+                scripts.add(_script_group(name))
         if len(scripts) > 1:
             return segment
     return None
