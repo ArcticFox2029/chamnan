@@ -25,343 +25,77 @@ _Nothing yet._
 
 ## What's new in 1.33.0
 
-_Finding what you stored, and saying only what is true: better search over your own notes, and quieter, more honest output around it._
+_Finding what you stored, and saying only what is true._
 
-This release makes chamnan's existing capabilities more accurate and more dependable in real use
-rather than adding new ones. Most of it came from testing outside research against chamnan's own
-behaviour, and from using it every day on real repositories.
+### Fixed and improved
 
-| | before | after |
-|---|---|---|
-| Thai search, right entry ranked first | 85.3% | 95.1% |
-| searching `boundaries` finds the entries that say `boundary` | 3 of 14 | 14 of 14 |
-| dependency names read correctly from real TOML manifests | 17 of 35 | 34 of 35 |
-| sessions told "the last block was cut" when it was not | every one since the first real cut | none |
-| tokens a macOS-made PDF cost when peeked at, as unreadable glyph codes | ~270 | one honest line |
-| `Co-Authored-By` trailers garbled as a secret word | 910 of 17,808 commands | 0 |
-
-Search got better at finding what you wrote, in Thai and in English, and several messages that
-were wrong stopped appearing. None of it asks anything of you.
-
-- **Your notes are easier to find.** `chamnan-recall` now weights a rare word or Thai phrase above a
-  common one, and matches other forms of an English word (`boundary` / `boundaries`,
-  `redact` / `redactor` / `redaction`) at half weight so an exact match still ranks first.
-- **Deleting a note removes it from search.** A removed note used to stay in results, with no
-  warning, until the index was rebuilt.
-- **Stores that go bad keep their contents.** A scheduled-resume list, a pointer record or the write
-  ledger that was corrupt on disk used to be overwritten by the next write; the corrupt copy is now
-  kept beside it and recorded.
-- **Appointments keep their hour across a daylight-saving change.** A `chamnan-schedule` time like
-  `9:00` set the night before a clock change fired an hour early or late.
-- **Settings from the environment are visible.** `chamnan-report --full` and `chamnan-doctor` now
-  name any `CHAMNAN_*` variable in force, and say when one is ignored.
-
-### What users should notice
-
-Mostly nothing on the happy path. If you search your notes in Thai, or with a plural or a verb form
-of a word you stored, you should see the right entry sooner. If you exported `CHAMNAN_OUTPUT_CEILING`
-once and forgot, `chamnan-doctor` now tells you. The line at the top of every session that said the
-previous block had been cut goes away; it was false.
-
-### Under the hood
-
-#### Context & knowledge — what reaches the session, and what search finds
-
-- **A rare Thai phrase now outranks a common one in `chamnan-recall`.** English words were already weighted by how rare they are; a Thai or other non-Latin phrase, matched by substring, added the same flat weight whether it appeared in two notes or two hundred. Phrases are now weighted the same way. Measured on this workspace's own index with known-item trials of 4-7 character Thai substrings: the right entry first 85.3% → 95.1%, MRR 0.921 → 0.971; with whole Thai runs, 0.853 → 0.955.
-- **Other forms of an English word are found.** `boundaries` found 3 of the 14 entries that carry `boundary` or `boundaries`; `redact` found 10 of the 24 spread over `redact`, `redactor`, `redaction` and `redacted`. A small suffix rule now matches the other indexed forms of a query word at half weight, so an exact match still ranks first. Measured: queries worded in a different form than the note, MRR 0.414 → 0.535; queries using the note's exact words, 0.651 → 0.638, an accepted cost.
-- **A deleted note leaves search at once.** The index's staleness check counted only files newer than the index, so a removed note was never counted and `chamnan-recall` kept printing it, with no notice. A hit whose file is gone is now dropped and counted in the "changed or removed — reindex" line.
-- **Peeking at a font-encoded PDF no longer returns noise as its text.** A PDF saved by macOS writes its text as glyph codes that only the font's own map can translate. `chamnan-peek` decoded them anyway and handed the session about 270 tokens of symbols labelled "extracted text". It now recognises the pattern (87.7% single-character strings on the real sample, against 11.1% for the sparsest real text) and says in one line that the page is font-encoded and needs a PDF text tool.
-- **The session no longer opens with a false "the last block was cut".** The warning's own wording contained the words the detector searched for, so after one genuine cut every later block recorded itself as cut and the warning fired again: 476 of 476 records since the first. Only the hook's own exception sentence counts now.
-- **Thai searches containing ำ (ทำ, จำ, คำ, น้ำ) found nothing in `chamnan-recall`.** A query
-  phrase was NFKC-normalised before matching, but the entry text it was matched against was not,
-  and NFKC decomposes SARA AM (ำ) into two other characters — so a phrase holding ำ never matched
-  the same character stored whole. `_hits` and `why_line` now normalise the field text at compare
-  time too; stored indexes are unchanged.
-- **`chamnan-recall` no longer lets a common word outrank a rare one.** Every query word added the
-  same weight to a score whether it appeared in 3 stored entries or 800, so a rare exact hit could
-  lose to a common word's sheer bulk in an unrelated document. Ranking now weights each word by its
-  inverse document frequency. Measured on this workspace's own 1,319-entry index (219 known-item
-  trials): MRR 0.578 -> 0.642, top1 39.7% -> 46.1%, top3 72.1% -> 79.0%.
-- **An `Owner:` header no longer reaches the map as a summary.** `AUTHORSHIP_HEADER` stepped over
-  `Author:`, `Maintainer:`, `Contact:` and similar headers so the real description below them was
-  used instead, but not `Owner:` or `Point of contact:` — both real conventions, and both carry a
-  name and an email the same way. `Owner: Jane Roe <jane@example.com>, ext 4417.` was published
-  into `MAP.md` verbatim; it is now recognised and stepped over like the others.
-- **A non-UTF-8 source file's summary is no longer injected into the map as mojibake.** Every file
-  is decoded with `errors="replace"`, so a real but undeclared encoding — Shift-JIS, say — turned
-  the wrong bytes into U+FFFD, and that replacement text was written straight into `MAP.md` as the
-  file's one-line description. The description is now dropped whenever it carries U+FFFD; the
-  line count and symbol counts are unaffected, and no encoding is guessed.
-- **More environment variables are found.** The map's environment section now also lists
-  variables read with `getenv("X")` after `from os import getenv`, and with
-  `os.environ.setdefault` or `os.environ.pop`. A plain `environ["X"]` is still left out on
-  purpose: in web apps that name is usually the request's data, not the environment.
-- **Source files saved as UTF-16 are indexed.** The map treated any file with a zero byte near its
-  start as binary before looking for a byte-order mark, so a UTF-16 file (which has a zero byte
-  beside every ASCII character) was listed as "binary despite a source suffix" and left out.
-  Windows PowerShell 5.1 saves `.ps1` files this way by default. A file with a UTF-16 or UTF-32
-  mark is now decoded and indexed; a zero byte with no mark still means binary.
-- **An agent putting back a package your repository removed is told so.** When an edit adds a
-  package to `requirements.txt`, `pyproject.toml`, `package.json` or another dependency file, and
-  that file listed the package before and dropped it, the agent is told which commit removed it
-  and its message, before the edit runs. The README described this, but nothing had been calling
-  the part that reads the history. Two defects in that part are fixed with it: it read every
-  revision from before a move of the file at today's path, so it found nothing older than the
-  move; and it counted `package.json`'s `name` and `version`, `setup.py`'s `install_requires` and
-  every TOML key as packages, while missing PEP 621 `dependencies = [...]`.
-
-#### Reliability — failures that used to be silent
-
-- **A store that is already corrupt keeps its contents.** When `state/scheduled.json`, a session's pointer record or the write ledger could not be parsed, the next write replaced it with only the new entry, and everything else in it was gone without a trace. The unreadable text is now copied beside the file as `<name>.corrupt.<time>` and recorded, before the new content is written. The same shape was checked across every shared-file writer; the rest append text and cannot lose it this way.
-- **A wall-clock appointment keeps its hour across a daylight-saving change.** `chamnan-schedule 9:00` set the night before the clocks moved fired at 10:00 in spring and 08:00 in autumn, because the target took the offset in force when it was set. It now takes the offset in force on the day it fires. Durations such as `12h` were already exact and are unchanged.
-- **A setting made through the environment is shown.** `CHAMNAN_OUTPUT_CEILING`, `CHAMNAN_READ_ONLY`, `CHAMNAN_CONTEXT_PROFILE` and `CHAMNAN_CONTEXT_AGENT` override `.chamnan/config.json`, and nothing said so: a ceiling exported once and forgotten halved every session's block with no visible cause. `chamnan-report --full` and `chamnan-doctor` now list each one in force, its value, what it overrides, and whether an out-of-range value is being ignored.
-- **No home directory is no longer a crash.** In a container running as an arbitrary user, with no
-  `HOME` and no passwd entry, the boundary check, the session hand-off, `chamnan-doctor` and
-  `chamnan-setup` each raised on looking up the home directory. They now carry on without it.
-- **A `.chamnan` or `.git` in your home folder no longer claims every folder under it.** chamnan
-  finds a project by walking up from where it starts. It walked past the home folder, so a stray
-  `~/.chamnan`, or dotfiles kept in git at `~`, turned any folder without its own `.git` into part
-  of one enormous project: a session there wrote its logs into home, and `chamnan-map` began
-  indexing the entire home directory. The walk now stops before the home folder. Starting in home
-  on purpose still works.
-- **A misspelt setting is named instead of deleted.** chamnan removed any key in `config.json`
-  that it did not know, which is right for an old setting and wrong for a typo. With
-  `"log_retention_dayz": 30`, the key disappeared on the next session and the 7-day default kept
-  deleting logs, with no message. A key that is close to a real one is now kept as you wrote it,
-  and the session start says `log_retention_dayz` — did you mean `log_retention_days`?
-- **Subagent costs are recorded on older Claude Code too.** Claude Code 2.1.63 renamed the tool
-  that starts a subagent from `Task` to `Agent`. chamnan listened only for `Agent`, so on an older
-  Claude Code it never recorded what a subagent cost or which model it ran on. It now listens for
-  both names.
-- **One unreadable log line no longer stops the dashboard from updating.** A line that was valid
-  JSON but not a record, or a count field holding text, stopped the dashboard's build. It runs
-  quietly at the end of each session, so the page simply stayed at its last good build. Such
-  lines are now skipped, the way the logs' own writer already drops them.
-- **A shallow clone is no longer told its map was "built 0 seconds behind".** CI checkouts are
-  shallow by default, so the commit the map was built from is often not there. The session then
-  fell back to comparing file times, which are all equal in a fresh checkout, and reported a
-  map 26 commits old as current to the second. It now says the map was built from a commit this
-  shallow clone does not have.
-- **After an upgrade, the file ranking is recounted by the new code.** The session start ranks files
-  by how often they change, and keeps that count between sessions. The stored count was matched
-  to the commit alone, so after an upgrade that changed how changes are counted, the old count
-  was reused until enough new commits had passed. It is now also matched to the code that
-  produced it.
-- **A hook that crashes is no longer invisible.** chamnan's hooks are wrapped so that a crash
-  never stops your session, and Claude Code sends a quiet hook's error output only to its debug
-  log, so a hook could fail on every call without anyone knowing. A crash is now recorded (the hook,
-  the error type and the line, never the error's text, which can carry your paths or values). The
-  line at the top of each session says how many crashed today, and `chamnan-doctor` lists them.
-- **A `sed` script with two expressions no longer sets off the "outside this checkout" warning.**
-  A `;` inside the quoted script was read as the end of the command, so part of the script looked
-  like a path, and an edit inside the repository was reported in red as a write outside it. Quoted
-  text is now skipped before the command is split. A write that really goes outside is still
-  reported.
-
-#### Security — secrets and text that is not a secret
-
-- **The redactor no longer treats "author" as the secret word "auth".** `author`, `authors`,
-  `authored`, `authority` and `AUTHOR_EMAIL` were all one letter short of the word boundary the
-  exclusion needed, so a commit's own `Co-Authored-By:` trailer and any `GIT_AUTHOR_EMAIL=...` came
-  back with "auth" blotted out — measured at 910 of 17,808 Bash commands in one account's
-  transcripts, most of them commit trailers. `Authorization: Bearer ...` and `auth_token = ...`
-  still read as credentials.
-- **The redactor no longer blanks out ordinary code beside a secret word.** A key containing
-  `key`, `token` or `password` made the value after it look like a credential even when that value
-  was code: an argument label repeating its own name, an object field naming another variable, a
-  lookup with a quoted key, a TypeScript type annotation. On the test
-  corpus, 100 of the 304 removed values were code like this; 33 are now. Nothing it caught before
-  is missed: the recall report is identical line for line, and an unquoted value in a `.env` line,
-  in an INI line or with a digit in it is still removed.
-- **The `.env` warning reads `.gitignore` the way git does outside a repository.** When git
-  cannot answer, chamnan reads the `.gitignore` files itself. It knew that git cannot bring back a
-  file inside an ignored folder only when the rule ended in `/`. With `build` and then
-  `!build/keep.txt`, chamnan said the file was not ignored, but git keeps it ignored. Any rule that
-  matches a folder above the file now counts.
-
-#### Performance
-
-- **Logging a Read no longer rewrites the whole log.** The file-pointer hook's record of each
-  Read was written by parsing and rewriting the entire log, which at its 2,000-record bound was
-  19 ms and about 370 KB written per call. It now appends one line and trims only when the log is a
-  quarter past its bound: 1.3 ms per call. The scratch-script log changed the same way.
-  The same hook also stopped importing three modules a Read never uses, which took its median
-  from 228-243 ms to 214-221 ms across three interleaved rounds.
-
-#### Dependencies and manifests
-
-- **A Cargo crate moved to workspace inheritance is not reported as removed.** The manifest reader took `serde.workspace = true` as a package named `serde.workspace`, so moving `serde = "1"` to the inherited form read as serde being dropped. Measured against `tomllib` on the TOML manifests at hand: 17 of 35 declared names read correctly before, 34 of 35 after (the remaining one is a build-system requirement the reader does not count as a dependency, by design).
-- **A dependency name in `pyproject.toml` is no longer lost when the requirement carries a URL
-  fragment or a `]` inside an environment marker.** The TOML reader cut a line at its first `#` and
-  closed an array at its first `]`, wherever either character sat — including inside a quoted
-  string. `dependencies = ["pkg @ git+https://example.org/r.git#egg=pkg", "httpx>=0.27"]` returned
-  no names at all, and a multi-line array whose first entry was `"rich; extra == 'x]'"` lost every
-  entry after it. Both cuts now track quote state and only act outside a string.
-
-#### Cross-platform and setup
-
-- **`chamnan-setup --apply` and `--dry-run` now both print the update command for every host
-  behind, and neither runs it.** It has reported every host on the machine and what is stale since
-  it was written, but `--apply` and `--dry-run` were both read only to suppress a hint line —
-  neither ever printed or ran an update. An earlier same-day fix had `--apply` run `claude plugin
-  update chamnan` itself, which the README's own auditor row rules out: "nothing in the plugin ever
-  invokes" the `claude` CLI is a security claim, not a convenience one. So both modes print the
-  exact command for each host behind (with `CLAUDE_CONFIG_DIR` set for every host but the default
-  one) and run nothing; `--apply` adds one line saying chamnan does not run the claude CLI itself
-  and the command is the user's to run; `--host <dir>` restricts either to one host.
-- **`chamnan-schedule --caffeinate` now says what it actually holds off.** Its help promised to
-  "hold the machine awake until it fires", but `caffeinate -i` prevents idle sleep only: closing the
-  lid or choosing Sleep still sleeps the Mac, and the run then fires late, on wake. The help now
-  says so, so nobody closes the lid trusting it.
-- **Skills saved with a byte-order mark are read correctly.** Some Windows editors and PowerShell
-  5.1 add an invisible mark at the start of a file. The skill-overlap check read that mark as
-  part of the text, so the skill lost its description and did not match an identical copy
-  without the mark. The mark is now removed when the file is read, as it already was everywhere
-  else.
-- **Running the test suite no longer leaves folders in your temp directory.** A few of its
-  temporary files were made outside the folder the suite cleans up, and programs it started used
-  the system temp directory directly. Everything now goes in one folder that is removed when the
-  run ends. A folder left by a run that was killed is removed by the next run after a day.
-- **The test suite gives the same answer on your machine as on CI.** It built its test repositories
-  with your own git settings in effect, so a `commit.gpgsign = true` in your `~/.gitconfig` failed
-  checks there that passed everywhere else, including under `tools/verify_release.py`. The suite
-  now runs git with an empty configuration of its own.
-- **The dashboard's measurement step reads its helper's output as UTF-8 on Windows.** It decoded
-  it in the Windows code page, where a single byte that page does not define ends the build with
-  `UnicodeDecodeError`. The suite had 27 calls with the same fault, which CI's Windows legs logged
-  on every run; they are fixed, and a check now covers the dashboard, the tools and the suite.
-- **The README's Windows step no longer damages your PATH.** It told PowerShell users to run
-  `setx PATH "$bin;$env:PATH"`, which copies the machine PATH into your user PATH and cuts the
-  result at 1,024 characters. Its first line was a `::` comment, which PowerShell does not accept,
-  and it sorted installed versions as text, so 1.9 would be picked over 1.32. The step now adds
-  `bin/` to your user PATH only, sorts by version, and uses PowerShell comments.
-
----
-
-#### The dashboard
-
-- **The lesson index's `by_file` no longer reorders itself on every routine recount.** It was
-  sorted by count, so two files landing on the same count (common, since most files carry very
-  few) broke ties by directory-walk order — which drifts session to session. A 574-line diff for
-  about 10 real count changes was measured. The 40 heaviest files are still selected by count; what
-  is stored is that same set sorted by path, so the diff is now proportional to what changed. The
-  dashboard's bar chart, which does need count order to draw tallest-first, now sorts its own copy
-  before rendering.
-- **A calendar heatmap cell in the dashboard is now readable by a screen reader.** Each cell carried
-  only a `title`, which a mouse hover reads and nothing else does — 168 cells of pure colour with no
-  accessible name. Each cell now also carries `role="img"` and an `aria-label` holding the same text.
-  No `tabindex` is added; 168 sequential tab stops over one heatmap would be worse than the silence
-  it replaces.
-- **A printed or PDF-saved dashboard is readable.** Printing drops background colours, so the
-  default dark theme came out as pale text on white paper (1.2:1). Print now always uses the
-  light theme's colours, every one of them at least 4.5:1 on white.
-- **The dashboard no longer states, as fact, things that differ from person to person.** Its
-  headline said that only 25% of what a local model read would really have been read without
-  the plugin, and its bar note said the two totals differed by less than a fifth of a percent.
-  How much a person would have read depends on how they work, and the note's figure was also
-  wrong: the bars are zoomed below a 20% gap. The headline sentence is gone, the 25% is described
-  as a starting value you set on page 4, and the note says only that the bars do not start at
-  zero.
-- **The dashboard's day bars work from the keyboard, and its sparklines can be heard.** Opening a
-  day from a bar chart took a mouse click: the bar could not take focus and ignored every key.
-  Each bar is now a button you can Tab to and open with Enter or Space, named with its day and
-  value. A sparkline was silent to a screen reader; it now reads as an image with its number of
-  values, the latest and the highest.
-- **Small text on the dashboard is readable in both themes.** The grey used for every note under
-  a chart measured 2.81:1 against the dark panels and 2.40:1 against the light ones, below the
-  4.5:1 that WCAG asks of text that size. The light theme also kept the dark theme's orange note
-  text (2.63:1) and the blue that marks the active tab and a focused field (2.48:1). Each colour
-  now reaches 4.5:1, moved as little as that needed. The measure page had the same fault in its
-  captions (2.95:1 light, 3.51:1 dark) and is fixed the same way.
-
-### Interesting findings
-
-- **A warning that kept itself alive.** Every session opened by saying the previous block had been
-  cut. It had been cut once. The detector looked for the words "stopped early", and the warning
-  itself says "the last block stopped early", so from then on each block carried the evidence of its
-  own cut. The fix is one line; finding it took reading the log column that said `early: true` 476
-  times out of 476.
-- **A search that was right about words and wrong about language.** The ranking change in 1.32
-  weighted rare English words above common ones and left Thai untouched, because Thai is matched by
-  substring rather than split into words. Measuring the Thai side separately found the same problem
-  in a different form — and the same fix worked once the rarity was counted per phrase.
-- **A reader that read everything except the text.** The PDF branch of `chamnan-peek` was written
-  for PDFs whose text is stored as text. The one PDF in this repository, saved by macOS, stores it
-  as glyph numbers. The output looked like extracted text because it was made of printable
-  characters; what gave it away was that almost every string was a single character.
-
-### Dogfood and real-world discovery
-
-Four of the defects above were found by running chamnan on this repository and on the separate
-test corpus, not by a fixture written for them: the false cut warning (read off the session's own
-first line), the font-encoded PDF (the only PDF in the tree), the Cargo dotted keys (a real
-workspace manifest in the corpus), and the invisible environment override (an exported variable
-nobody remembered). Each was reproduced as a failing check before any code changed.
-
-### Research-driven improvements
-
-This release closes the research rounds of 2026-09-25 to 2026-09-27. What the research led to, as
-opposed to what the papers said: Thai phrase rarity weighting and word-form matching in search
-(from outside work on retrieval for unsegmented scripts and spelling variation), keeping a corrupt
-store's contents (from game-save and backup-restore incident reports), the DST fix (from scheduler
-incident reports that skipped or doubled a day), and the environment-override listing (from how
-`git config --show-origin` and Click report where a value came from). Many findings were tested and
-refused; those are recorded, with the measurement that refused them, in the research archive.
-
-### Research & evidence
-
-- `.chamnan/state/research/INDEX_CITED_IN_CODE.md` — every research finding cited in the source,
-  linked to the commit that acted on it. Attached to this release. Regenerate with
-  `python3 .chamnan/tools/research_citations.py --write`.
-- `tests/run_tests.py` — every check named in this note, by its section title.
-- `tools/verify_release.py` — re-runs the suite and the index claim check on your own machine.
+- **A rare word or phrase now outranks a common one in `chamnan-recall`.** Every query word used to
+  add the same weight whether it appeared in 3 notes or 800. Words are now weighted by how rare they
+  are, and so are phrases in scripts written without spaces, such as Thai, which are matched by
+  substring. On a real 1,319-entry index, the right entry ranked first went from 39.7% to 46.1% for
+  English words and from 85.3% to 95.1% for Thai phrases.
+- **Other forms of a word are found.** Searching `boundaries` found 3 of the 14 notes that say
+  `boundary` or `boundaries`; it now finds all 14. Other forms match at half weight, so an exact match
+  still ranks first.
+- **Thai searches containing ำ (ทำ, จำ, คำ, น้ำ) find their notes.** The query was normalised and the
+  stored text was not, so the character never matched itself.
+- **A deleted note leaves search at once.** It used to stay in results, with no warning, until the
+  index was rebuilt.
+- **The session no longer opens with a false "the last block was cut".** The warning's own words
+  triggered it again, so after one real cut every later session repeated it.
+- **`chamnan-peek` no longer shows a font-encoded PDF as garbled text.** A PDF saved by macOS stores
+  its text as glyph codes; they were printed as the "extracted text". It now says in one line that
+  the page needs a PDF text tool.
+- **A store that is already corrupt keeps its contents.** A scheduled-resume list, pointer record or
+  write ledger that could not be read was overwritten by the next write. The unreadable copy is now
+  kept beside it as `<name>.corrupt.<time>` and recorded.
+- **Scheduled times keep their hour across a daylight-saving change.** `9:00` set the night before
+  the clocks moved fired an hour early or late.
+- **Settings made through the environment are shown.** `chamnan-report --full` and `chamnan-doctor`
+  now name every `CHAMNAN_*` variable in force, and say when one is ignored.
+- **A Cargo crate moved to workspace inheritance is not reported as removed.** `serde.workspace =
+  true` was read as a package named `serde.workspace`.
+- **A dependency in `pyproject.toml` is no longer lost** when its line holds a `#` or `]` inside a
+  quoted string.
+- **An agent putting back a package your repository removed is told so**, with the commit that
+  removed it and its message.
+- **The redactor keeps ordinary code beside a secret word.** Argument labels, object fields and type
+  annotations next to `key`, `token` or `password` were removed as if they were values; 100 of 304
+  removals on the test corpus were code like this, now 33. Nothing it caught before is missed.
+- **The redactor no longer treats "author" as "auth".** `Co-Authored-By:` trailers and
+  `GIT_AUTHOR_EMAIL` came back with a word blotted out.
+- **An `Owner:` header no longer reaches the map as a file's summary**, and a summary decoded with
+  replacement characters is dropped instead of shown as mojibake.
+- **More environment variables are found**: `getenv` after `from os import getenv`, and
+  `os.environ.setdefault` / `pop`.
+- **Source files saved as UTF-16 are indexed** instead of being called binary.
+- **A misspelt setting is named instead of deleted.** `log_retention_dayz` now gets "did you mean
+  `log_retention_days`?".
+- **A `.chamnan` or `.git` in your home folder no longer claims every folder under it.**
+- **No home directory is no longer a crash**, in a container running as an arbitrary user.
+- **A hook that crashes is recorded**, and the session's first line says how many did today.
+- **Logging a Read appends one line** instead of rewriting the whole log: 19 ms to 1.3 ms per call.
+- **Subagent costs are recorded on older Claude Code too**, where the tool was still called `Task`.
+- **The `.env` warning reads `.gitignore` the way git does** for a file inside an ignored folder.
+- **A shallow clone is told its map comes from a commit it does not have**, instead of "built 0
+  seconds behind".
+- **After an upgrade, the file ranking is recounted by the new code.**
+- **A `sed` script with two expressions no longer triggers the "outside this checkout" warning.**
+- **`chamnan-setup --apply` prints the update command for every host behind and runs nothing.**
+- **`chamnan-schedule --caffeinate` says it prevents idle sleep only**, not a closed lid.
+- **The README's Windows PATH step is safe to paste.**
+- **Skills saved with a byte-order mark are read correctly.**
+- **The dashboard:** readable when printed, keyboard-operable day bars, screen-reader labels on the
+  heatmap and sparklines, small text readable in both themes, one bad log line no longer stops a
+  build, UTF-8 output on Windows, a lesson index that no longer reorders itself on every recount,
+  and no statements presented as fact that differ from person to person.
+- **The test suite** leaves nothing in your temp directory and ignores your own git configuration.
 
 ### Verification
 
-| | this release |
-|---|---|
-| checks | 6221/6221 (local gate; CI green on Linux, macOS and Windows at Python 3.8 and 3.13, run 36317148739) |
-| Gotcha | 88/2,127 |
-
-The change from 1.32.0: 167 checks added in 46 new sections, none removed or resized (`python3 .chamnan/tools/test_census.py v1.32.0`, which counts `check(` calls in the source; the total above is the run's own).
-
-The number is not "chamnan has no bugs". It is the count of behaviours that still do what was
-said: known regressions, malformed input, platform-specific behaviour, research-derived edge cases
-and adversarial security fixtures. CI ran the same suite on Linux, macOS and Windows at Python 3.8
-and 3.13.
-
-### Negative results
-
-- **Following links between notes did not help search.** Graph expansion is reported to lift
-  personal-memory retrieval; measured here, the 24 known-item misses in 219 trials had their target
-  linked from a returned hit 0 times, so it was not built.
-- **Starting the hooks with `python3 -S` saved nothing.** The bare interpreter starts 15 ms faster
-  without `site`, but the hooks' own imports cancel it: 129 vs 132 ms and 132 vs 135 ms measured
-  interleaved on the real hooks. The shebang stays as it is.
-- **A longer default result list in `chamnan-recall` was measured and not taken.** Ten results
-  instead of six would find the wanted entry 93.6% of the time instead of 89.0%, at four more lines
-  of output on every query; the shorter list was kept.
-- **Fuzzy matching for typos was not added.** The people typing recall queries are sessions, which
-  do not mistype; the word-form matching above covers the variation that does occur.
-
-### Known limitations
-
-- The Thai and word-form ranking numbers come from known-item trials on this workspace's own notes,
-  not from a public benchmark.
-- The word-form rule is a small suffix list for English, not a stemmer; irregular forms are not
-  joined.
-- A font-encoded PDF is now reported honestly, not read: chamnan still has no PDF text layer beyond
-  plain text strings.
-- Windows behaviour is tested on CI only.
-
-### Upgrade
-
-`/plugin update chamnan`. Nothing to do afterwards. An existing `chamnan-recall` index keeps
-working; the next `chamnan-recall --reindex` is only needed for notes changed since it was built,
-which the command itself says.
-
-The release keeps its character to the end: the same tool, finding what you stored more reliably
-and saying less that is untrue.
+**6221/6221** checks on the release gate, and CI green on all five legs — macOS · Linux · Windows on
+Python 3.8 and 3.13. The count went from 4,983 to 5,150 `check(` calls in the source: 46 sections
+added, none removed. Recorded lessons: **+88 since v1.32.0 / 2,127 total**.
 
 ## What's new in 1.32.0
 
