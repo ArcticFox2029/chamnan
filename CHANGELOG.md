@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A dependency name in `pyproject.toml` is no longer lost when the requirement carries a URL
+  fragment or a `]` inside an environment marker.** The TOML reader cut a line at its first `#` and
+  closed an array at its first `]`, wherever either character sat — including inside a quoted
+  string. `dependencies = ["pkg @ git+https://example.org/r.git#egg=pkg", "httpx>=0.27"]` returned
+  no names at all, and a multi-line array whose first entry was `"rich; extra == 'x]'"` lost every
+  entry after it. Both cuts now track quote state and only act outside a string.
+
 - **`chamnan-schedule --caffeinate` now says what it actually holds off.** Its help promised to
   "hold the machine awake until it fires", but `caffeinate -i` prevents idle sleep only: closing the
   lid or choosing Sleep still sleeps the Mac, and the run then fires late, on wake. The help now

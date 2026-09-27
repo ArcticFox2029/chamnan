@@ -58,6 +58,53 @@ def _requirement(text):
     return m.group(1).lower() if m else ""
 
 
+def _strip_toml_comment(line):
+    """Cut a TOML line at its comment `#`, ignoring one that sits inside a quoted string.
+
+    Walks the line char by char, tracking whether the cursor is inside a `"..."` (which honours
+    a `\\"` escape) or a `'...'` (TOML literal strings have no escapes at all). A `#` is only a
+    comment marker outside both.
+    """
+    quote, escape = "", False
+    for i, ch in enumerate(line):
+        if quote:
+            if quote == '"' and escape:
+                escape = False
+            elif quote == '"' and ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+        elif ch == "#":
+            return line[:i]
+    return line
+
+
+def _array_still_open(line):
+    """True while a `]` closing this array has not been seen OUTSIDE a quoted string.
+
+    Mirrors `_strip_toml_comment`'s string tracking so a `]` inside an environment marker
+    (`"rich; extra == 'x]'"`) does not read as the array's own closing bracket.
+    """
+    quote, escape = "", False
+    for ch in line:
+        if quote:
+            if quote == '"' and escape:
+                escape = False
+            elif quote == '"' and ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+        elif ch == "]":
+            return False
+    return True
+
+
 def _toml_names(text):
     """Names from a TOML manifest, read by TABLE rather than by any `key =` line.
 
@@ -69,15 +116,23 @@ def _toml_names(text):
     (Pipfile), a key is a package -- unless its value is an array, when the key is a group name
     and the array's strings are the packages. In `[project]`, only `dependencies` counts, and
     `[project.optional-dependencies]` holds groups of arrays.
+
+    🐛 [2026-09-27] (R27, 2026-09-27) The comment cut and the array-close check both looked for a
+    bare character anywhere in the line, including inside a quoted string. Measured against
+    tomllib: `dependencies = ["pkg @ git+https://example.org/r.git#egg=pkg", "httpx>=0.27"]`
+    returned an empty set (the `#egg=` truncated the whole line before the array was read), and a
+    multi-line array whose first item was `"rich; extra == 'x]'"` returned only `{rich}`, losing
+    `click` on the next line, because the `]` inside the marker closed the array early. Both cuts
+    now walk the line tracking quote state and only act outside a string.
     """
     out, table, in_array = set(), "", False
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
+        line = _strip_toml_comment(raw).strip()
         if not line:
             continue
         if in_array:
             out.update(n for n in map(_requirement, _STRING.findall(line)) if n)
-            in_array = "]" not in line
+            in_array = _array_still_open(line)
             continue
         if line.startswith("["):
             table = line.strip("[]").strip().strip('"').lower()
@@ -89,7 +144,7 @@ def _toml_names(text):
         deps_table = table.endswith("dependencies") or table in ("packages", "dev-packages")
         if value.startswith("[") and (deps_table or (table == "project" and key == "dependencies")):
             out.update(n for n in map(_requirement, _STRING.findall(value)) if n)
-            in_array = "]" not in value
+            in_array = _array_still_open(value)
         elif deps_table and not (key == "python" and "poetry" in table):
             out.add(key)
     return out
