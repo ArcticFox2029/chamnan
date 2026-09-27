@@ -535,6 +535,17 @@ def _rows_from(text):
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
+def _parses_as_schedule(text):
+    """True when `text` is `{"scheduled": [...]}` — the shape `_rows_from` expects, whether the
+    list is empty or not. False for anything `_rows_from` had to fall back to `[]` for, which is
+    the signal that the fallback is masking corruption rather than an ordinary empty store."""
+    try:
+        data = json.loads(text or "")
+    except (ValueError, RecursionError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("scheduled"), list)
+
+
 def _rewrite(root, change):
     """Read-decide-write with the lock held across all three, through the shared primitive.
 
@@ -542,11 +553,25 @@ def _rewrite(root, change):
     looks correct: an atomic write stops a reader seeing half a file and says nothing about which
     of two writers wins, and a lock without it still lets a crash leave a torn file. Two shells
     scheduling at once is the ordinary case here, not the exotic one.
+
+    🐛 [2026-09-27] (R118 acc2, 2026-09-27) `_rows_from` returns `[]` for text that is not valid
+    JSON or has the wrong shape — the same degraded answer it gives an EMPTY file, on purpose, so
+    `add()`/`update()` can still work from nothing. But that means a CORRUPT `scheduled.json` reads
+    as an empty schedule too, and the very next `add()` writes a fresh file holding only the new
+    record — every earlier scheduled record overwritten, silently, with no copy kept. Preserve the
+    corrupt text before the mutate hands back the replacement, the same way `load_json(...,
+    quarantine=True)` does for a read.
     """
     import workspace as ws
     p = _store(root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    return ws.rewrite_shared(p, lambda text: _dump(change(_rows_from(text))))
+
+    def _mutate(text):
+        if (text or "").strip() and not _parses_as_schedule(text):
+            ws.preserve_before_rewrite(p, text, "scheduled.json did not parse as {\"scheduled\": [...]}")
+        return _dump(change(_rows_from(text)))
+
+    return ws.rewrite_shared(p, _mutate)
 
 
 def add(root, rec):

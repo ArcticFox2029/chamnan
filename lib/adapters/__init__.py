@@ -582,8 +582,16 @@ def record_written(path, version=None):
             try:
                 data = json.loads(current) if current else {}
             except (ValueError, RecursionError):
-                data = {}
+                data = None
             if not isinstance(data, dict):
+                # 🐛 [2026-09-27] (R118 acc2, 2026-09-27) Text that failed to parse, or parsed to
+                # something other than an object, fell straight through to `data = {}`, and the
+                # write below then put a ledger holding only THIS one entry on disk — every other
+                # file's write-provenance record gone, silently. Same shape as `schedule._rewrite`'s
+                # bug; keep a copy of what was there before overwriting it.
+                if (current or "").strip():
+                    ws.preserve_before_rewrite(wsdir / WRITE_LEDGER, current,
+                                                "write-ledger did not parse as a JSON object")
                 data = {}
             data[rel] = row
             return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
