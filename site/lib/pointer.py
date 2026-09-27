@@ -376,6 +376,13 @@ def mark_pointed(wsdir, session_id, rel_path):
         except Exception:
             d = None
         if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):
+            # 🐛 [2026-09-27] (R118 acc5, 2026-09-27) Text that does not parse, or parses to the
+            # wrong shape, used to fall straight into a fresh `{"session", "paths": []}` and lose
+            # every path this session had already been shown — the same "parse fails, write fresh
+            # over it, nothing kept" shape `schedule._rewrite` had. Keep a copy before it happens;
+            # cheap here too (the file's own retention already caps how long this would matter).
+            if (text or "").strip():
+                ws.preserve_before_rewrite(p, text, "pointer seen-file did not parse as {session, paths:[...]}")
             d = {"session": str(session_id), "paths": []}
         if rel_path in d.get("paths", []):
             return None

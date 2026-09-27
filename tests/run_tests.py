@@ -42997,6 +42997,550 @@ try:
     check("...AND EACH ONE'S COUNT IS STILL CORRECT", _counts_ok311, saw=_by_file311)
 finally:
     _sh311.rmtree(_d311, ignore_errors=True)
+# ---- 312_toml_reader_ignores_hash_and_bracket_inside_strings.py
+# ------------------ deps._toml_names ignores a `#` or `]` sitting inside a quoted string
+# 🐛 (R27, 2026-09-27) `line.split("#", 1)[0]` cut a requirement's URL fragment (`...#egg=pkg`) as
+# though it were a comment, and `"]" not in line` treated a `]` inside an environment marker
+# (`"rich; extra == 'x]'"`) as the array's own closing bracket -- both dropped real dependency
+# names that tomllib reads correctly.
+sys.path.insert(0, str(ROOT / "Work-Mode" / "chamnan" / "lib"))
+import deps as _deps312                                                          # noqa: E402
+
+_egg312 = (
+    "[project]\n"
+    'dependencies = ["pkg @ git+https://example.org/r.git#egg=pkg", "httpx>=0.27"]\n'
+)
+check("A `#egg=` URL FRAGMENT INSIDE A STRING IS NOT READ AS A COMMENT",
+      _deps312.names(_egg312, "pyproject.toml") == {"pkg", "httpx"},
+      saw=_deps312.names(_egg312, "pyproject.toml"))
+
+_marker312 = (
+    "[project]\n"
+    "dependencies = [\n"
+    "    \"rich; extra == 'x]'\",\n"
+    "    \"click\",\n"
+    "]\n"
+)
+check("A `]` INSIDE AN ENVIRONMENT MARKER DOES NOT CLOSE THE ARRAY EARLY",
+      _deps312.names(_marker312, "pyproject.toml") == {"rich", "click"},
+      saw=_deps312.names(_marker312, "pyproject.toml"))
+
+# No regression: a real trailing comment after a multi-line array still gets cut.
+_trailing_comment312 = (
+    "[project]\n"
+    "dependencies = [\n"
+    "    \"a\",  # first\n"
+    "    \"b\",\n"
+    "]  # comment\n"
+)
+check("A REAL TRAILING COMMENT ON A MULTI-LINE ARRAY IS STILL CUT",
+      _deps312.names(_trailing_comment312, "pyproject.toml") == {"a", "b"},
+      saw=_deps312.names(_trailing_comment312, "pyproject.toml"))
+
+# No regression: Poetry-style dependency table, python pin excluded, extras array not exploded.
+_poetry312 = (
+    "[tool.poetry.dependencies]\n"
+    "python = \"^3.9\"\n"
+    "requests = { version = \"^2.0\", extras = [\"socks\"] }\n"
+)
+check("POETRY DEPENDENCIES TABLE STILL EXCLUDES THE PYTHON PIN AND DOES NOT EXPLODE EXTRAS",
+      _deps312.names(_poetry312, "pyproject.toml") == {"requests"},
+      saw=_deps312.names(_poetry312, "pyproject.toml"))
+
+# No regression: optional-dependencies group of arrays still reads both names.
+_optional312 = (
+    "[project.optional-dependencies]\n"
+    "docs = [\"sphinx\", \"furo\"]\n"
+)
+check("OPTIONAL-DEPENDENCIES GROUP OF ARRAYS STILL READS BOTH NAMES",
+      _deps312.names(_optional312, "pyproject.toml") == {"sphinx", "furo"},
+      saw=_deps312.names(_optional312, "pyproject.toml"))
+# ---- 313_recall_matches_thai_sara_am.py
+# ------------------ Thai SARA AM (ำ) survives NFKC normalisation on both sides of a recall match
+# 🐛 (R53, 2026-09-27) `query()` NFKC-normalised a non-ASCII query phrase before matching it, but
+# the entry's own `title`/`blurb`/`text` were never normalised -- NFKC decomposes SARA AM (U+0E33,
+# ำ) into NIKHAHIT + SARA AA (U+0E4D U+0E32), so a query containing ำ never matched the same
+# character stored whole. Measured on the real workspace index: ทำ, จำ, คำ, น้ำ each returned 0
+# hits. Fixed in `_hits` and `why_line` by normalising the field text at compare time too.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(ROOT / "lib"))
+import recall as _rc313  # noqa: E402
+
+_COMPOSED = "วิธีซ่อมปั๊มน้ำ"  # ำ typed whole, as a normal keyboard would produce it
+_DECOMPOSED = "น้ํา"  # NIKHAHIT + SARA AA typed separately -- same visual word, different bytes
+
+_idx313 = {
+    "entries": [
+        {
+            "path": "docs/a.md",
+            "title": "ปั๊มน้ำ",
+            "blurb": "วิธีซ่อมปั๊มน้ำที่บ้าน",
+            "text": f"ขั้นตอน{_COMPOSED} ต้องถอดสายไฟก่อน",
+            "body": {},
+            "weight": 1.0,
+        },
+        {
+            "path": "docs/b.md",
+            "title": "เก็บน้ำฝน",
+            "blurb": f"ถังเก็บ{_DECOMPOSED}สำหรับสวน",
+            "text": f"วิธีติดตั้งถังเก็บ{_DECOMPOSED}",
+            "body": {},
+            "weight": 1.0,
+        },
+        {
+            "path": "docs/c.md",
+            "title": "ASCII only",
+            "blurb": "no thai content here",
+            "text": "python setup guide for beginners",
+            "body": {"python": 3, "setup": 2},
+            "weight": 1.0,
+        },
+    ]
+}
+
+_composed_hits = _rc313.query(_idx313, ["น้ำ"])
+_composed_paths = [e["path"] for _s, e, _w in _composed_hits]
+check("A QUERY TYPED WITH COMPOSED ำ FINDS AN ENTRY WHOSE TEXT ALSO HOLDS COMPOSED ำ",
+      "docs/a.md" in _composed_paths,
+      saw=_composed_paths)
+
+check("THE SAME QUERY (composed ำ) ALSO FINDS AN ENTRY STORED WITH THE DECOMPOSED SPELLING",
+      "docs/b.md" in _composed_paths,
+      saw=_composed_paths)
+
+_regress_hits = _rc313.query(_idx313, ["ซ่อม"])
+_regress_paths = [e["path"] for _s, e, _w in _regress_hits]
+check("A PLAIN THAI SUBSTRING QUERY WITH NO ำ AT ALL STILL MATCHES (NO REGRESSION)",
+      "docs/a.md" in _regress_paths,
+      saw=_regress_paths)
+
+_ascii_hits = _rc313.query(_idx313, ["python"])
+_ascii_paths = [e["path"] for _s, e, _w in _ascii_hits]
+check("THE ASCII QUERY PATH IS UNAFFECTED BY THE NFKC NORMALISATION ADDED FOR THAI",
+      "docs/c.md" in _ascii_paths,
+      saw=_ascii_paths)
+
+_why313 = None
+for _s, _e, _w in _composed_hits:
+    if _e["path"] == "docs/a.md":
+        _why313 = _rc313.why_line(_e, _w, [], [x[1] for x in [] ] or ["น้ำ"])
+        break
+check("why_line ALSO NAMES A MATCH FOUND VIA THE NFKC-NORMALISED PHRASE (no crash, non-empty)",
+      isinstance(_why313, str) and len(_why313) > 0,
+      saw=_why313)
+# ---- 314_a_rare_thai_phrase_outranks_a_common_one.py
+# ------------------ a rare Thai/non-ASCII phrase outranks a common one
+# 🐛 [2026-09-27] (R8 acc2, 2026-09-27) Every Thai/non-ASCII `phrases` hit added the same flat
+# `FIELD_WEIGHT[...]` regardless of how many entries carried it, so a query mixing a rare phrase
+# with a common one gave the common phrase's mere presence everywhere the same pull as the rare
+# phrase's one exact hit -- the substring side of a query had no idf at all, unlike ASCII `wanted`
+# terms (R173). `query()`/`_hits()` now weight each phrase by `pidf`: `df` is the number of entries
+# whose NFKC-normalised text/title/blurb contains it, over `N` = all dict entries. Measured on this
+# workspace's own index (`.chamnan/logs/recall_thai_idf_ab.py`, known-item trials with 4-7 char Thai
+# substrings): MRR 0.921 -> 0.971, top1 85.3% -> 95.1%, top6 unchanged at 100%; with whole Thai runs
+# 0.853 -> 0.955. Asserted here on a small synthetic index, so the property holds without depending
+# on the real stores' current content.
+import recall as _rc314                                                               # noqa: E402
+
+_RARE314 = "มังกรบินได้"      # a distinctive rare phrase, present in exactly one entry
+_COMMON314 = "การประชุมทีม"   # a common phrase, present in most of the filler entries too
+
+#   `zzz_rare.md`/`aaa_common.md` are named so a plain path-sorted TIE (the flat-weight bug this
+#   fixes) would rank the common entry FIRST -- an idf-weighted score must beat that tiebreak on
+#   score alone, not ride it, or a regression to flat weighting would pass unnoticed.
+_t_idx314 = {"entries": [
+    {"path": "zzz_rare.md", "kind": "lesson", "weight": 1.0, "title": "Entry A", "blurb": "",
+     "body": {}, "text": f"เรื่องราวเกี่ยวกับ{_RARE314}ในตำนาน"},
+    {"path": "aaa_common.md", "kind": "lesson", "weight": 1.0, "title": "Entry B", "blurb": "",
+     "body": {}, "text": f"บันทึก{_COMMON314}ประจำสัปดาห์"},
+] + [
+    {"path": "filler%d.md" % i, "kind": "lesson", "weight": 1.0, "title": "Filler %d" % i,
+     "blurb": "", "body": {}, "text": f"สรุป{_COMMON314}ของทีม"}
+    for i in range(7)
+]}
+_t_res314 = _rc314.query(_t_idx314, [_RARE314, _COMMON314], limit=20)
+_t_order314 = [e["path"] for _s, e, _w in _t_res314]
+check("A RARE THAI PHRASE (in 1 of 9 entries) OUTRANKS A COMMON ONE (in 8 of 9)",
+      bool(_t_order314) and _t_order314[0] == "zzz_rare.md", saw=_t_order314[:3])
+check("...AND THE COMMON PHRASE'S OWN ENTRY STILL PLACES BELOW THE RARE PHRASE'S ENTRY",
+      "zzz_rare.md" in _t_order314 and "aaa_common.md" in _t_order314
+      and _t_order314.index("zzz_rare.md") < _t_order314.index("aaa_common.md"), saw=_t_order314)
+
+# A single-phrase query where every entry carries the SAME phrase (same df): idf is then one
+# constant scalar applied alike, so it cannot reorder anything -- only proves the weighting does
+# not break the flat case it used to be.
+_t_idx2_314 = {"entries": [
+    {"path": p, "kind": "lesson", "weight": 1.0, "title": "D", "blurb": "", "body": {},
+     "text": f"{_COMMON314} หมายเลข {p}"}
+    for p in ("d1.md", "d2.md", "d3.md")
+]}
+_t_res2_314 = _rc314.query(_t_idx2_314, [_COMMON314], limit=20)
+_t_order2_314 = [e["path"] for _s, e, _w in _t_res2_314]
+check("A SINGLE-PHRASE QUERY OVER EQUALLY-RARE PHRASES STILL FINDS ALL OF THEM "
+      "(A CONSTANT MULTIPLIER DOES NOT DROP A HIT)",
+      set(_t_order2_314) == {"d1.md", "d2.md", "d3.md"}, saw=_t_order2_314)
+# ---- 315_a_plural_query_finds_a_singular_only_entry.py
+# ------------------ a plural query finds a singular-only entry, at half weight
+# 🎯 [2026-09-27] (R91 acc2, 2026-09-27) An exact word match found only the entries carrying that
+# literal form -- `boundaries` never found the 11 entries that only say `boundary`, and the
+# redact/redactor/redaction/redacted family spread 24 entries over four forms nobody's query
+# covered at once. `query()` now expands each wanted word to every OTHER indexed form sharing its
+# stem (a crude suffix-stripping `stem()`) and scores those through `_hits` at half weight, using
+# the idf of the wanted word they came from; an exact match keeps full weight. Measured
+# (`.chamnan/logs/recall_word_forms_ab.py`): queries in a different form MRR 0.414 -> 0.531, top6
+# 65.6% -> 81.2%; exact-word queries MRR 0.651 -> 0.635 (top6 90.0% -> 89.0%) -- accepted trade.
+# Asserted here on a small synthetic index, so the property holds without depending on the real
+# stores' current content.
+import recall as _rc315                                                               # noqa: E402
+
+#   `zzz_exact.md`/`aaa_form_only.md` are named so a path-sorted TIE (what a form scored at FULL
+#   weight instead of half would produce, since both then carry the identical score) would rank the
+#   form-only entry FIRST -- the exact match must beat that tiebreak on score alone, or a regression
+#   from 0.5 to 1.0 weighting would pass unnoticed.
+_t_idx315 = {"entries": [
+    {"path": "zzz_exact.md", "kind": "lesson", "weight": 1.0, "title": "Exact match", "blurb": "",
+     "body": {"boundaries": 5}, "text": ""},
+    {"path": "aaa_form_only.md", "kind": "lesson", "weight": 1.0, "title": "Form only", "blurb": "",
+     "body": {"boundary": 5}, "text": ""},
+] + [
+    {"path": "filler%d.md" % i, "kind": "lesson", "weight": 1.0, "title": "Filler %d" % i,
+     "blurb": "", "body": {"widget": 2}, "text": ""}
+    for i in range(3)
+]}
+_t_res315 = _rc315.query(_t_idx315, ["boundaries"], limit=20)
+_t_order315 = [e["path"] for _s, e, _w in _t_res315]
+check("A PLURAL QUERY ('boundaries') FINDS AN ENTRY THAT ONLY CARRIES THE SINGULAR ('boundary')",
+      "aaa_form_only.md" in _t_order315, saw=_t_order315)
+check("AN EXACT-FORM ENTRY STILL RANKS ABOVE A FORM-ONLY ENTRY WITH THE SAME BODY COUNT",
+      "zzz_exact.md" in _t_order315 and "aaa_form_only.md" in _t_order315
+      and _t_order315.index("zzz_exact.md") < _t_order315.index("aaa_form_only.md"), saw=_t_order315)
+
+_why315 = None
+for _s, _e, _w in _t_res315:
+    if _e["path"] == "aaa_form_only.md":
+        _why315 = _rc315.why_line(_e, _w, ["boundaries"], [])
+        break
+check("why_line STILL NAMES A FIELD FOR A FORM-ONLY HIT (no crash, non-empty)",
+      isinstance(_why315, str) and len(_why315) > 0, saw=_why315)
+
+# A plural query where every entry is form-only (no exact literal at all): idf is the constant
+# scalar that comes along either way, so this only proves the 0.5 weighting still surfaces every
+# one of them rather than silently dropping some.
+_t_idx2_315 = {"entries": [
+    {"path": p, "kind": "lesson", "weight": 1.0, "title": "D", "blurb": "", "body": {"boundary": n},
+     "text": ""}
+    for p, n in {"f1.md": 1, "f2.md": 5, "f3.md": 20}.items()
+]}
+_t_res2_315 = _rc315.query(_t_idx2_315, ["boundaries"], limit=20)
+_t_order2_315 = [e["path"] for _s, e, _w in _t_res2_315]
+check("A PLURAL QUERY OVER SEVERAL SINGULAR-ONLY ENTRIES STILL FINDS ALL OF THEM",
+      set(_t_order2_315) == {"f1.md", "f2.md", "f3.md"}, saw=_t_order2_315)
+# ---- 316_a_corrupt_store_is_kept_before_rewrite.py
+# ------------------ A corrupt store is kept before a rewrite_shared mutate replaces it
+# 🐛 [2026-09-27] (R118 acc5, 2026-09-27) `schedule._rewrite` calls `ws.rewrite_shared(p, lambda
+# text: _dump(change(_rows_from(text))))`, and `_rows_from` returns `[]` for text that is not valid
+# JSON or has the wrong shape -- the same degraded answer it gives an EMPTY file, on purpose. So a
+# corrupt `state/scheduled.json` read as an empty schedule too, and the very next `add()`/`update()`
+# wrote a fresh file holding only the new record -- every earlier scheduled record overwritten,
+# silently, with no copy kept. `ws._quarantine` already states the rule for the READ side ("Never a
+# silent reset, and never a delete -- the corrupt file is the only copy"); the REWRITE side had no
+# equivalent. `ws.preserve_before_rewrite` is that equivalent, and this proves it for every
+# `rewrite_shared` caller that parses JSON and discards on failure: `schedule.add`,
+# `pointer.mark_pointed` and `adapters.record_written`.
+import json
+import subprocess
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(ROOT / "lib"))
+import schedule as _sch316            # noqa: E402
+import workspace as _ws316            # noqa: E402
+import pointer as _pt316              # noqa: E402
+import adapters as _ad316             # noqa: E402
+
+
+def _fresh_repo316(name):
+    # A bare temp dir under $HOME resolves to the enclosing home workspace (`find_root` stops
+    # walking above home only when it hits a `.git`/`.chamnan` on the way) -- `git init` first so
+    # this fixture is its own repository, not a lucky escape.
+    root = Path(tempfile.mkdtemp(prefix="chamnan-316-")) / name
+    root.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True)
+    return root
+
+
+# ---- 1: schedule.add over a corrupt state/scheduled.json (the reported defect)
+_root316a = _fresh_repo316("sched")
+_store316a = _root316a / ".chamnan" / "state" / "scheduled.json"
+_store316a.parent.mkdir(parents=True, exist_ok=True)
+_corrupt316a = '{"scheduled": [{"id": "old-job", "when": "2026-01-01T00:00:00"}]'  # truncated
+_store316a.write_text(_corrupt316a, encoding="utf-8")
+
+_sch316.add(_root316a, {"id": "new-job", "when": "2026-01-01T00:00:00"})
+
+_after316a = json.loads(_store316a.read_text(encoding="utf-8"))
+check("SCHEDULE.ADD OVER A CORRUPT STORE STILL WRITES THE NEW RECORD",
+      any(r.get("id") == "new-job" for r in _after316a.get("scheduled", [])),
+      saw=_after316a)
+
+_siblings316a = list(_store316a.parent.glob("scheduled.json.corrupt.*"))
+check("...AND KEEPS A .corrupt.* COPY HOLDING THE ORIGINAL BYTES, NOT JUST A TRACE OF IT",
+      len(_siblings316a) == 1 and _siblings316a[0].read_text(encoding="utf-8") == _corrupt316a,
+      saw=[str(p) for p in _siblings316a])
+
+_qlog316a = _root316a / ".chamnan" / "logs" / "recovered.jsonl"
+_qrows316a = ([json.loads(ln) for ln in _qlog316a.read_text(encoding="utf-8").splitlines() if ln.strip()]
+              if _qlog316a.is_file() else [])
+check("...AND LOGS A QUARANTINE ROW NAMING THE KEPT COPY",
+      any(r.get("file") == "scheduled.json" and r.get("kept_as", "").startswith("scheduled.json.corrupt.")
+          for r in _qrows316a),
+      saw=_qrows316a)
+
+# An ordinary EMPTY schedule ({"scheduled": []}) is not corruption -- it must not spawn a
+# quarantine copy on every single add() to a brand-new store, which is the false-positive
+# `_parses_as_schedule` exists to rule out.
+_root316d = _fresh_repo316("sched-empty")
+_sch316.add(_root316d, {"id": "first-job", "when": "2026-01-01T00:00:00"})
+check("A FRESH (non-corrupt, non-existent-yet) STORE NEVER GETS A .corrupt.* COPY",
+      not list((_root316d / ".chamnan" / "state").glob("scheduled.json.corrupt.*")))
+
+# ---- 2: pointer.mark_pointed over a corrupt per-session seen-file
+_root316b = _fresh_repo316("ptr")
+_wsdir316b = _root316b / ".chamnan"
+(_wsdir316b / "logs").mkdir(parents=True, exist_ok=True)
+_seen316b = _pt316._seen_path(_wsdir316b, "sess-1")
+_corrupt316b = '{"session": "sess-1", "paths": ["a.py"'  # truncated
+_seen316b.write_text(_corrupt316b, encoding="utf-8")
+
+_pt316.mark_pointed(_wsdir316b, "sess-1", "b.py")
+
+_after316b = json.loads(_seen316b.read_text(encoding="utf-8"))
+check("POINTER.MARK_POINTED OVER A CORRUPT SEEN-FILE STILL RECORDS THE NEW PATH",
+      "b.py" in _after316b.get("paths", []),
+      saw=_after316b)
+
+_siblings316b = list(_seen316b.parent.glob(_seen316b.name + ".corrupt.*"))
+check("...AND KEEPS A .corrupt.* COPY OF THE ORIGINAL SEEN-FILE BYTES",
+      len(_siblings316b) == 1 and _siblings316b[0].read_text(encoding="utf-8") == _corrupt316b,
+      saw=[str(p) for p in _siblings316b])
+
+# ---- 3: adapters.record_written over a corrupt write ledger
+_root316c = _fresh_repo316("adapt")
+_wsdir316c = _root316c / ".chamnan"
+_ledger316c = _wsdir316c / _ad316.WRITE_LEDGER
+_ledger316c.parent.mkdir(parents=True, exist_ok=True)
+_corrupt316c = '{"old/file.md": {"version": "1.0.0", "at": 1'  # truncated
+_ledger316c.write_text(_corrupt316c, encoding="utf-8")
+
+_target316c = _root316c / "new" / "file.md"
+_target316c.parent.mkdir(parents=True, exist_ok=True)
+_target316c.write_text("x", encoding="utf-8")
+_ad316.record_written(_target316c, version="9.9.9")
+
+_after316c = json.loads(_ledger316c.read_text(encoding="utf-8"))
+check("ADAPTERS.RECORD_WRITTEN OVER A CORRUPT LEDGER STILL RECORDS THE NEW ENTRY",
+      "new/file.md" in _after316c,
+      saw=_after316c)
+
+_siblings316c = list(_ledger316c.parent.glob(Path(_ad316.WRITE_LEDGER).name + ".corrupt.*"))
+check("...AND KEEPS A .corrupt.* COPY OF THE ORIGINAL LEDGER BYTES",
+      len(_siblings316c) == 1 and _siblings316c[0].read_text(encoding="utf-8") == _corrupt316c,
+      saw=[str(p) for p in _siblings316c])
+# ---- 317_a_deleted_store_file_is_dropped_from_a_hit.py
+# ------------------ a hit whose store file was deleted is dropped, not printed straight from the index
+# 🐛 [2026-09-27] (R135 acc5, 2026-09-27) `recall.stale_by()` counts only store files NEWER than
+# the index, so a file DELETED after the index was built was never counted -- and `bin/chamnan-recall`
+# printed straight from the index either way. Reproduced in a scratch workspace: `memory/rules/
+# zebra.md` (body "quokka"), `chamnan-recall --reindex`, then remove the file -- `chamnan-recall
+# quokka` still printed `rule memory/rules/zebra.md` with no staleness notice. The fix resolves each
+# hit's file the way the index actually stores it (a `symbol` entry's path is repo-relative; every
+# other KIND's path is relative to the `.chamnan` workspace) and drops any hit whose file is gone,
+# counting it toward the existing "N store file(s) changed or removed" notice.
+#
+# Run through the real CLI via subprocess, not `recall.query()` directly -- the defect was in
+# `bin/chamnan-recall`'s own printing loop, not in the (already pure) query function, so only the
+# command's actual stdout proves the fix.
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+_BIN317 = ROOT / "bin" / "chamnan-recall"
+
+
+def _run317(repo, *args):
+    with open(os.devnull, "rb") as _null317:
+        return subprocess.run([sys.executable, str(_BIN317), *args], cwd=str(repo),
+                               stdin=_null317, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=60)
+
+
+_root317 = Path(tempfile.mkdtemp(prefix="chamnan-317-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=str(_root317), capture_output=True)
+    _rules317 = _root317 / ".chamnan" / "memory" / "rules"
+    _rules317.mkdir(parents=True)
+    _zebra317 = _rules317 / "zebra.md"
+    _zebra317.write_text("# Zebra rule\n\nAbout a quokka.\n", encoding="utf-8")
+    _koala317 = _rules317 / "koala.md"
+    _koala317.write_text("# Koala rule\n\nAlso about a quokka.\n", encoding="utf-8")
+
+    _idx317 = _run317(_root317, "--reindex")
+    check("chamnan-recall --reindex succeeds on the fixture",
+          _idx317.returncode == 0, saw=_idx317.stdout + _idx317.stderr)
+
+    # Delete AFTER the index was built -- this is the case `stale_by` misses: a deletion, not an edit.
+    _zebra317.unlink()
+
+    _q317 = _run317(_root317, "quokka")
+    check("chamnan-recall still exits 0 on a query after a store file was deleted underneath it",
+          _q317.returncode == 0, saw=_q317.stdout + _q317.stderr)
+    check("THE DELETED ENTRY'S PATH IS ABSENT FROM THE OUTPUT (not printed straight from the index)",
+          "memory/rules/zebra.md" not in _q317.stdout, saw=_q317.stdout)
+    check("THE REINDEX NOTICE FIRES FOR THE REMOVED FILE (the count includes a deletion, not just "
+          "files newer than the index)",
+          "chamnan-recall --reindex" in _q317.stdout and "removed" in _q317.stdout,
+          saw=_q317.stdout)
+    check("AN INTACT ENTRY IS STILL RETURNED (the fix drops only the missing hit, not the whole "
+          "answer)",
+          "memory/rules/koala.md" in _q317.stdout, saw=_q317.stdout)
+finally:
+    shutil.rmtree(_root317, ignore_errors=True)
+# ---- 318_a_cargo_dotted_shorthand_key_is_one_package.py
+# ------------------ an unquoted dotted TOML key is one package; a quoted one is one package too, but a different one
+# 🐛 [2026-09-27] (R137 acc4, 2026-09-27) `deps._toml_names()` added a dotted key inside a
+# dependencies table to the result WHOLE, so Cargo's inline-table shorthand (`serde.workspace =
+# true`, `rand.version = "0.8"`) was read as packages named `serde.workspace` and `rand.version`
+# rather than `serde` and `rand`. Measured with `.chamnan/logs/deps_names_vs_tomllib.py` on
+# `Work-Mode/chamnan-corpus/corpus/edge/gateway-agent/Cargo.toml`: 6 names wrong, harness line
+# "3 files; declared 35 found 51 correct 17" -> "... correct 34" after the fix (the file's own
+# mismatch line disappeared entirely). Consequence: `removals()` diffs name SETS between manifest
+# revisions, so a member moving `serde = "1"` to `serde.workspace = true` -- a routine Cargo
+# workspace refactor, not a dependency drop -- reported `serde` REMOVED.
+#
+# The fix distinguishes an UNQUOTED dotted key (the dot is TOML structure; the package is the first
+# segment) from a QUOTED one (Poetry's `"zope.interface" = "^5"`, where the dot is part of the real
+# package name and TOML would not let it survive unescaped outside quotes).
+import deps as _dp318
+
+_CARGO318 = """
+[package]
+name = "demo"
+version = "0.1.0"
+
+[dependencies]
+serde.workspace = true
+tokio = { version = "1" }
+rand.version = "0.8"
+"""
+_names318 = _dp318.names(_CARGO318, "Cargo.toml")
+check("AN UNQUOTED DOTTED KEY IN A CARGO DEPENDENCIES TABLE NAMES ONLY ITS FIRST SEGMENT",
+      _names318 == {"serde", "tokio", "rand"}, saw=_names318)
+
+_POETRY318 = """
+[tool.poetry]
+name = "demo"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+"zope.interface" = "^5"
+"""
+_pnames318 = _dp318.names(_POETRY318, "pyproject.toml")
+check("A QUOTED DOTTED KEY (the package's real name has a dot) STAYS WHOLE",
+      "zope.interface" in _pnames318, saw=_pnames318)
+check("...AND POETRY'S OWN `python =` LINE IS STILL EXCLUDED (unrelated branch untouched)",
+      "python" not in _pnames318, saw=_pnames318)
+
+# The reported consequence itself: moving a dependency to the `.workspace = true` shorthand must not
+# read as a removal between two manifest revisions.
+_BEFORE318 = """
+[package]
+name = "demo"
+
+[dependencies]
+serde = "1"
+"""
+_AFTER318 = """
+[package]
+name = "demo"
+
+[dependencies]
+serde.workspace = true
+"""
+_before318 = _dp318.names(_BEFORE318, "Cargo.toml")
+_after318 = _dp318.names(_AFTER318, "Cargo.toml")
+check("MOVING `serde = \"1\"` TO `serde.workspace = true` IS NOT A REMOVAL",
+      not (_before318 - _after318),
+      saw="before=%r after=%r removed=%r" % (_before318, _after318, _before318 - _after318))
+check("...AND `serde` ITSELF IS STILL PRESENT ON BOTH SIDES OF THAT DIFF",
+      "serde" in _before318 and "serde" in _after318,
+      saw="before=%r after=%r" % (_before318, _after318))
+# ---- 319_a_wall_clock_appointment_keeps_its_hour_across_dst.py
+# ------------------ a wall-clock appointment keeps its hour across a daylight-saving change
+# 🐛 [2026-09-27] (R145 acc4, 2026-09-27) `schedule.parse_when()`'s clock branch built the target
+# with `now.replace(hour=, minute=)`, which kept `now`'s own FIXED offset (from `_aware`'s
+# `.astimezone()`) rather than the offset in force on the TARGET date. Measured with
+# TZ=America/Los_Angeles: at 2026-03-07 23:00, "9:00" fired at 09:00-08:00 = 10:00 local after
+# spring-forward; at 2026-10-31 23:00, "9:00" fired at 08:00 local, an hour early after fall-back.
+# Fixed by building the wall-clock target as a NAIVE local datetime on the right date first, then
+# calling `.astimezone()` on that naive value -- Python resolves a naive datetime's offset against
+# the system zone AT ITS OWN date, not `now`'s. Durations ("12h") are elapsed time from `now` and
+# were already correct; asserted here too, so a future edit cannot "fix" the clock branch by
+# breaking the duration branch instead.
+#
+# POSIX only: TZ names an IANA zone there, not on Windows (same boundary as check 280, R119).
+# TZ must be set in the subprocess's environment BEFORE the interpreter starts -- a later
+# `os.environ["TZ"] = ...` inside a running process is not guaranteed to be picked up.
+import json as _js319
+import subprocess as _sp319
+
+if sys.platform == "win32":
+    skip("  [SKIP] check 319 — TZ does not name an IANA zone on Windows, so a DST-crossing "
+         "fixture cannot be built the same way there")
+else:
+    _LIB319 = str(ROOT / "lib")
+
+    def _run319(now_src):
+        return _sp319.run(
+            [sys.executable, "-c",
+             "import sys, json; sys.path.insert(0, %r); import schedule\n"
+             "from datetime import datetime\n"
+             "r = schedule.parse_when('9:00', now=%s)\n"
+             "print(json.dumps(r.isoformat(timespec='seconds')))" % (_LIB319, now_src)],
+            env=dict(os.environ, TZ="America/Los_Angeles"),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+    _t_spring319 = _run319("datetime(2026, 3, 7, 23, 0)")
+    _t_springval319 = _js319.loads(_t_spring319.stdout or "null")
+    check("\"9:00\" FROM 2026-03-07 23:00 FIRES AT 09:00 LOCAL, NOT 10:00 "
+          "(the offset in force on the TARGET date, across spring-forward)",
+          _t_springval319 == "2026-03-08T09:00:00-07:00",
+          saw=(_t_springval319, _t_spring319.stderr[-300:]))
+
+    _t_fall319 = _run319("datetime(2026, 10, 31, 23, 0)")
+    _t_fallval319 = _js319.loads(_t_fall319.stdout or "null")
+    check("\"9:00\" FROM 2026-10-31 23:00 FIRES AT 09:00 LOCAL, NOT 08:00 "
+          "(the offset in force on the TARGET date, across fall-back)",
+          _t_fallval319 == "2026-11-01T09:00:00-08:00",
+          saw=(_t_fallval319, _t_fall319.stderr[-300:]))
+
+    _t_dur319 = _sp319.run(
+        [sys.executable, "-c",
+         "import sys, json; sys.path.insert(0, %r); import schedule\n"
+         "from datetime import datetime\n"
+         "now = schedule._aware(datetime(2026, 3, 7, 22, 0))\n"
+         "r = schedule.parse_when('12h', now=now)\n"
+         "print(json.dumps((r - now).total_seconds()))" % _LIB319],
+        env=dict(os.environ, TZ="America/Los_Angeles"),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    _t_durval319 = _js319.loads(_t_dur319.stdout or "null")
+    check("\"12h\" FROM 2026-03-07 22:00 IS STILL 12 ELAPSED HOURS "
+          "(a duration is unaffected by the clock-branch fix)",
+          _t_durval319 == 12 * 3600,
+          saw=(_t_durval319, _t_dur319.stderr[-300:]))
 # ---- 31_the_generic_separator_has_one_name.py
 # ------------------------------------------- derive the population, assert it was found
 # A reader of the published write-up proposed this, and it is the half of his critique that the
@@ -43166,6 +43710,200 @@ check("...and a planted sample proves the gate can actually fail: "
 check("...while the planted shared-name and language-bound rules still clear the same gate untouched",
       "R_SHARED_OK" not in _t_planted_flagged and "R_ROCKET_OK" not in _t_planted_flagged,
       saw=f"flagged={sorted(_t_planted_flagged)}")
+# ---- 320_an_environment_override_is_shown.py
+# ------------------ an environment variable overriding config.json is named, not silent
+# 🐛 [2026-09-27] (R169 acc4, 2026-09-27) chamnan reads four settings from the environment --
+# `CHAMNAN_OUTPUT_CEILING`, `CHAMNAN_READ_ONLY`, `CHAMNAN_CONTEXT_PROFILE`, `CHAMNAN_CONTEXT_AGENT`
+# -- and neither `chamnan-report --full` nor `chamnan-doctor` said anything about any of them: the
+# "Settings this repository has changed" section only diffs `.chamnan/config.json`, which an
+# exported variable never touches. A user who exported `CHAMNAN_OUTPUT_CEILING=5000` once got a
+# halved session block in every session afterward with nothing on disk to explain it.
+#
+# Run through the real CLIs via subprocess, not by importing the scripts -- both are `bin/` commands
+# with module-level side effects, and the defect was in what they PRINT, which only their actual
+# stdout proves.
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+_REPORT320 = ROOT / "bin" / "chamnan-report"
+_DOCTOR320 = ROOT / "bin" / "chamnan-doctor"
+
+
+def _run320(bin_path, repo, env_extra):
+    env = dict(os.environ)
+    env.pop("CHAMNAN_OUTPUT_CEILING", None)
+    env.pop("CHAMNAN_READ_ONLY", None)
+    env.pop("CHAMNAN_CONTEXT_PROFILE", None)
+    env.pop("CHAMNAN_CONTEXT_AGENT", None)
+    env.update(env_extra)
+    with open(os.devnull, "rb") as _null320:
+        return subprocess.run([sys.executable, str(bin_path), "--full"] if bin_path == _REPORT320
+                               else [sys.executable, str(bin_path)],
+                               cwd=str(repo), env=env, stdin=_null320,
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=60)
+
+
+_root320 = Path(tempfile.mkdtemp(prefix="chamnan-320-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=str(_root320), capture_output=True)
+    (_root320 / ".chamnan").mkdir()
+    _map320 = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                              cwd=str(_root320), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60)
+    check("chamnan-map bootstraps a workspace on the fixture",
+          (_root320 / ".chamnan" / "config.json").is_file(),
+          saw=_map320.stdout + _map320.stderr)
+
+    # -- CHAMNAN_OUTPUT_CEILING within bounds: named, and IN FORCE
+    _in_force320 = _run320(_REPORT320, _root320, {"CHAMNAN_OUTPUT_CEILING": "5000"})
+    check("chamnan-report --full exits 0 with CHAMNAN_OUTPUT_CEILING=5000",
+          _in_force320.returncode == 0, saw=_in_force320.stdout + _in_force320.stderr)
+    check("IT NAMES THE VARIABLE",
+          "CHAMNAN_OUTPUT_CEILING" in _in_force320.stdout, saw=_in_force320.stdout)
+    check("IT NAMES THE VALUE",
+          "5000" in _in_force320.stdout, saw=_in_force320.stdout)
+    check("IT SAYS THE VALUE IS IN FORCE",
+          "in force" in _in_force320.stdout, saw=_in_force320.stdout)
+
+    # -- CHAMNAN_OUTPUT_CEILING past the bound: named, and IGNORED
+    _ignored320 = _run320(_REPORT320, _root320, {"CHAMNAN_OUTPUT_CEILING": "999999"})
+    check("chamnan-report --full exits 0 with CHAMNAN_OUTPUT_CEILING=999999",
+          _ignored320.returncode == 0, saw=_ignored320.stdout + _ignored320.stderr)
+    check("A VALUE PAST THE CEILING'S BOUND IS REPORTED AS IGNORED, NOT IN FORCE",
+          "ignored" in _ignored320.stdout and "in force" not in _ignored320.stdout,
+          saw=_ignored320.stdout)
+
+    # -- nothing exported: nothing named
+    _none320 = _run320(_REPORT320, _root320, {})
+    check("chamnan-report --full exits 0 with nothing exported",
+          _none320.returncode == 0, saw=_none320.stdout + _none320.stderr)
+    check("THE VARIABLE NAME IS ABSENT WHEN NOTHING IS SET",
+          "CHAMNAN_OUTPUT_CEILING" not in _none320.stdout, saw=_none320.stdout)
+
+    # -- chamnan-doctor names it too when set
+    _doc_set320 = _run320(_DOCTOR320, _root320, {"CHAMNAN_OUTPUT_CEILING": "5000"})
+    check("chamnan-doctor names CHAMNAN_OUTPUT_CEILING when it is set",
+          "CHAMNAN_OUTPUT_CEILING" in _doc_set320.stdout, saw=_doc_set320.stdout)
+
+    _doc_none320 = _run320(_DOCTOR320, _root320, {})
+    check("chamnan-doctor stays silent about it when nothing is set",
+          "CHAMNAN_OUTPUT_CEILING" not in _doc_none320.stdout, saw=_doc_none320.stdout)
+finally:
+    shutil.rmtree(_root320, ignore_errors=True)
+# ---- 321_the_cut_warning_does_not_mark_the_next_block_cut.py
+# ------------------ the cut warning does not mark the next block as cut
+# 🐛 [2026-09-27] (self-measured) `blocklog.shape` marked a block `early` (cut mid-assembly) when its
+# body contained the bare words "stopped early". The warning `blocklog.check` leads the NEXT block
+# with reads "the last block stopped early", so after one real cut every later block recorded
+# itself as cut and the warning fired again, forever: 476 of 476 records since 2026-09-25 were
+# `early`, while a fresh firing on this workspace carried no exception sentence at all. Only the
+# hook's own exception sentence counts now.
+import blocklog as _bl321  # noqa: E402
+
+# Built from parts so this file does not itself carry the sentence it tests for.
+_exc321 = "\n_chamnan: this block " + "stopped early — KeyError. What is above is complete._\n"
+_warn321 = "_the last block " + "stopped early — it was cut, not shortened._\n\n## chamnan\nbody\n"
+
+check("a block carrying only the previous block's cut warning is not recorded as cut",
+      _bl321.shape(_warn321).get("early") is False,
+      f"SAW early={_bl321.shape(_warn321).get('early')!r}")
+check("a block carrying the hook's exception sentence is recorded as cut",
+      _bl321.shape("## chamnan\nbody" + _exc321).get("early") is True,
+      f"SAW early={_bl321.shape('## chamnan' + _exc321).get('early')!r}")
+# The hook writes the sentence as a literal (a lookup inside its except-handler could itself raise);
+# the constant blocklog matches on has to be inside that literal, or a real cut goes unrecorded.
+_hook321 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("the hook's exception literal contains blocklog.EXCEPTION_SENTENCE",
+      ('"\\n_chamnan: ' + _bl321.EXCEPTION_SENTENCE + ' — "') in _hook321,
+      f"SAW constant {_bl321.EXCEPTION_SENTENCE!r} not in the hook's literal")
+# ---- 322_a_font_encoded_pdf_is_not_printed_as_text.py
+# ------------------ a font-encoded PDF is not printed as text
+# 🐛 [2026-09-27] (R188 acc2, 2026-09-27) A macOS-produced PDF can write its text with a simple font
+# encoding and no ToUnicode map, so each `Tj` string is a raw glyph code, not a character. `peek_pdf`
+# decoded those codes as UTF-8 and printed them as the document's text anyway (reproduced on
+# `.chamnan/state/comparison/four_plugins_2026-09-22.pdf`: ~270 tokens of noise such as
+# `4 � ! ! .chamnan/state/comparison/ ! ...`), and the existing honest "no extractable text"
+# fallback never fired because the decoded text was non-empty.
+#
+# The fix judges the extracted `Tj` strings before printing: mostly single-character strings (one
+# `Tj` call per glyph -- measured 87.7% on the real sample, against 11.1% for the sparsest
+# realistic real generator and 0% for one `Tj` call per sentence) is the tell, not a plain
+# letter/digit/punctuation ratio (measured 96.3% "good" characters on the SAME garbage sample,
+# indistinguishable from a real sentence's 100% -- glyph codes that land in the printable ASCII
+# range read exactly like letters).
+#
+# Two synthetic PDFs, built the same way `05_pdf.py` builds its "real.pdf" fixture (a FlateDecode
+# stream holding `(...) Tj`): one shaped like the real defect (many single-character `Tj` calls),
+# one an ordinary readable sentence in one `Tj` call. The glyph-code one must print the honest line
+# and never the decoded noise; the readable one must still print its text, in both the default
+# preview and a `--find`-style call (`peek_pdf(path, find=...)` -- a hit inside glyph-code noise is
+# not a real match either).
+import zlib as _zl322                                                                # noqa: E402
+
+_d322 = Path(tempfile.mkdtemp(prefix="chamnan-fontenc-"))
+try:
+    import peek as _peek322
+
+    # Shaped like the real defect: one Tj call per glyph, mostly single characters, a couple of
+    # multi-byte UTF-8 continuation bytes standing alone (as seen in the real sample) so decoding
+    # produces a genuine U+FFFD too.
+    _glyphs322 = [b"4", b"\xd1", b"!", b"!", b"7", b'"', b"H", b",", b"F", b"?", b"2", b"B", b"C",
+                  b"&", b"0", b"K", b"H", b"<", b"3", b"=", b";", b">", b"=", b"L"]
+    _body322 = b" ".join(b"(" + g + b") Tj" for g in _glyphs322)
+    _garbage322 = _d322 / "glyphcoded.pdf"
+    _garbage322.write_bytes(b"%PDF-1.4\n/Type /Page\nstream\n" + _zl322.compress(_body322)
+                             + b"\nendstream\n")
+
+    _readable322 = _d322 / "readable.pdf"
+    _readable322.write_bytes(
+        b"%PDF-1.4\n/Type /Page\nstream\n"
+        + _zl322.compress(b"BT (Hello world, this is a normal readable sentence) Tj ET")
+        + b"\nendstream\n")
+
+    _got_garbage322 = "\n".join(_peek322.peek_pdf(_garbage322))
+    check("A GLYPH-CODED PDF PRINTS THE HONEST FONT-ENCODED LINE",
+          "font-encoded" in _got_garbage322 and "PDF text tool" in _got_garbage322,
+          saw=_got_garbage322)
+    check("...AND NEVER THE DECODED GLYPH NOISE",
+          "extracted text" not in _got_garbage322 and "�" not in _got_garbage322
+          and "4 " not in _got_garbage322,
+          saw=_got_garbage322)
+
+    _got_readable322 = "\n".join(_peek322.peek_pdf(_readable322))
+    check("...WHILE AN ORDINARY PDF STILL GIVES UP ITS TEXT",
+          "Hello world, this is a normal readable sentence" in _got_readable322,
+          saw=_got_readable322)
+    check("...AND IS NOT ITSELF MISJUDGED AS FONT-ENCODED",
+          "font-encoded" not in _got_readable322, saw=_got_readable322)
+
+    # The `find` path must apply the same judgement: no match reported inside garbage.
+    _got_find_garbage322 = "\n".join(_peek322.peek_pdf(_garbage322, find="H"))
+    check("A --find ON THE GLYPH-CODED PDF ALSO GETS THE HONEST LINE, NOT A FAKE MATCH",
+          "font-encoded" in _got_find_garbage322 and "match(es)" not in _got_find_garbage322,
+          saw=_got_find_garbage322)
+
+    _got_find_readable322 = "\n".join(_peek322.peek_pdf(_readable322, find="normal"))
+    check("...WHILE --find ON READABLE TEXT STILL WORKS",
+          "match(es)" in _got_find_readable322 and "normal" in _got_find_readable322,
+          saw=_got_find_readable322)
+
+    # The judgement itself, called directly, with the two ratios spelled out so a regression in
+    # either branch (single-character share, or the U+FFFD/control fallback) is caught even if the
+    # printed wording above ever changes.
+    check("THE HELPER ITSELF REJECTS THE GLYPH-CODE SHAPE",
+          _peek322._pdf_text_looks_like_text(["4", "\xd1", "!", "!", "7"]) is False)
+    check("...AND ACCEPTS ONE Tj CALL PER SENTENCE",
+          _peek322._pdf_text_looks_like_text(["Hello world, this is a normal readable sentence"])
+          is True)
+    check("...AND ACCEPTS ONE Tj CALL PER WORD (the sparsest realistic real generator)",
+          _peek322._pdf_text_looks_like_text(
+              ["The", "quick", "brown", "fox", "jumps", "over", "a", "lazy", "dog"]) is True)
+finally:
+    shutil.rmtree(_d322, ignore_errors=True)
 # ---- 32_the_stdlib_fallback_is_the_real_stdlib.py
 # ------------------------------------------- a hand-written list of what Python ships with
 # 🐛 [2026-09-09] `impact_mod._STDLIB` prefers `sys.stdlib_module_names` and falls back to a list typed

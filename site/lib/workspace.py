@@ -1713,6 +1713,49 @@ def _quarantine(path, why):
     return str(dest)
 
 
+def preserve_before_rewrite(path, text, why):
+    """Keep a corrupt store's bytes before a `rewrite_shared` mutate replaces them with fresh
+    content. Returns where the copy went, or "" when there was nothing to keep or the copy failed.
+
+    🐛 [2026-09-27] (R118 acc5, 2026-09-27) `_quarantine` above is for the READ side —
+    `load_json(..., quarantine=True)` moves a store aside the moment it fails to parse. The REWRITE
+    side had no equivalent: `schedule._rewrite` calls `ws.rewrite_shared(p, lambda text:
+    _dump(change(_rows_from(text))))`, and `_rows_from` returns `[]` for text that is not valid
+    JSON or has the wrong shape. So when `state/scheduled.json` was corrupt, the next `add()` or
+    `update()` built its fresh content from an empty list plus the one new record, and the write
+    below put THAT on disk — every earlier scheduled record gone, silently, with no copy kept. That
+    is exactly what `_quarantine`'s own docstring calls out: "Never a silent reset, and never a
+    delete — the corrupt file is the only copy of whatever was in it."
+
+    This cannot behave like `_quarantine` and move the real file aside: it runs INSIDE a
+    `rewrite_shared` mutate, with `path` locked and about to be overwritten by `rewrite_shared`
+    itself once this mutate returns. Moving or replacing `path` here would race the caller's own
+    write, so this only ever creates a NEW sibling file (`<name>.corrupt.<timestamp>`, same naming
+    as `_quarantine`) holding a copy of the text the mutate was handed, and appends the same record
+    shape to `QUARANTINE_LOG`. Never raises — a mutate that cannot preserve a copy must still be
+    allowed to proceed with the rewrite, the same judgement `_quarantine` makes for a read.
+    """
+    try:
+        if not text:
+            return ""
+        path = pathlib.Path(path)
+        dest = path.with_name(path.name + ".corrupt."
+                              + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"))
+        if not atomic_write_text(dest, text):
+            return ""
+    except Exception:              # noqa: BLE001 — a mutate must not fail because of this
+        return ""
+    try:
+        root = find_root(path)
+        if root is not None:
+            append_jsonl(root, QUARANTINE_LOG,
+                         {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                          "file": path.name, "why": str(why)[:120], "kept_as": dest.name}, 500)
+    except Exception:              # noqa: BLE001 — recording a recovery must not break one
+        pass
+    return str(dest)
+
+
 def load_json(path, want=dict, quarantine=False):
     """A JSON store read back, or an empty one of the right type. Never raises, never wrong-typed.
 
