@@ -248,6 +248,54 @@ def which_stores(wsdir, lines):
                           + (f" — EMPTY: {', '.join(unreadable)}" if unreadable else "")))
 
 
+# 🐛 [2026-09-27] (R169 acc4, 2026-09-27) Four environment variables override or replace a
+# `.chamnan/config.json` setting for this session, and this command had no configuration section at
+# all to say so -- `CHAMNAN_OUTPUT_CEILING` exported once, then forgotten, halved every session's
+# block with nothing here or in `config.json` to explain it. Reported like every other line here:
+# evidence, not reassurance, and silent when nothing is exported.
+_ENV_OVERRIDES = (
+    ("CHAMNAN_OUTPUT_CEILING", "the session's output byte ceiling"),
+    (ws.READ_ONLY_ENV, "every write this session makes becomes a no-op"),
+    ("CHAMNAN_CONTEXT_PROFILE", "which budget profile sizes the injected block"),
+    ("CHAMNAN_CONTEXT_AGENT", "which agent the injected block is written for"),
+)
+
+
+def _ceiling_env_status(raw):
+    """Whether `CHAMNAN_OUTPUT_CEILING`'s value is honoured or ignored -- the same rule
+    `hooks/chamnan_session_start.py:_ceiling_from_env` applies, read through `ws.upper_bound`
+    rather than a copied number so the two can never drift apart (see `chamnan-report`'s own copy
+    of this check).
+    """
+    try:
+        asked = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return "ignored — not a whole number"
+    cap = ws.upper_bound("output_byte_ceiling")
+    if asked > 0 and (cap is None or asked <= cap):
+        return "in force"
+    if asked <= 0:
+        return "ignored — must be positive"
+    return f"ignored — above the ceiling's bound of {cap}"
+
+
+def which_env_overrides(lines):
+    """Environment variables set for this session that override or bypass `config.json` entirely.
+
+    Neither `ok` nor `!!` fits an override that is working exactly as designed -- `UNKNOWN` is
+    reused here as "worth knowing", the same reading `which_plugin` gives an unresolved settings
+    file, so the line survives `--quiet` instead of being filtered out with the routine passes.
+    """
+    for var, what in _ENV_OVERRIDES:
+        val = os.environ.get(var)
+        if not val:
+            continue
+        text = f"{var}={val!r} is set — {what}"
+        if var == "CHAMNAN_OUTPUT_CEILING":
+            text += f" ({_ceiling_env_status(val)})"
+        lines.append((UNKNOWN, text))
+
+
 KNOWN_FLAGS = ("--quiet", "-q", "-h", "--help", "-v", "--version")
 
 
@@ -289,6 +337,7 @@ def main(argv):
     which_stores(wsdir, lines)
     which_quarantine(wsdir, lines)
     which_hook_crashes(wsdir, lines)
+    which_env_overrides(lines)
     # 🐛 [2026-09-24] (self-measured) Two more lines used to run `.chamnan/tools/silence.py` and
     # `invariant_map.py` from the repository this was pointed at — files that do not ship with
     # chamnan, so a checkout carrying either name had its own code run by a command documented

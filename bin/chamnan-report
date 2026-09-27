@@ -374,6 +374,41 @@ def collect(project_dir, want_opened=False, root=None):
     return list(best.values()), opened
 
 
+# 🐛 [2026-09-27] (R169 acc4, 2026-09-27) Four environment variables override or replace a
+# `.chamnan/config.json` setting for this session, and none of them showed up anywhere this command
+# prints: `CHAMNAN_OUTPUT_CEILING=5000` exported once, then forgotten, halved every session's block
+# with `config.json` reading exactly as shipped -- the "Settings this repository has changed" section
+# below is blind to it by construction, because it only diffs the file. Named here so it stays out of
+# the config diff itself (an env override is not a file setting, and conflating them would say a
+# config value changed when nothing on disk did).
+_ENV_OVERRIDES = (
+    ("CHAMNAN_OUTPUT_CEILING", "the session's output byte ceiling"),
+    (ws.READ_ONLY_ENV, "every write this session makes becomes a no-op"),
+    ("CHAMNAN_CONTEXT_PROFILE", "which budget profile sizes the injected block"),
+    ("CHAMNAN_CONTEXT_AGENT", "which agent the injected block is written for"),
+)
+
+
+def _ceiling_env_status(raw):
+    """Whether `CHAMNAN_OUTPUT_CEILING`'s value is honoured or ignored.
+
+    The same rule `hooks/chamnan_session_start.py:_ceiling_from_env` applies -- a value that is not
+    a positive integer, or that exceeds `ws.upper_bound("output_byte_ceiling")`, is ignored rather
+    than clamped. Calling `ws.upper_bound` here rather than restating its number is the point: the
+    bound and this status can no longer read differently just because one of them was copied by hand.
+    """
+    try:
+        asked = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return "ignored — not a whole number"
+    cap = ws.upper_bound("output_byte_ceiling")
+    if asked > 0 and (cap is None or asked <= cap):
+        return "in force"
+    if asked <= 0:
+        return "ignored — must be positive"
+    return f"ignored — above the ceiling's bound of {cap}"
+
+
 def print_inventory(root):
     """What actually exists in this workspace: store / entries / last written, zeros printed
     plainly, plus the two heuristic checks that gauge whether what is written here is really about
@@ -410,6 +445,21 @@ def print_inventory(root):
         _w = max(len(k) for k in _changed)
         for _k in _changed:
             print(f"  {_k:<{_w}}   {_cfg[_k]!r}   (default {ws.DEFAULT_CONFIG[_k]!r})")
+
+    # 🐛 [2026-09-27] (R169 acc4, 2026-09-27) See `_ENV_OVERRIDES` above -- these four bypass or
+    # override the file entirely, so they get their own lines rather than joining the diff above.
+    # Nothing printed here when none is set, same rule as the diff: an always-empty section is the
+    # kind of output that stops being read.
+    _env_set = [(_var, _what) for _var, _what in _ENV_OVERRIDES if os.environ.get(_var)]
+    if _env_set:
+        print("\nEnvironment overrides in effect")
+        _ew = max(len(_var) for _var, _ in _env_set)
+        for _var, _what in _env_set:
+            _val = os.environ[_var]
+            _line = f"  {_var:<{_ew}}   {_val!r}   ({_what}"
+            if _var == "CHAMNAN_OUTPUT_CEILING":
+                _line += f" — {_ceiling_env_status(_val)}"
+            print(_line + ")")
 
     # 🐛 "1 of 2 decision has no Rejected". The noun agrees with the TOTAL and the verb with the
     # count — `plural` was keyed to the count for both, so one decision out of two made the noun
