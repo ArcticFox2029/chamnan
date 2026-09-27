@@ -387,12 +387,15 @@ def stale_by(ws, index):
     return behind
 
 
-def _hits(entry, wanted, phrases, idf=None):
+def _hits(entry, wanted, phrases, idf=None, pidf=None):
     """Score one entry, and the fields that earned it. Returns `(score, why)`.
 
     `idf` is an optional `{term: weight}` for terms in `wanted`. It is `None` for every caller
     that predates it, and a missing term inside a supplied dict scores at 1.0 either way, so
     nothing but `query()` itself has to change.
+
+    `pidf` is the same idea for `phrases` (the non-ASCII, substring side of a query) -- an
+    optional `{phrase: weight}`. `None` for every caller that predates it.
 
     🐛 [2026-09-27] (R53, 2026-09-27) `phrases` (the non-ASCII, substring side of a query) are
     NFKC-normalised by `query()` before they get here, but the entry's own `title`/`blurb`/`text`
@@ -414,7 +417,7 @@ def _hits(entry, wanted, phrases, idf=None):
                 why.append(name)
         for p in phrases:
             if p in norm_value:
-                score += FIELD_WEIGHT[name]
+                score += FIELD_WEIGHT[name] * (pidf.get(p, 1.0) if pidf else 1.0)
                 why.append(name)
     body = entry.get("body", {})
     for w in wanted:
@@ -428,7 +431,7 @@ def _hits(entry, wanted, phrases, idf=None):
     norm_text = unicodedata.normalize("NFKC", text)
     for p in phrases:
         if p in norm_text:
-            score += FIELD_WEIGHT["body"] * 2
+            score += FIELD_WEIGHT["body"] * 2 * (pidf.get(p, 1.0) if pidf else 1.0)
             why.append("body")
     return score * float(entry.get("weight", 1.0)), why
 
@@ -471,11 +474,33 @@ def query(index, words, limit=6):
         df = sum(1 for e in docs_with_body if w in e["body"])
         idf[w] = math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
 
+    # 🐛 [2026-09-27] (R8 acc2, 2026-09-27) Every Thai/non-ASCII `phrases` hit added the same flat
+    # `FIELD_WEIGHT[...]` regardless of how many entries carried it, while ASCII `wanted` terms got
+    # the idf weighting just above -- so the substring side of a query had no way to prefer a rare
+    # phrase over a common one. Measured on this workspace's own index
+    # (`.chamnan/logs/recall_thai_idf_ab.py`, known-item trials with 4-7 char Thai substrings): MRR
+    # 0.921 -> 0.971, top1 85.3% -> 95.1%, top6 unchanged at 100%; with whole Thai runs 0.853 ->
+    # 0.955. `df` is entries whose NFKC-normalised text/title/blurb contains the phrase; `N` is the
+    # number of dict entries. Never written back into the index.
+    all_entries = [e for e in entries if isinstance(e, dict)]
+    n_entries = len(all_entries) or 1
+    pidf = {}
+    if phrases:
+        norm_fields = [
+            (unicodedata.normalize("NFKC", e.get("text", "")),
+             unicodedata.normalize("NFKC", e.get("title", "")),
+             unicodedata.normalize("NFKC", e.get("blurb", "")))
+            for e in all_entries
+        ]
+        for p in phrases:
+            df = sum(1 for t, ti, b in norm_fields if p in t or p in ti or p in b)
+            pidf[p] = math.log(1 + (n_entries - df + 0.5) / (df + 0.5))
+
     scored = []
     for e in entries:
         if not isinstance(e, dict):
             continue
-        s, why = _hits(e, wanted, phrases, idf)
+        s, why = _hits(e, wanted, phrases, idf, pidf)
         if s > 0:
             scored.append((s, e, sorted(set(why))))
     # Score first, then kind weight is already in the score, then path for a stable order between
