@@ -985,7 +985,11 @@ function applyLang(code){
 const PRE = [
   // Measured 2026-09-07 through THIS page in a real browser, re-measured on each release with
   // `site/remeasure.py`, which takes the same listing, the same filters and the same modules
-  // without one. Last re-measured 2026-09-24 for 1.31.1, all fourteen (1.30.0 was deployed without
+  // without one. Last re-measured 2026-09-27 for 1.33.0, all fourteen via Python 3.12 (1.32.0 was
+  // deployed without a re-measure, so this covers both): source moved on three — chalk/chalk 56 to
+  // 57 KB, gin-gonic/gin 673 to 674, tokio-rs/tokio 3,484 to 3,491 — and the injected column on one,
+  // yumiaura/myCat 6,455 to 6,415, with two ratios moving by one. Before that, 2026-09-24 for
+  // 1.31.1, all fourteen (1.30.0 was deployed without
   // a re-measure, so this covers both releases). Source moved on three because the repositories
   // moved: rails/rails 1,551 to 1,552 KB, django/django 2,209 to 2,210, tokio-rs/tokio 3,482 to
   // 3,484. The injected column moved on six, within 110 bytes either way — psf/requests 6,345 to
@@ -998,19 +1002,19 @@ const PRE = [
   //
   // The count in this comment used to say "twelve of the thirteen" over a table of fourteen rows.
   // Nothing re-counted it, which is the same defect the page exists to talk about.
-  ["chalk/chalk","JavaScript",56,2449,24],
+  ["chalk/chalk","JavaScript",57,2449,24],
   ["fastapi/fastapi","Python",61,6454,10],
   ["facebook/react","JavaScript",256,6649,39],
   ["psf/requests","Python",392,6408,63],
   ["pallets/flask","Python",576,6394,92],
   ["sinatra/sinatra","Ruby",663,6537,104],
-  ["gin-gonic/gin","Go",673,6563,105],
-  ["yumiaura/myCat","Mixed",719,6455,114],
+  ["gin-gonic/gin","Go",674,6563,105],
+  ["yumiaura/myCat","Mixed",719,6415,115],
   ["rust-lang/mdBook","Rust",1197,6470,190],
   ["rails/rails","Ruby",1552,6438,247],
   ["django/django","Python",2210,6245,362],
   ["torvalds/linux","C",3028,6603,470],
-  ["tokio-rs/tokio","Rust",3484,6441,554],
+  ["tokio-rs/tokio","Rust",3491,6441,555],
   ["vuejs/core","TypeScript",3799,6250,622],
 ];
 const kb = n => n >= 1024 ? (n/1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B";
