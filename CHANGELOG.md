@@ -320,7 +320,7 @@ refused; those are recorded, with the measurement that refused them, in the rese
 
 | | this release |
 |---|---|
-| checks | __N__/__N__ |
+| checks | 6221/6221 (local gate; CI green on Linux, macOS and Windows at Python 3.8 and 3.13, run 36317148739) |
 | Gotcha | 88/2,127 |
 
 The change from 1.32.0: 167 checks added in 46 new sections, none removed or resized (`python3 .chamnan/tools/test_census.py v1.32.0`, which counts `check(` calls in the source; the total above is the run's own).
