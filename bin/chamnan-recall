@@ -126,6 +126,29 @@ def main(argv):
 
     behind = recall.stale_by(wsdir, index)
     hits = recall.query(index, words, limit=None if "--all" in argv else 6)
+
+    # 🐛 [2026-09-27] (R135 acc5, 2026-09-27) `recall.stale_by` counts only store files NEWER than
+    # the index, so a file DELETED after the index was built was never counted, and this loop
+    # printed straight from the index either way. Reproduced: `memory/rules/zebra.md` (body
+    # "quokka"), `--reindex`, then remove the file — `chamnan-recall quokka` still printed
+    # `rule memory/rules/zebra.md` with no staleness notice. Resolve each hit's file the way the
+    # index actually stores it: a `symbol` entry's path is repo-relative (from `MAP.md`'s
+    # `## `path`` heading, see `recall._symbol_entries`); every other KIND's path is relative to
+    # the `.chamnan` workspace itself (`recall.paths_for`, and `recall._tool_entries` — tools live
+    # under `.chamnan/tools/`). A hit whose file is gone under either convention is dropped and
+    # counted as stale, so the existing reindex notice below fires. `recall.query` stays pure —
+    # this only filters what it already returned.
+    _live_hits317, _missing317 = [], 0
+    for _hit317 in hits:
+        _entry317 = _hit317[1]
+        _base317 = root if _entry317.get("kind") == "symbol" else wsdir
+        if (_base317 / _entry317.get("path", "")).is_file():
+            _live_hits317.append(_hit317)
+        else:
+            _missing317 += 1
+    hits = _live_hits317
+    behind += _missing317
+
     if not hits:
         print(f"chamnan: nothing in the stores matches {mdblock.as_quoted(' '.join(words), 60)}.")
         print("  That is an answer: what you are about to do is not recorded, so record it "
@@ -144,7 +167,7 @@ def main(argv):
         # Said AFTER the answer, not instead of it: a stale index still answers, and refusing to
         # answer until somebody reindexes would be the broad scan this command exists to avoid,
         # moved one step earlier.
-        print(f"\n  {behind} store file(s) changed since the index was built — "
+        print(f"\n  {behind} store file(s) changed or removed since the index was built — "
               f"`chamnan-recall --reindex` catches it up.")
     return 0
 
