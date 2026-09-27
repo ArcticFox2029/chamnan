@@ -28,6 +28,9 @@ import tokens
 import workspace as ws
 
 LOG = "logs/block_shape.jsonl"
+# The words the SessionStart hook writes when it catches an exception mid-block. Not the words of the
+# warning below that reports one: that warning is itself part of the next block.
+EXCEPTION_SENTENCE = "this block stopped early"
 KEEP = 400          # records, not days: one session a day still leaves a year of trend
 NAME_CHARS = 38     # a heading is an identifier here, not prose
 
@@ -53,7 +56,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
       bytes    the assembled block's size in UTF-8 bytes
       tok      its cost, script-weighted, from `tokens.estimate`
       sec      {section heading: bytes} — what the budget was actually spent on
-      early    the block ended with the host's "stopped early" sentence: it was CUT, not shortened
+      early    the block carries the hook's own "this block stopped early" sentence: it was CUT, not shortened
       ceiling  the byte limit in force for this firing
       t        when it was assembled
       src      why SessionStart fired: startup, resume, compact, clear or fork
@@ -125,7 +128,13 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     rec = {"bytes": len(body.encode("utf-8")), "sec": sections,
            # The hook catches every exception and ends the block with this sentence rather than
            # failing, which is right — and is exactly why the truncation went unseen for hours.
-           "early": "stopped early" in body,
+           # 🐛 [2026-09-27] (self-measured) This matched the bare words "stopped early", and the
+           # warning `check()` puts at the top of the NEXT block says "the last block stopped
+           # early" -- so one real cut made every later block record itself as cut, and the
+           # warning re-fired forever. Measured on this workspace: 476 of 476 records since
+           # 2026-09-25 marked early, while a fresh firing carried no exception sentence at all.
+           # Only the hook's own exception sentence counts now.
+           "early": EXCEPTION_SENTENCE in body,
            # 🐛 [2026-09-18] (R20.3) The block's token cost used to be derived from a fixed
            # bytes-per-token constant, measured 6% low on a block of mixed Thai and English.
            #
