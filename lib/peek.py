@@ -528,6 +528,40 @@ def peek_sqlite(path, find=None):
 
 
 # ------------------------------------------------------------------ pdf
+# 🐛 [2026-09-27] (R188 acc2, 2026-09-27) A macOS-produced PDF can write its text with a *simple*
+# font encoding and no ToUnicode map: each `Tj` string is a run of raw glyph codes, not characters,
+# and only a ToUnicode CMap can translate that back to readable text -- which this module (stdlib
+# zlib, no PDF library) does not have. `chamnan-peek` on that file printed the glyph codes anyway,
+# decoded as UTF-8, as if they were the document's text: 270-odd tokens of noise such as
+# `4 � ! ! .chamnan/state/comparison/ ! ...`, and the honest "no extractable text" fallback
+# below never fired because `joined` was non-empty.
+# The obvious guard -- the share of letters/digits/whitespace/punctuation (Unicode categories L, N,
+# Zs, and ordinary punctuation) in the joined text -- does NOT catch this sample: measured 96.3% on
+# the garbage (glyph codes that happen to land in the printable ASCII range look exactly like
+# letters) against 100% on real sentences, no usable margin. The actual tell is structural: this
+# generator emits one `Tj` call per GLYPH, so almost every extracted string is one character.
+# Measured on the same sample: 87.7% of its 780 non-blank `Tj` strings are a single character.
+# Real generators do not do this even in the sparsest realistic case -- one `Tj` call per WORD
+# (measured 11.1% single-character strings, only "a" qualifying) or one call per sentence
+# (measured 0%). 11.1% vs 87.7% is a wide gap, so the cut sits at the midpoint (50%) with headroom
+# either side. U+FFFD / C0 control characters are kept as a second, independent trigger (measured
+# 0.9% on the garbage sample, 0% on real text) for a glyph scheme whose codes are NOT printable
+# ASCII and so would not trip the single-character check.
+def _pdf_text_looks_like_text(entries):
+    """False when `entries` (the decoded `Tj` strings) look like raw font glyph codes rather than
+    readable text -- see the measurement above. `entries` may include blank/whitespace-only strings
+    (real inter-word spacing); those are dropped before judging."""
+    stripped = [e.strip() for e in entries if e.strip()]
+    if not stripped:
+        return True  # nothing to judge; the caller already handles the fully-empty case
+    single = sum(1 for e in stripped if len(e) == 1)
+    if single / len(stripped) > 0.5:
+        return False
+    joined = "".join(stripped)
+    bad = sum(1 for ch in joined if ch == "\ufffd" or (ord(ch) < 0x20 and ch not in "\t\n\r"))
+    return bad / len(joined) < 0.05
+
+
 def peek_pdf(path, find=None):
     import zlib
     # 🐛 [2026-09-09] The one structured handler in this file with no ceiling. Every sibling has
@@ -588,7 +622,12 @@ def peek_pdf(path, find=None):
             continue
         text += [t.decode("utf-8", "replace") for t in re.findall(rb"\((.{1,200}?)\)\s*Tj", body)]
     joined = " ".join(text)
-    if find and joined:
+    if joined and not _pdf_text_looks_like_text(text):
+        # Same judgement for both the default preview and `find` -- a hit inside glyph-code noise
+        # is not a real match either.
+        out.append("page text is font-encoded (glyph codes without a readable text layer this "
+                    "reader can decode) — a PDF text tool is needed")
+    elif find and joined:
         hits = [m.start() for m in re.finditer(re.escape(find), joined, re.I)][:5]
         out.append(f"\n{len(hits)} match(es) for {find!r}:")
         out += ["  …" + joined[max(0, h-70):h+90] + "…" for h in hits]
