@@ -21,7 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-_Nothing yet._
+- **Japanese and Korean file names no longer read as mixed-script.** The look-alike-letter check
+  named each character's script separately, so ordinary Japanese (`住所ファイル`, kanji with katakana)
+  and Korean with Han characters were flagged like a Latin word hiding a Cyrillic letter. Han,
+  Hiragana, Katakana and Hangul now count as one writing system; a Cyrillic letter inside a Latin
+  word is still caught.
 
 ## What's new in 1.33.0
 
