@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Thai searches containing ำ (ทำ, จำ, คำ, น้ำ) found nothing in `chamnan-recall`.** A query
+  phrase was NFKC-normalised before matching, but the entry text it was matched against was not,
+  and NFKC decomposes SARA AM (ำ) into two other characters — so a phrase holding ำ never matched
+  the same character stored whole. `_hits` and `why_line` now normalise the field text at compare
+  time too; stored indexes are unchanged.
+
 - **A dependency name in `pyproject.toml` is no longer lost when the requirement carries a URL
   fragment or a `]` inside an environment marker.** The TOML reader cut a line at its first `#` and
   closed an array at its first `]`, wherever either character sat — including inside a quoted

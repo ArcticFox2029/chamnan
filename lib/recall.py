@@ -393,17 +393,27 @@ def _hits(entry, wanted, phrases, idf=None):
     `idf` is an optional `{term: weight}` for terms in `wanted`. It is `None` for every caller
     that predates it, and a missing term inside a supplied dict scores at 1.0 either way, so
     nothing but `query()` itself has to change.
+
+    🐛 [2026-09-27] (R53, 2026-09-27) `phrases` (the non-ASCII, substring side of a query) are
+    NFKC-normalised by `query()` before they get here, but the entry's own `title`/`blurb`/`text`
+    were compared un-normalised -- `build()` never normalises what it stores. NFKC decomposes Thai
+    SARA AM (U+0E33, ำ) into NIKHAHIT + SARA AA (U+0E4D U+0E32), so a phrase containing ำ no longer
+    matched the very same character stored whole. Measured on this workspace's own index (1,322
+    entries, 44 containing ำ): the queries ทำ, จำ, คำ, น้ำ each returned 0 hits. Fixed by
+    normalising the field text at compare time too (once per field per call, not once per phrase);
+    `build()`'s stored shape is unchanged, so old indexes keep working.
     """
     score, why = 0.0, []
     fields = (("title", entry.get("title", "")), ("blurb", entry.get("blurb", "")))
     for name, value in fields:
         low = value.lower()
+        norm_value = unicodedata.normalize("NFKC", value)
         for w in wanted:
             if w in terms(low):
                 score += FIELD_WEIGHT[name] * (idf.get(w, 1.0) if idf else 1.0)
                 why.append(name)
         for p in phrases:
-            if p in value:
+            if p in norm_value:
                 score += FIELD_WEIGHT[name]
                 why.append(name)
     body = entry.get("body", {})
@@ -415,8 +425,9 @@ def _hits(entry, wanted, phrases, idf=None):
             score += FIELD_WEIGHT["body"] * (1 + min(n, 20) ** 0.5) * (idf.get(w, 1.0) if idf else 1.0)
             why.append("body")
     text = entry.get("text", "")
+    norm_text = unicodedata.normalize("NFKC", text)
     for p in phrases:
-        if p in text:
+        if p in norm_text:
             score += FIELD_WEIGHT["body"] * 2
             why.append("body")
     return score * float(entry.get("weight", 1.0)), why
@@ -478,7 +489,9 @@ def why_line(entry, why, wanted, phrases):
     where = " and ".join(w for w in ("title", "blurb", "body") if w in why) or "body"
     needles = [w for w in wanted if w in terms(entry.get("title", "") + " " +
                                                entry.get("blurb", ""))] or wanted
-    found = [p for p in phrases if p in entry.get("text", "")]
+    # 🐛 [2026-09-27] (R53, 2026-09-27) same NFKC mismatch as `_hits` -- normalise the stored text
+    # before comparing it against a phrase that `query()` already normalised.
+    found = [p for p in phrases if p in unicodedata.normalize("NFKC", entry.get("text", ""))]
     # De-duplicated in order: a term that matched the title AND the body was being named twice,
     # which reads as two separate reasons to open the file when it is one.
     seen, named_terms = set(), []
