@@ -107,6 +107,19 @@ def terms(text):
     return out
 
 
+# 🎯 [2026-09-27] (R91 acc4, 2026-09-27) A crude suffix strip, not a real stemmer -- exactly
+# enough to group `boundary`/`boundaries` and `redact`/`redactor`/`redaction`/`redacted` without a
+# dependency. Words ending in "ss" are excluded (a plural-looking "ss" strip would mangle short
+# words like "process"), and the result must stay at least 4 characters so it cannot collapse
+# unrelated short words onto the same stem.
+def stem(w):
+    for suf, rep in (("ies", "y"), ("ied", "y"), ("ying", "y"), ("ing", ""), ("ion", ""), ("ed", ""),
+                     ("ors", ""), ("or", ""), ("es", ""), ("s", "")):
+        if w.endswith(suf) and not w.endswith("ss") and len(w) - len(suf) + len(rep) >= 4:
+            return w[: len(w) - len(suf)] + rep
+    return w
+
+
 def _title_of(path, text):
     """The first `# ` heading, else a frontmatter `title:`, else the filename made readable."""
     head = text.split("\n", 60)[:60]
@@ -496,11 +509,37 @@ def query(index, words, limit=6):
             df = sum(1 for t, ti, b in norm_fields if p in t or p in ti or p in b)
             pidf[p] = math.log(1 + (n_entries - df + 0.5) / (df + 0.5))
 
+    # 🎯 [2026-09-27] (R91 acc4, 2026-09-27) An exact word match found only the entries carrying
+    # that literal form -- `boundaries` never found the 11 entries that only say `boundary`, and the
+    # redact/redactor/redaction/redacted family spread 24 entries over four forms nobody's query
+    # covered at once. Every OTHER indexed form sharing a wanted word's stem is now scored too, at
+    # half weight (an exact match is still the better signal), inheriting the idf of the wanted word
+    # it came from. Measured (`.chamnan/logs/recall_word_forms_ab.py`): queries in a different form
+    # MRR 0.414 -> 0.531, top6 65.6% -> 81.2%; exact-word queries MRR 0.651 -> 0.635 (top6 90.0% ->
+    # 89.0%) -- accepted trade.
+    extra_terms = {}
+    if wanted:
+        wanted_stems = {stem(w) for w in wanted}
+        forms_of_stem = {}
+        for e in docs_with_body:
+            for t in e["body"]:
+                st = stem(t)
+                if st in wanted_stems:
+                    forms_of_stem.setdefault(st, set()).add(t)
+        for w in wanted:
+            for form in forms_of_stem.get(stem(w), ()):
+                if form != w and form not in extra_terms:
+                    extra_terms[form] = idf.get(w, 1.0)
+
     scored = []
     for e in entries:
         if not isinstance(e, dict):
             continue
         s, why = _hits(e, wanted, phrases, idf, pidf)
+        if extra_terms:
+            fs, fwhy = _hits(e, list(extra_terms), [], extra_terms)
+            s += 0.5 * fs
+            why += fwhy
         if s > 0:
             scored.append((s, e, sorted(set(why))))
     # Score first, then kind weight is already in the score, then path for a stable order between
