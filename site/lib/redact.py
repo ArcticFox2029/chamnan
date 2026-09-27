@@ -1040,6 +1040,35 @@ COPULA_SECRET = _lazy(lambda: re.compile(
 XML_SECRET = _lazy(lambda: re.compile(
     r"(<\s*(?:\w+:)?[\w.-]*?(?:" + SECRET_WORDS + r")[\w.-]*\s*(?:\s[^>]*)?>)"
     r"([^<>]{4,})(</)", re.I))
+# 🐛 [2026-09-28] (R214 acc4, 2026-09-27) A secret whose NAME and VALUE sit in two SIBLING fields,
+# not one, passed through every rule above untouched. `XML_SECRET` requires the credential word to
+# be part of the ELEMENT's own tag name; none of the assignment rules apply either, because the
+# attribute holding the credential's value is called `value` -- never itself a secret word -- and
+# `[:=]` never sits between a name and its own value in this shape at all. `<Variable
+# name="SERVICE_SECRET_KEY" value="..."/>`, `<add key="ApiToken" value="..." />` and the JSON
+# equivalent below are how a .NET `web.config`, a Java properties-as-XML file and Maven all write a
+# NAMED credential entry, and it is the same shape ECS task definitions, Kubernetes env arrays and
+# GitHub Actions write in JSON: `{"name": "DB_PASSWORD", "value": "..."}`.
+#
+# The name-field is `name=`/`key=`/`id=` on the XML side; the vocabulary is reused wholesale from
+# `_SECRET_WORD_ANYWHERE` (== `SECRET_WORDS`) rather than duplicated, so "author is not auth" and
+# every other exclusion already carried by that alternation applies here for free. Bounded to
+# `[^<>]` so a match can never cross into a different tag, the same discipline `XML_SECRET` already
+# uses two lines up.
+XML_NAME_VALUE_PAIR_SECRET = _lazy(lambda: re.compile(
+    r"(?P<head><\s*[\w:.-]+\b[^<>]*?\b(?:name|key|id)\s*=\s*(?P<nq>['\"])(?P<nameval>[^'\"]*)(?P=nq)"
+    r"[^<>]*?\bvalue\s*=\s*(?P<vq>['\"]))"
+    r"(?P<val>[^'\"]{1,})"
+    r"(?P=vq)", re.I))
+# The JSON twin: a `"name"`/`"key"` member's STRING VALUE names the credential, and the sibling
+# `"value"` member a line later holds it. Deliberately adjacent (only a comma and whitespace, which
+# spans a pretty-printed newline and indent the way a real ECS/Kubernetes manifest is formatted,
+# between the two members) rather than reaching across the whole object -- the shape this exists
+# for never puts anything else between `name` and `value`, and reaching further would risk pairing
+# an unrelated later `"value"` member with this `"name"`.
+JSON_NAME_VALUE_PAIR_SECRET = _lazy(lambda: re.compile(
+    r'(?P<head>"(?:name|key)"\s*:\s*"(?P<nameval>[^"]*)"\s*,\s*"value"\s*:\s*")'
+    r'(?P<val>[^"]{1,})"', re.I))
 # The hash rocket. After `[:=]` matches the `=`, `\s*` cannot cross the `>` — so the quoted rule
 # found no quote and the bare rule captured `>` alone and failed its six-character floor. This is
 # how `config/database.php` is written in every Laravel app and every Rails `.rb` config.
@@ -2999,6 +3028,21 @@ def scrub(text, windowed=True, *, _unmask=True):
     text = XML_SECRET.sub(
         lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
+    # 🐛 [2026-09-28] (R214 acc4, 2026-09-27) The name/value SIBLING-FIELD shape: the credential word
+    # lives in a `name=`/`key=`/`id=` attribute, or a JSON `"name"`/`"key"` member, and the actual
+    # secret sits in a separate `value=` attribute or `"value"` member beside it. Same guard as
+    # `XML_SECRET` above -- a name that only DESCRIBES a mechanism, or a value that is a placeholder,
+    # is exempted the same way.
+    text = XML_NAME_VALUE_PAIR_SECRET.sub(
+        lambda m: m.group(0)
+        if not _SECRET_WORD_ANYWHERE.search(m.group("nameval"))
+        or _names_a_mechanism(m.group("nameval"), m.group("val"))
+        else f"{m.group('head')}{PLACEHOLDER}{m.group('vq')}", text)
+    text = JSON_NAME_VALUE_PAIR_SECRET.sub(
+        lambda m: m.group(0)
+        if not _SECRET_WORD_ANYWHERE.search(m.group("nameval"))
+        or _names_a_mechanism(m.group("nameval"), m.group("val"))
+        else f"{m.group('head')}{PLACEHOLDER}\"", text)
     # After the assignment rules, never before: a line that any of them can read is read by them,
     # and this is the loosest rule in the file. It fires only where no separator exists at all.
     #

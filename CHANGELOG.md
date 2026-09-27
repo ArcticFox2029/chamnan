@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A secret named in one field and held in a sibling field is now redacted.** `<Variable
+  name="SERVICE_SECRET_KEY" value="..."/>`, `<add key="ApiToken" value="..." />` and
+  `{"name": "DB_PASSWORD", "value": "..."}` — the shape ECS task definitions, Kubernetes env
+  arrays, GitHub Actions and .NET/Java XML configs all write — used to pass through untouched,
+  because the credential's name and its value sit in two different attributes or JSON members
+  rather than one.
 - **Japanese and Korean file names no longer read as mixed-script.** The look-alike-letter check
   named each character's script separately, so ordinary Japanese (`住所ファイル`, kanji with katakana)
   and Korean with Han characters were flagged like a Latin word hiding a Cyrillic letter. Han,
