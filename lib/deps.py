@@ -109,6 +109,32 @@ def _array_still_open(line):
     return True
 
 
+def _toml_header_segments(line):
+    """The dotted segments of a TOML table header, lowercased, with quoted segments kept whole.
+
+    `[target.'cfg(unix)'.dependencies.libc]` is four segments, not six: the dots inside the quoted
+    `cfg(...)` belong to one key. Array-of-table headers (`[[bin]]`) come back like any other.
+    """
+    inner = line.strip().lstrip("[").rstrip("]").strip()
+    segments, current, quote = [], "", ""
+    for ch in inner:
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                current += ch
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+        elif ch == ".":
+            segments.append(current.strip().lower())
+            current = ""
+        else:
+            current += ch
+    segments.append(current.strip().lower())
+    return [s for s in segments if s]
+
+
 def _toml_names(text):
     """Names from a TOML manifest, read by TABLE rather than by any `key =` line.
 
@@ -152,6 +178,18 @@ def _toml_names(text):
             continue
         if line.startswith("["):
             table = line.strip("[]").strip().strip('"').lower()
+            # 🐛 [2026-09-28] (R99 acc4, 2026-09-28) A package declared as its own subtable --
+            # Cargo's `[dependencies.serde_json]`, `[dev-dependencies.proptest]`,
+            # `[target.'cfg(windows)'.dependencies.winapi]`, `[workspace.dependencies.tokio]`,
+            # Poetry's `[tool.poetry.dependencies.httpx]` -- was never read: the header's name did
+            # not END in `dependencies`, so it was not a dependencies table, and nothing looked at
+            # the header itself. Measured against tomllib on 16 legal dependency shapes, this was
+            # the one that disagreed, in all 5 of its variants. The package is the header's last
+            # segment when the segment before it is a dependencies table.
+            segments = _toml_header_segments(line)
+            if len(segments) >= 2 and (segments[-2].endswith("dependencies")
+                                       or segments[-2] in ("packages", "dev-packages")):
+                out.add(segments[-1])
             continue
         m = _TOML_LINE.match(line)
         if not m:

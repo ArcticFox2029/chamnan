@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A dependency declared as its own table is now read.** `[dependencies.serde_json]`, and its
+  `dev-`, `target.…`, `workspace.` and Poetry variants, were invisible to the dependency reader, so
+  re-adding a package your repository had removed went unnoticed when it was written that way.
 - **`chamnan-context` no longer echoes terminal control characters in its error messages.** Its
   refusals wrote straight to stderr, skipping the filter every other line of output goes through,
   so a path containing an escape sequence reached the terminal unfiltered.
