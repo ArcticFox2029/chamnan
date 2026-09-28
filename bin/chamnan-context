@@ -297,6 +297,17 @@ def main():
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
+    # 🐛 [2026-09-28] (R69 acc2, 2026-09-28) `ws.workspace(root)` is `find_root(root) / ".chamnan"`,
+    # and `find_root` walks UP from `root` looking for an ancestor workspace -- so a nonexistent
+    # `root` under a real repository (`chamnan-context zzq` inside this checkout) still found this
+    # repository's own `.chamnan/` on an ancestor and passed the check below. The crash then came
+    # three calls deeper, in `_capture_session_start`'s `os.chdir(str(root))`, as an uncaught
+    # `FileNotFoundError` traceback instead of a refusal. Checking that `root` itself exists, before
+    # anything asks what its ancestors are, is the same case `chamnan-map` and `chamnan-gotcha`
+    # already refuse this way.
+    if not root.is_dir():
+        sys.stderr.write(f"chamnan: no such directory: {root}\n")
+        return 1
     if not ws.workspace(root).is_dir():
         # 🐛 This named a Claude Code slash command and nothing else — to a reader who, by the
         # very fact of running this command in a terminal, may not have Claude Code at all. The

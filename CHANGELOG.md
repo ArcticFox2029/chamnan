@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-context` given a folder that does not exist says so instead of crashing.** Inside a
+  repository it found the repository's own workspace above the missing folder, passed its check,
+  and then died with a Python traceback. It now refuses with `chamnan: no such directory: <path>`,
+  like the other commands that take a path.
 - **A rule check can no longer hang session start with a slow pattern.** A `**Check:**` regex with two
   repeated parts that can match the same text side by side — `\w+\w+$`, `\s*\s*x`, `.*=.*=.*;` — was
   admitted, and took 22 seconds on one 2,000-character line. Such a pattern is now refused as a
