@@ -184,8 +184,28 @@ def paths_for(ws_dir, folder):
     return []
 
 
-def _entry(ws_dir, path, kind, weight):
-    """One document, reduced to what a query needs and nothing it does not."""
+# The fields a reused entry must carry for `build(ws, previous=...)` to trust it without
+# re-reading the file. `size` and `ig` are new (see `_entry` and `build` below); an index written
+# before this change lacks them and every entry from it fails this test, so it is rebuilt exactly
+# as before.
+_REUSABLE_ENTRY_FIELDS = ("path", "kind", "weight", "title", "blurb", "tt", "bt", "body", "text",
+                          "mtime", "size", "ig")
+
+
+def _entry(ws_dir, path, kind, weight, prev=None):
+    """One document, reduced to what a query needs and nothing it does not.
+
+    🎯 [2026-09-28] (R122 acc2, 2026-09-28) `recall.build(ws)` profiled at 14.2s on this
+    repository's own workspace (1,328 entries), 12.6s (89%) of it inside `redact.scrub`, called
+    here for every store note's text, title and blurb on EVERY build -- so `chamnan-recall
+    --reindex` re-scrubbed every unchanged note to pick up the one that actually changed. `prev`
+    is the matching entry from the previous index, keyed by path, when one exists. A note whose
+    `path`, `mtime_ns` AND on-disk `size` all still match `prev` is returned as a COPY of `prev`
+    (never the same dict `build()`'s caller may still hold, since the caller reassigns `"body"`
+    and `"ig"` in place afterward) instead of being read and scrubbed again. `mtime` alone is not
+    enough: two different byte counts can share a coarse mtime on some filesystems, and `size` is
+    one `stat()` field that was already being paid for.
+    """
     # 🐛 [2026-09-12, R2 agent 1 F5] `rglob` returns whatever is at the path, and a committed
     # symlink at `.chamnan/memory/rules/x.md` pointing outside the workspace was followed: the
     # target's content became this entry's title and blurb and its raw bytes were written into the
@@ -209,11 +229,16 @@ def _entry(ws_dir, path, kind, weight):
     # old text: indexed title stayed "Old title" while the file read "# New title", and `stale_by`
     # never flagged it. Taking the stat FIRST means a concurrent edit can only leave the file's real
     # mtime newer than the one recorded here -- worst case the file is flagged stale one build early
-    # (safe), never missed (unsafe).
+    # (safe), never missed (unsafe). The same stat also gives the size the reuse test above needs,
+    # for free.
     try:
-        mtime = path.stat().st_mtime_ns
+        st = path.stat()
     except OSError:
         return None
+    mtime, size = st.st_mtime_ns, st.st_size
+    if (isinstance(prev, dict) and prev.get("mtime") == mtime and prev.get("size") == size
+            and all(k in prev for k in _REUSABLE_ENTRY_FIELDS)):
+        return dict(prev)
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
@@ -241,6 +266,9 @@ def _entry(ws_dir, path, kind, weight):
         # on every query -- see the header on `_hits` for what this saves.
         "tt": terms(title.lower()),
         "bt": terms(blurb.lower()),
+        # `body` is the FULL, unfiltered term-count map at this point -- `build()`'s closing pass
+        # is what splits it into `body`/`ig` (kept/ignored) once `common` is known. A freshly built
+        # entry has no `ig` key yet; `build()` treats that as `{}` (nothing stripped so far).
         "body": body,
         # 🐛 Kept as `text[:4000]` first, and the index came out at 547 KB against a 407 KB
         # corpus — an index larger than the thing it indexes is not an index. Only the lines
@@ -249,6 +277,7 @@ def _entry(ws_dir, path, kind, weight):
         # the bytes and it keeps every Thai line that exists.
         "text": _non_ascii_lines(text),
         "mtime": mtime,
+        "size": size,
     }
 
 
@@ -371,12 +400,62 @@ def sources(ws):
     return out
 
 
-def build(ws):
-    """Walk the stores once and return the index. The only function here that reads them."""
+# Which `KINDS` entries are single-file-per-entry, so a stat can decide staleness cheaply. Tool
+# and symbol entries have no such per-entry file -- see the note on `build()`'s `previous` below.
+_STORE_KINDS = {kind for _folder, kind, _weight in KINDS}
+
+
+def build(ws, previous=None):
+    """Walk the stores once and return the index. The only function here that reads them.
+
+    🎯 [2026-09-28] (R122 acc2, 2026-09-28) Profiled at 14.2s on this repository's own workspace
+    (1,328 entries), 12.6s (89%) inside `redact.scrub` -- called once per store note on every
+    build, so `chamnan-recall --reindex` re-scrubbed 1,327 unchanged notes to pick up the one that
+    changed. `previous` is the last-built index, when the caller has one; `_entry()` reuses a
+    store note's previous entry outright when its path, mtime and size all still match (see its
+    own docstring), skipping the read and the scrub. Only store notes (`_STORE_KINDS`) are
+    reused: tool entries come from one shared `tools/index.json` and carry no real per-entry
+    mtime (it is a constant `0` today), and symbol entries come from parsing the whole of
+    `MAP.md` in one pass with no per-symbol file to stat -- neither has the per-entry file this
+    cheap test needs, so both are rebuilt in full on every call, exactly as before this change.
+    A fresh build (`previous=None`, or a `previous` that is not a dict) reuses nothing and
+    behaves exactly as it always has.
+
+    🐛 [2026-09-28] (R122 acc2, 2026-09-28) The first version of this reuse made document
+    frequency an ESTIMATE for a reused entry, by assuming it still carried every term the
+    PREVIOUS build had ever called common. Measured wrong two ways: a term that later fell below
+    the 60% bar could never be released again, because every reused entry kept voting for it
+    forever; and a reused SHORT note (originally <=30 raw terms) could be miscounted as a
+    qualifying "document" once its stripped terms were assumed back in, changing `n` itself. Both
+    are fixed by never estimating: every store-note entry now also carries `"ig"` -- exactly the
+    `{term: count}` pairs `common` removed from its `body` last time, `{}` when none were. `full =
+    {**e["body"], **e.get("ig", {})}` reconstructs each entry's TRUE, complete term-count map
+    (a freshly built entry has no `"ig"` yet, so `full` is just its `body`, unchanged from
+    before). Document frequency, `n`, and the final `body`/`ig` split are all computed from `full`
+    for every entry, reused or fresh -- exact, not approximated, so an index rebuilt after however
+    many incremental passes always equals one built from scratch of the same state. Measured: 78
+    of this workspace's store entries carry a non-empty `ig` (1,164 (entry, term) pairs total,
+    about 17 KB of JSON against a 1.1 MB index) -- cheap to carry on every entry that can use it.
+
+    🐛 [2026-09-28] (R122 acc2, 2026-09-28) `ig` was first set on EVERY entry this function
+    returns, tool and symbol included, "for consistency" -- but tool and symbol entries are never
+    reused (see above: neither has a cheap per-entry staleness test), so nothing ever reads their
+    `ig` back. On this workspace that was 41 KB of the 1.49 MB index carrying data no code path
+    consults. `ig` is now set ONLY on store-note entries (`kind in _STORE_KINDS`, the only kind
+    the closing loop below ever puts it on); a tool or symbol entry carries no `ig` key at all.
+    """
+    prev_by_path = {}
+    if isinstance(previous, dict):
+        for e in previous.get("entries", []) or []:
+            if (isinstance(e, dict) and e.get("kind") in _STORE_KINDS
+                    and isinstance(e.get("path"), str)):
+                prev_by_path[e["path"]] = e
+
     entries, newest = [], 0
     for folder, kind, weight in KINDS:
         for path in paths_for(ws, folder):
-            e = _entry(ws, path, kind, weight)
+            rel = path.relative_to(ws).as_posix()
+            e = _entry(ws, path, kind, weight, prev_by_path.get(rel))
             if e:
                 entries.append(e)
                 newest = max(newest, e["mtime"])
@@ -391,15 +470,26 @@ def build(ws):
     # Document frequency over the DOCUMENTS, not over every entry: 69 of these are registered
     # tools contributing a name and one sentence each, and counting them quadrupled the denominator
     # so that only the single word "the" cleared the bar.
-    docs = [e for e in entries if len(e["body"]) > 30]
+    #
+    # `full` is each entry's TRUE, unfiltered term-count map -- see the 🐛 above for why this must
+    # never be estimated. `full_by_entry` is built once and read three times (the `docs` gate, the
+    # `seen` tally, the closing split) so nothing here recomputes it, and so a later reader cannot
+    # accidentally fall back to the approximation by reading `e["body"]` directly at this stage.
+    full_by_entry = [(e, {**e["body"], **e.get("ig", {})}) for e in entries]
+
+    docs = [full for _e, full in full_by_entry if len(full) > 30]
     n = len(docs) or 1
     seen = {}
-    for e in docs:
-        for term in e["body"]:
+    for full in docs:
+        for term in full:
             seen[term] = seen.get(term, 0) + 1
     common = {t for t, c in seen.items() if c > n * 0.6}
-    for e in entries:
-        e["body"] = {t: c for t, c in e["body"].items() if t not in common}
+    for e, full in full_by_entry:
+        e["body"] = {t: c for t, c in full.items() if t not in common}
+        # `ig` only on store notes: they are the only kind `_entry()` ever reuses, so a tool or
+        # symbol entry carrying its own `ig` would be data nothing reads back.
+        if e.get("kind") in _STORE_KINDS:
+            e["ig"] = {t: c for t, c in full.items() if t in common}
     return {"entries": entries, "newest": newest, "count": len(entries),
             "ignored": sorted(common)}
 

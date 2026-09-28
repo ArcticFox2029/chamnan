@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-recall --reindex` reuses every note that has not changed.** It re-scrubbed all of
+  them to pick up the one that had. Measured on this repository: 4.4 s for a fresh build, 0.14 s
+  when nothing changed, 0.17 s after one edit, and the result is identical to a fresh build.
 - **A log record carrying a Unicode line or paragraph separator is no longer lost.** JSON leaves
   U+2028, U+2029 and U+0085 unescaped inside a string, and every chamnan reader of its own `.jsonl`
   logs split on them, so such a record became two unreadable fragments and was deleted at the next

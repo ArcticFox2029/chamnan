@@ -45,9 +45,20 @@ KIND_LABEL = {"rule": "rule", "decision": "decision", "lesson": "lesson",
 
 
 def _write_index(root):
-    """Build and store the index. The only path here that reads the stores."""
+    """Build and store the index. The only path here that reads the stores.
+
+    🎯 [2026-09-28] (R122 acc2, 2026-09-28) A `--reindex` that already has an index on disk is
+    the case `recall.build`'s `previous` argument exists for -- reading it lets `build()` reuse
+    every unchanged note's entry instead of re-scrubbing it. Same read-failure handling as the
+    query path below: a missing, unreadable or malformed index is simply no `previous`, and
+    `build()` falls back to reading and scrubbing every note, exactly as it always has.
+    """
     wsdir = ws.workspace(root)
-    index = recall.build(wsdir)
+    try:
+        previous = json.loads((wsdir / recall.INDEX).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        previous = None
+    index = recall.build(wsdir, previous if isinstance(previous, dict) else None)
     # `ensure_ascii=False`, which is what `tools_index` already writes with: escaping Thai to
     # `\uXXXX` costs six bytes a character and took this file from 374 KB to 495 KB for nothing.
     ok = ws.atomic_write_text(wsdir / recall.INDEX,
