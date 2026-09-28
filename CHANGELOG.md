@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-guard` now scans the whole of every added line.** A line containing a form feed, a
+  vertical tab, U+2028 or one of five other characters Python treats as a line break had everything
+  after that character dropped before scanning, so a credential placed after it was never checked.
 - **A repository whose path carries an accented letter is no longer treated as outside itself.**
   macOS opens a folder named in either Unicode form, but chamnan compared the spellings, so when the
   host and the disk spelled `café` differently every file in the repository failed the containment

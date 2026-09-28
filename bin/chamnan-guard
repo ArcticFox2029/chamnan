@@ -95,9 +95,16 @@ def _added_lines(diff):
     The line number is the one in the file after the commit, which is what a person opens. `-U0`
     means every hunk header is followed only by added and removed lines, so the counter needs no
     context handling.
+
+    🐛 [2026-09-28] (R136 acc2, 2026-09-28) `str.splitlines()` also breaks on U+2028, U+2029,
+    U+0085, \\x0b, \\x0c, \\x1c, \\x1d and \\x1e. An ADDED line carrying one of those (a form feed is
+    ordinary in real source) had its tail dropped as a fragment that does not start with "+", and
+    every scanner fed by this function silently missed it. Reuse `ws.jsonl_lines` -- it is
+    format-agnostic despite the name (splits on "\\n" only, strips a trailing "\\r") -- rather than
+    duplicate that split-and-strip here.
     """
     path, lineno = None, 0
-    for raw in diff.splitlines():
+    for raw in ws.jsonl_lines(diff):
         if raw.startswith("+++ "):
             name = raw[4:].strip()
             path = None if name == "/dev/null" else name[2:] if name[:2] in ("a/", "b/") else name
