@@ -474,22 +474,6 @@ def _is_nothing(body):
     return all(l in _NOTHING for l in lines)
 
 
-def prune(root, days):
-    """Delete records older than the retention window. Best-effort and silent, like prune_logs:
-    housekeeping must never be the reason a command the user asked for fails.
-
-    Unbounded is not an option. These accumulate one per working session, in a directory that is
-    committed, in somebody else's repository.
-
-    ONE FILE IS ALWAYS SPARED when the pass would take every one -- `keep_the_newest`. That is
-    deliberate and it is the difference between this docstring and the truth: a directory holding
-    nothing but aged files keeps its newest, however far past the window it is, and a directory
-    holding exactly one aged file never empties at all. The guard cannot tell "a clock jumped 400
-    days and doomed everything at once" from "this directory went quiet a month ago", because from
-    the mtimes alone those look identical. Judged from the user's side, the trade is not close: one
-    stale file left behind is invisible, and a whole retention store wiped by a clock glitch is not.
-    Reproduced 2026-09-08 (R7 agent 3); the claim above used to be stated without this paragraph.
-    """
 def _candidates(d):
     """Every file `prune` is allowed to consider. One definition, because two would drift."""
     return [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)]
