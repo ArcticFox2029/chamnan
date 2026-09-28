@@ -34,10 +34,10 @@ already reports the last released number while running newer code.
   logs split on them, so such a record became two unreadable fragments and was deleted at the next
   trim. The session handoff read Claude Code transcripts the same way and could drop the person's
   last message. All of them now split on the newline alone.
-- **`chamnan-recall` answers about four times faster.** Every query re-split every note's title
-  and summary into words; the index now stores them. Measured on this repository's 1,328 entries:
-  571 ms of scoring per query down to 139 ms, results identical over 297 queries. The index file
-  grows about a quarter; an index built by an older version still works.
+- **`chamnan-recall` scores about twice as fast.** Every query re-split every note's title and
+  summary into words; it now does so only for a field that contains one of the searched words at
+  all. Measured on this repository's 1,329 entries: 88 ms of scoring for 297 queries down to 49 ms,
+  results identical over all 297, and the index file does not grow.
 - **A dependency declared as its own table is now read.** `[dependencies.serde_json]`, and its
   `dev-`, `target.…`, `workspace.` and Poetry variants, were invisible to the dependency reader, so
   re-adding a package your repository had removed went unnoticed when it was written that way.

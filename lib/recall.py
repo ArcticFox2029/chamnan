@@ -187,8 +187,11 @@ def paths_for(ws_dir, folder):
 # The fields a reused entry must carry for `build(ws, previous=...)` to trust it without
 # re-reading the file. `size` and `ig` are new (see `_entry` and `build` below); an index written
 # before this change lacks them and every entry from it fails this test, so it is rebuilt exactly
-# as before.
-_REUSABLE_ENTRY_FIELDS = ("path", "kind", "weight", "title", "blurb", "tt", "bt", "body", "text",
+# as before. `tt`/`bt` (precomputed `terms(title.lower())`/`terms(blurb.lower())`) are gone --
+# see the removal note on `_hits` -- and are deliberately NOT in this tuple: an index that still
+# carries them from before this change is a perfectly good, still-reusable entry, since `_hits`
+# no longer reads either field.
+_REUSABLE_ENTRY_FIELDS = ("path", "kind", "weight", "title", "blurb", "body", "text",
                           "mtime", "size", "ig")
 
 
@@ -262,10 +265,6 @@ def _entry(ws_dir, path, kind, weight, prev=None):
         "weight": weight,
         "title": title,
         "blurb": blurb,
-        # 🎯 [2026-09-28] (R96 acc4, 2026-09-28) precomputed exactly as `_hits` used to compute them
-        # on every query -- see the header on `_hits` for what this saves.
-        "tt": terms(title.lower()),
-        "bt": terms(blurb.lower()),
         # `body` is the FULL, unfiltered term-count map at this point -- `build()`'s closing pass
         # is what splits it into `body`/`ig` (kept/ignored) once `common` is known. A freshly built
         # entry has no `ig` key yet; `build()` treats that as `{}` (nothing stripped so far).
@@ -311,7 +310,6 @@ def _tool_entries(ws):
         title, blurb = str(name), str(desc)[:240]
         out.append({"path": f"tools/{name}", "kind": "tool", "weight": 2.0,
                     "title": title, "blurb": blurb, "body": counted,
-                    "tt": terms(title.lower()), "bt": terms(blurb.lower()),
                     "text": _non_ascii_lines(f"{name} {desc}"), "mtime": 0})
     return out
 
@@ -374,8 +372,7 @@ def _symbol_entries(ws):
                 counted[term] = counted.get(term, 0) + 1
         title, blurb = f"{name}()", desc[:240]
         row = {"path": owner, "kind": "symbol", "weight": 1.0,
-               "title": title, "blurb": blurb, "body": counted,
-               "tt": terms(title.lower()), "bt": terms(blurb.lower())}
+               "title": title, "blurb": blurb, "body": counted}
         if desc:
             # Only a described symbol can carry non-ASCII worth indexing; a bare identifier is
             # ASCII by definition and the field would be an empty list on every row.
@@ -535,22 +532,42 @@ def _hits(entry, wanted, phrases, idf=None, pidf=None):
     title and blurb on EVERY query, even though a title/blurb only changes when its document does.
     Measured (cProfile, 3 queries against this repository's 1,313-entry, 1.1 MB index): 7,878
     `terms()` calls and ~36,000 `stem()` calls per query, most of the ~362 ms scoring time (index
-    load itself was ~62 ms). `_entry()`/`_tool_entries()`/`_symbol_entries()` now precompute
-    `terms(title.lower())` and `terms(blurb.lower())` once at `build()` time and store them as
-    `"tt"`/`"bt"` on the entry. An index built before this change carries neither key, so this reads
-    them with `.get()` and recomputes on the spot when absent -- the module's existing convention
-    for a shape an older writer did not promise (see `query()`'s `entries` handling above).
+    load itself was ~62 ms). The FIX for that measurement (R122 acc2) was to precompute
+    `terms(title.lower())`/`terms(blurb.lower())` at `build()` time and store them as `"tt"`/`"bt"`
+    on the entry -- reversed below.
+
+    🐛 [2026-09-28] (R122 acc2, 2026-09-28) `"tt"`/`"bt"` cost real bytes on every entry for a gain
+    that does not need storage at all: measured on this workspace, storing them took the index from
+    82% of the corpus (before commit b247174) to 104% at HEAD -- an index larger than the documents
+    it indexes, which the suite already guards and had gone quietly over. Replaced with an EXACT
+    prefilter that needs no storage. Every term `terms(value.lower())` can produce is a literal
+    substring of `norm = NFKC(value.lower())`, computed once per field per call below: the whole
+    tokens come straight from `_WORD.findall(norm)` (verbatim substrings of `norm` by construction),
+    and the underscore/dot/dash/camelCase compound parts `_HUMP` adds are themselves substrings of
+    the whole token they were split from, hence of `norm` too. `stem()` is never in this path --
+    `query()`'s stemmed `extra_terms` are literal words pulled from some document's OWN `body`, not
+    stems, and they reach `_hits` through the ordinary `wanted` argument. So when NO wanted word is
+    a substring of `norm`, none of them can be a term of this field, and `terms()` need not run at
+    all; when at least one might be, `terms()` runs once and every wanted word is still checked
+    individually (a substring match is necessary, not sufficient -- "cat" inside "category" is not
+    a term of it). Verified empirically, not just argued: every term of every title/blurb in this
+    workspace's own index (2,658 (entry, field) pairs) is a substring of that field's `norm`, and a
+    battery of synthetic cases (German ß, Thai combining marks, CJK, ligatures, fullwidth digits,
+    camelCase, snake_case, dotted/dashed compounds) turned up none that were not. An index that
+    still carries `"tt"`/`"bt"` from before this change is read exactly like one that never did --
+    neither field is read here any more, so old data is inert, not consulted.
     """
     score, why = 0.0, []
-    fields = (("title", entry.get("title", ""), entry.get("tt")),
-              ("blurb", entry.get("blurb", ""), entry.get("bt")))
-    for name, value, stored_terms in fields:
-        field_terms = stored_terms if stored_terms is not None else terms(value.lower())
+    fields = (("title", entry.get("title", "")), ("blurb", entry.get("blurb", "")))
+    for name, value in fields:
+        norm_lower = unicodedata.normalize("NFKC", value.lower())
+        if any(w in norm_lower for w in wanted):
+            field_terms = terms(value.lower())
+            for w in wanted:
+                if w in field_terms:
+                    score += FIELD_WEIGHT[name] * (idf.get(w, 1.0) if idf else 1.0)
+                    why.append(name)
         norm_value = unicodedata.normalize("NFKC", value)
-        for w in wanted:
-            if w in field_terms:
-                score += FIELD_WEIGHT[name] * (idf.get(w, 1.0) if idf else 1.0)
-                why.append(name)
         for p in phrases:
             if p in norm_value:
                 score += FIELD_WEIGHT[name] * (pidf.get(p, 1.0) if pidf else 1.0)
