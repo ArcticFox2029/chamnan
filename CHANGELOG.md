@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A note edited while `chamnan-recall` builds its index is no longer kept stale forever.** The
+  index recorded a note's time after reading it, so an edit landing in between was stored with the
+  old text and the new time, and the index never saw it as behind. The time is now taken first.
 - **`chamnan-context` given a folder that does not exist says so instead of crashing.** Inside a
   repository it found the repository's own workspace above the missing folder, passed its check,
   and then died with a Python traceback. It now refuses with `chamnan: no such directory: <path>`,

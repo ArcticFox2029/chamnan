@@ -200,6 +200,20 @@ def _entry(ws_dir, path, kind, weight):
     # that never answers "what do we already know about X".
     if path.name == "README.md":
         return None
+    # 🐛 [2026-09-28] (R77 acc2, 2026-09-28) git's racy-timestamp problem in miniature: the mtime
+    # used to be taken AFTER `read_text` returned, so a concurrent edit landing between the read and
+    # the stat left the OLD content indexed under the NEW mtime -- and `stale_by`, which flags a
+    # file only when its mtime is newer than the index's `newest`, then reported 0 forever, because
+    # the recorded mtime already matched (or exceeded) the edited file's own. Reproduced
+    # deterministically by patching `Path.read_text` to rewrite the file right after returning the
+    # old text: indexed title stayed "Old title" while the file read "# New title", and `stale_by`
+    # never flagged it. Taking the stat FIRST means a concurrent edit can only leave the file's real
+    # mtime newer than the one recorded here -- worst case the file is flagged stale one build early
+    # (safe), never missed (unsafe).
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return None
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
@@ -230,7 +244,7 @@ def _entry(ws_dir, path, kind, weight):
         # an English query is answered by the term map above. On this repository that is 2% of
         # the bytes and it keeps every Thai line that exists.
         "text": _non_ascii_lines(text),
-        "mtime": path.stat().st_mtime_ns,
+        "mtime": mtime,
     }
 
 
