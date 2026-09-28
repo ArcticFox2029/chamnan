@@ -4084,53 +4084,6 @@ def for_a_terminal(text):
     return text.translate(_TERMINAL_SAFE)
 
 
-# Character-name prefixes Unicode gives to what is, in ordinary use, one writing system.
-# Japanese text moves between Han (kanji), Hiragana and Katakana — full- and half-width, plus the
-# prolonged sound mark U+30FC — inside a single word; Korean text moves between Hangul and Han the
-# same way. `unicodedata.name()` gives each of those a different first word (CJK, HIRAGANA,
-# KATAKANA, HANGUL, and HALFWIDTH for the half-width Katakana/Hangul block), so without this they
-# read as mixed-script on ordinary Japanese or Korean text.
-# 🐛 [2026-09-27] (R209 acc5, 2026-09-27)
-_CJK_HANGUL_SCRIPT_GROUP = "CJK/HANGUL"
-_CJK_HANGUL_NAME_PREFIXES = ("CJK", "HIRAGANA", "KATAKANA", "HALFWIDTH", "HANGUL")
-
-
-def _script_group(name):
-    """Canonicalise a `unicodedata.name()` first word for the Japanese/Korean script merge above.
-    Every other prefix (LATIN, CYRILLIC, THAI, ...) passes through unchanged."""
-    prefix = name.split()[0]
-    if prefix.startswith(_CJK_HANGUL_NAME_PREFIXES):
-        return _CJK_HANGUL_SCRIPT_GROUP
-    return prefix
-
-
-def mixed_script_segment(text):
-    """The first path segment mixing two scripts, or None. Detection only — nothing is rewritten.
-
-    🐛 [2026-09-22] (R19) `for_a_terminal` strips bidi overrides and zero-width characters, but a homoglyph swap
-    (Cyrillic 'с' for Latin 'c') comes back byte-identical and reads the same to anything
-    downstream — CVE-2021-42574 and CVE-2021-42694 are exactly this. chamnan prints
-    repository-derived paths into a model's context, so a path differing by one invisible
-    character while reading identically is the exposure.
-
-    Checked per SEGMENT, not over the whole string: 'ไทย/main.py' is Thai in one segment and Latin
-    in another and is completely legitimate here — this repository's corpus is largely Thai. A
-    whole-string check would fire on that and warn on a healthy artifact, which this project
-    refuses.
-    """
-    for segment in re.split(r"[/\\._-]+", text):
-        scripts = set()
-        for ch in segment:
-            if not ch.isalpha():
-                continue
-            name = unicodedata.name(ch, "")
-            if name:
-                scripts.add(_script_group(name))
-        if len(scripts) > 1:
-            return segment
-    return None
-
-
 def emit(*args, **kwargs):
     """`print`, with every string argument scrubbed first. Meant to SHADOW the builtin.
 

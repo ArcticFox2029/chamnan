@@ -39101,57 +39101,6 @@ _t_named = set(re.findall(r"(?:sk-|pk-|rk_|ak_|phc_|ghp_|github_pat_|AKIA|ASIA|A
                           r"glpat-|dop_v1_|shpat_|SG\\.|npm_|dckr_pat_)", _t_src23))
 check("the exemption constant and the enforcement list are both still present and distinct",
       "_CREDENTIAL_PREFIX" in _t_src23 and len(_t_named) >= 10, saw=f"{len(_t_named)} prefixes named")
-# ---- 240_a_thai_path_is_not_a_homoglyph_attack.py
-# ---- 240_a_thai_path_is_not_a_homoglyph_attack.py
-# 🐛 [2026-09-22] (R19) Trojan Source is two CVEs and chamnan only answered one. `for_a_terminal`
-# strips bidi overrides and zero-width characters — verified — so CVE-2021-42574 is covered. A
-# HOMOGLYPH swap is not touched: `srс/main.py` with a Cyrillic `с` comes back byte-identical and
-# reads as `src/main.py` to anything downstream, which is CVE-2021-42694. chamnan prints
-# repository-derived paths into a model's context, so that is the exposure.
-#
-# **The load-bearing property is the NEGATIVE one.** A whole-string script check flags
-# `ไทย/main.py`, and this repository's corpus is largely Thai — it would fire on ordinary paths all
-# day, which is the warning-on-a-healthy-artifact this project refuses by rule. Checking per
-# SEGMENT is what separates a real confusable from an ordinary multilingual path, and that
-# distinction is the whole value of the function. It is asserted first, and on real paths from
-# this repository rather than on invented ones.
-#
-# Detection only. Nothing rewrites a user's filename — that would be changing their data to make a
-# warning easier to emit.
-_t_ws240 = owner_workspace("A Thai path is not a homoglyph attack")
-if _t_ws240 is not None:
-    sys.path.insert(0, str(ROOT / "lib"))
-    import redact as _rd240
-
-    # Real paths out of this repository, not fixtures: the false-positive claim has to be made
-    # against the corpus that would suffer it.
-    _t_innocent240 = ["src/main.py", "ไทย/main.py", "data/ความรู้/index.json",
-                      "miki-hybridge-ai/src/vector_memory.py",
-                      ".chamnan/memory/rules/the-set-not-the-member.md",
-                      "Work-Mode/chamnan/lib/redact.py"]
-    _t_fired240 = [p for p in _t_innocent240 if _rd240.mixed_script_segment(p)]
-    check("NO ORDINARY PATH IN THIS REPOSITORY IS FLAGGED, INCLUDING THE THAI ONES",
-          not _t_fired240,
-          saw="%s — a detector that fires on this corpus is one the reader learns to skip, and "
-              "the Thai paths here are ordinary rather than exotic" % (_t_fired240,))
-
-    # And the positive case, or the check above passes on a function that always answers None.
-    _t_confusable240 = {"src/maіn.py": "Cyrillic i", "sгc/main.py": "Cyrillic r",
-                        "рaypal.py": "Cyrillic p"}
-    _t_missed240 = [p for p in _t_confusable240 if not _rd240.mixed_script_segment(p)]
-    check("...and a single-character homoglyph swap inside one segment IS caught",
-          not _t_missed240,
-          saw="%s — these differ from their Latin twins by one codepoint and render "
-              "identically; that is the whole of CVE-2021-42694" % (_t_missed240,))
-    check("...and what it returns is the offending segment, so a reader can see which part",
-          _rd240.mixed_script_segment("src/рaypal.py") == "рaypal",
-          saw="%r — naming the path without naming the segment leaves the reader hunting for one "
-              "invisible character" % (_rd240.mixed_script_segment("src/рaypal.py"),))
-    # It must not have become a rewriter. Detection changes nothing.
-    check("...and it rewrites nothing — the caller still holds the original string",
-          _rd240.for_a_terminal("sгc/main.py") == "sгc/main.py",
-          saw="the scrubber altered a homoglyph path; changing a user's filename to make a "
-              "warning easier is not this function's job")
 # ---- 241_nothing_is_deleted_that_git_never_held.py
 # ---- 241_nothing_is_deleted_that_git_never_held.py
 # 🐛 [2026-09-22] (R14) `close_a_round --delete` removed 25 of the 37 research reports filed that
