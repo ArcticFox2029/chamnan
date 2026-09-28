@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A repository whose path carries an accented letter is no longer treated as outside itself.**
+  macOS opens a folder named in either Unicode form, but chamnan compared the spellings, so when the
+  host and the disk spelled `café` differently every file in the repository failed the containment
+  check. The same folder is now confirmed by identity, which stays exact on Linux, where the two
+  spellings are two different folders.
 - **`chamnan-recall --reindex` reuses every note that has not changed.** It re-scrubbed all of
   them to pick up the one that had. Measured on this repository: 4.4 s for a fresh build, 0.14 s
   when nothing changed, 0.17 s after one edit, and the result is identical to a fresh build.

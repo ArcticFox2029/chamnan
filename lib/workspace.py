@@ -14,6 +14,7 @@ import contextlib
 import pathlib
 import os
 import errno
+import unicodedata
 from datetime import datetime, timezone
 import sys
 from pathlib import Path
@@ -664,7 +665,28 @@ def inside(path, root, _resolved_root=None):
     """
     try:
         root_resolved = _resolved_root if _resolved_root is not None else Path(root).resolve()
-        return root_resolved in Path(path).resolve().parents
+        resolved_path = Path(path).resolve()
+        if root_resolved in resolved_path.parents:
+            return True
+        # 🐛 [2026-09-28] (R127 acc2, 2026-09-28) APFS is normalisation-insensitive: a folder
+        # written in NFD (e.g. "café-repo" with a combining accent) opens identically through an
+        # NFC spelling of the same name. `resolve()` does not normalise, so `root` and `path`
+        # spelled in different Unicode normal forms compared unequal above even though they name
+        # the same directory -- every file in such a repository read as outside it. Plain
+        # normalisation is not a safe fix on its own: on a byte-sensitive filesystem (Linux), an
+        # NFC directory and a distinct NFD sibling ARE two different directories, and treating them
+        # as the same one would be a containment escape. So the ancestor at `root`'s own depth is
+        # normalised only as a cheap pre-filter (skip the syscall on the ordinary truly-outside
+        # case), and `os.path.samefile` -- which compares device and inode, not spelling -- makes
+        # the actual decision.
+        depth = len(root_resolved.parts)
+        if len(resolved_path.parts) <= depth:
+            return False       # not a proper descendant of `root`, whatever the spelling
+        ancestor = Path(*resolved_path.parts[:depth])
+        if unicodedata.normalize("NFC", str(ancestor)) == unicodedata.normalize(
+                "NFC", str(root_resolved)):
+            return os.path.samefile(ancestor, root_resolved)
+        return False
     except (OSError, ValueError, RuntimeError):
         return False          # a broken or looping link is not inside anything
 
