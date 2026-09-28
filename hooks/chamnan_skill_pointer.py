@@ -362,7 +362,12 @@ def _about_to_discard(command, root):
     except Exception:            # noqa: BLE001 — a guard must never be why a command fails
         return ""
     try:
-        out = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+        # 🐛 [2026-09-28] (R185 acc4, 2026-09-28) Left at git's default `core.quotePath=true`, a
+        # Thai, Chinese or accented dirty path comes back C-quoted (`"\340\271\204...txt"`) and
+        # this function prints it straight into the advisory below — the "name the exact paths"
+        # line then names a path nobody could actually type or copy.
+        out = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
+                              "status", "--porcelain"],
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", timeout=10)
     except Exception:            # noqa: BLE001 — a guard must never be why a command fails

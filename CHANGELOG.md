@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-guard` names files with Thai, Chinese or accented names correctly.** git quotes such
+  names by default, and the guard reported them as escaped octal strings with the diff prefix still
+  attached; a personal `diff.mnemonicPrefix` or custom prefix setting mislabelled every file. Because
+  the MCP and dependency checks match on the file name, a quoted `.mcp.json` or lockfile could also
+  slip past them. The guard now pins git's output format and unquotes any name git still quotes.
 - **`chamnan-guard` now scans the whole of every added line.** A line containing a form feed, a
   vertical tab, U+2028 or one of five other characters Python treats as a line break had everything
   after that character dropped before scanning, so a credential placed after it was never checked.
