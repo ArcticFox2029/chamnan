@@ -3170,28 +3170,18 @@ def notice_due(root, key, times=NOTICE_TIMES):
     return True
 
 
-
-def _lock_holder_is_alive(lock):
-    """True when the process named inside `lock` still exists.
-
-    Read as a SECOND bound beside the age one, never instead of it: a lock written by an older
-    version carries no PID, and an unreadable or unparseable one falls back to "not alive" so the
-    age rule decides on its own exactly as it used to. The age bound alone is the one a wrong
-    clock can invert; the pair cannot both be wrong at once.
-    """
-    return _lock_holder_state(lock) == "alive"
-
-
+# 🧹 [2026-09-28] (R133 acc2, 2026-09-28) removed _lock_holder_is_alive: no caller anywhere (vulture + grep).
 LOCK_HOLDER_ALIVE, LOCK_HOLDER_DEAD, LOCK_HOLDER_UNKNOWN = "alive", "dead", "unknown"
 
 
 def _lock_holder_state(lock):
     """"alive", "dead", or "unknown" — and the third is not the same as the second.
 
-    🐛 [2026-09-07] `_lock_holder_is_alive` collapses "this lock names a process that no longer
-    exists" and "this lock names nobody" into one False, which is right for the age rule (it only
-    runs after LOCK_STALE, by which time either is old enough to break) and wrong for anything
-    that wants to act sooner. A lock is CREATED and its PID written a moment later, two separate
+    🐛 [2026-09-07] a boolean `_lock_holder_is_alive` (removed 2026-09-28, no callers) collapses
+    "this lock names a process that no longer exists" and "this lock names nobody" into one False,
+    which is right for the age rule (it only runs after LOCK_STALE, by which time either is old
+    enough to break) and wrong for anything that wants to act sooner. A lock is CREATED and its
+    PID written a moment later, two separate
     syscalls, so "names nobody" is also what a perfectly healthy holder looks like for a few
     microseconds — breaking on that would hand the same file to two writers, which is the one
     thing this mutex exists to prevent.

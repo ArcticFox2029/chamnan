@@ -966,11 +966,7 @@ def _fit_lines(lines, budget):
     return [flat[i] for i in sorted(keep)]
 
 
-def _dropped_title(dropped, i, order):
-    t = title_of(order[i])
-    return t if any(d[0] == t for d in dropped) else None
-
-
+# 🧹 [2026-09-28] (R133 acc2, 2026-09-28) removed _dropped_title: no caller anywhere (vulture + grep).
 def notice(dropped, ceiling=CEILING, cause=""):
     """One line naming what was left out and where to read it. Empty when nothing was dropped.
 

@@ -451,22 +451,7 @@ def agent_process(start_pid=None, env=None, run=None):
     return 0
 
 
-def still_the_same(pid, started, run=None):
-    """True only when that pid is alive AND was born at the recorded moment.
-
-    Both halves. A pid alone is reused — after a reboot, or after enough process churn — and two
-    hours is long enough for it to happen. Answering "is it alive" and calling that identity is how
-    a schedule ends up typing into somebody else's program.
-    """
-    if not pid or not started:
-        return False
-    # Through `alive`, which knows what "is this process there" means on each platform. Asking with
-    # `os.kill(pid, 0)` directly is the bug recorded in that function: on Windows it terminates.
-    if not alive(pid):
-        return False
-    return process_started(pid, run=run) == started
-
-
+# 🧹 [2026-09-28] (R133 acc2, 2026-09-28) removed still_the_same: no caller anywhere (vulture + grep).
 def whose_session(root, env=None):
     """Which agent this session is running under, and how sure we are: `(name, strength)`.
 
@@ -499,7 +484,7 @@ def _watching(rec):
 
     Starts from `alive()` — a pid that is not alive is gone, full stop — and only downgrades that
     to "gone" when a recorded `pid_started` and a freshly-read one are BOTH present and disagree,
-    the same pid-reuse case `still_the_same` exists to catch (R27.7). Any other combination — no
+    the same pid-reuse case (R27.7). Any other combination — no
     `pid_started` recorded, or the current start time unreadable on this platform — leaves the
     answer at whatever `alive()` said, on the same bias `workspace._lock_holder_state` uses:
     "cannot tell" resolves to still watching, because a false "gone" costs a live job the user
