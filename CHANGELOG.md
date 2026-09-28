@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-context` no longer echoes terminal control characters in its error messages.** Its
+  refusals wrote straight to stderr, skipping the filter every other line of output goes through,
+  so a path containing an escape sequence reached the terminal unfiltered.
 - **A scheduled resume that can no longer fire is announced at session start.** A reboot or logout
   ends the process waiting for a `chamnan-schedule` appointment, and until now only
   `chamnan-schedule list` said so. The session block and `chamnan-report --full` now name it and

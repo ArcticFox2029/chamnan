@@ -56,6 +56,18 @@ import workspace as ws  # noqa: E402
 # having to know this line exists. See `redact.emit`.
 print = redact.emit  # noqa: A001
 
+
+def _err(text):
+    """Write `text` to stderr through the same scrub and terminal filter as every print here.
+
+    🐛 [2026-09-28] (R82 acc4, 2026-09-28) Eight refusals and notices in this file called
+    `sys.stderr.write` directly and so skipped `redact.emit`, which every other line of output goes
+    through: a path argument holding an escape sequence (`chamnan-context "d\x1b[2Jx/nope"`) reached
+    the terminal intact, while the same bytes inside a note were stripped. One member of the set
+    of output routes was unguarded, the shape the outside incident (util-linux `wall`) had too.
+    """
+    print(text, end="", file=sys.stderr)
+
 HOOK = HERE.parent / "hooks" / "chamnan_session_start.py"
 
 # High enough not to bind on any repository measured, and still finite: an unbounded ceiling would
@@ -306,7 +318,7 @@ def main():
     # anything asks what its ancestors are, is the same case `chamnan-map` and `chamnan-gotcha`
     # already refuse this way.
     if not root.is_dir():
-        sys.stderr.write(f"chamnan: no such directory: {root}\n")
+        _err(f"chamnan: no such directory: {root}\n")
         return 1
     if not ws.workspace(root).is_dir():
         # 🐛 This named a Claude Code slash command and nothing else — to a reader who, by the
@@ -314,7 +326,7 @@ def main():
         # whole point of chamnan-context is setting up the OTHER agents, so the one error a
         # non-Claude-Code user is most likely to hit sent them to a command they cannot run
         # (R21 agent 3). `chamnan-map` creates the workspace and the index anywhere.
-        sys.stderr.write(f"chamnan: no .chamnan/ workspace at {root}. "
+        _err(f"chamnan: no .chamnan/ workspace at {root}. "
                          f"Run `chamnan-map` there first — it creates the workspace and builds "
                          f"the index. (Inside Claude Code, `/chamnan:bootstrap` does that and "
                          f"records a baseline.)\n")
@@ -324,7 +336,7 @@ def main():
     # a caller passing both has a wrong belief about what it is asking for, and only a message fixes
     # that. --window wins because it is the more specific statement of the same fact.
     if args.window is not None and args.profile is not None:
-        sys.stderr.write("chamnan-context: --window and --profile both set; using --window "
+        _err("chamnan-context: --window and --profile both set; using --window "
                          f"({profiles.by_window(args.window)}).\n")
     # Three ways to say the same thing, and the more specific one wins: an exact window beats a
     # profile name, and a profile name beats a model family -- because the family table is a dated
@@ -333,7 +345,7 @@ def main():
     if args.model is not None:
         guessed, note = profiles.by_model(args.model)
         if note:
-            sys.stderr.write(f"chamnan-context: {note}\n")
+            _err(f"chamnan-context: {note}\n")
         profile = profile or guessed
     if args.window is not None:
         profile = profiles.by_window(args.window)
@@ -416,7 +428,7 @@ def main():
         for _found in detected["agents"]:
             _name, _strength = _found["name"], _found["evidence"]
             if _strength in (host.RUNNING, host.REPO) and adapters.for_agent(_name) is not None:
-                sys.stderr.write(
+                _err(
                     f"chamnan-context: this repository looks set up for `{_name}` "
                     f"({_strength}). `chamnan-context --write {_name}` puts the block where it "
                     f"reads it.\n")
@@ -425,7 +437,7 @@ def main():
     body = build(root, profile, args.ceiling, agent=args.write)
     _notice = _budget_notice(body, profile or profiles.DEFAULT)
     if _notice:
-        sys.stderr.write(_notice)
+        _err(_notice)
 
     # 🐛 [2026-09-08] `chamnan-map --install-git-hook` refreshed .chamnan/MAP.md on every commit and
     # nothing else, so Claude Code and Gemini -- which get a live session hook and need no file --
@@ -487,14 +499,14 @@ def main():
         try:
             written = adapters.install(root, args.write, body, run)
         except ValueError as exc:
-            sys.stderr.write(f"chamnan-context: {exc}\n")
+            _err(f"chamnan-context: {exc}\n")
             return 1
         except OSError as exc:
             # `.clinerules` is the live case: Cline accepts it as a FILE or as a DIRECTORY, and a
             # repository using the file form makes `mkdir` fail. Refusing is right -- the file
             # holds rules somebody wrote -- but a traceback is not a message, and this is what a
             # user sees at the moment it happens.
-            sys.stderr.write(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
+            _err(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
             return 1
         print(f"chamnan-context -> {written}")
         # 🐛 [2026-09-08] Four vendors read their own file AND the root `AGENTS.md` -- Roo Code,
