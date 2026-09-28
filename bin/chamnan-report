@@ -391,23 +391,11 @@ _ENV_OVERRIDES = (
 
 
 def _ceiling_env_status(raw):
-    """Whether `CHAMNAN_OUTPUT_CEILING`'s value is honoured or ignored.
-
-    The same rule `hooks/chamnan_session_start.py:_ceiling_from_env` applies -- a value that is not
-    a positive integer, or that exceeds `ws.upper_bound("output_byte_ceiling")`, is ignored rather
-    than clamped. Calling `ws.upper_bound` here rather than restating its number is the point: the
-    bound and this status can no longer read differently just because one of them was copied by hand.
+    """Whether `CHAMNAN_OUTPUT_CEILING`'s value is honoured or ignored. Body moved to
+    `ws.ceiling_env_status` — `chamnan-doctor` carried an identical copy, and one home means the
+    two readings can no longer drift apart.
     """
-    try:
-        asked = int(str(raw).strip())
-    except (TypeError, ValueError):
-        return "ignored — not a whole number"
-    cap = ws.upper_bound("output_byte_ceiling")
-    if asked > 0 and (cap is None or asked <= cap):
-        return "in force"
-    if asked <= 0:
-        return "ignored — must be positive"
-    return f"ignored — above the ceiling's bound of {cap}"
+    return ws.ceiling_env_status(raw)
 
 
 def print_inventory(root):

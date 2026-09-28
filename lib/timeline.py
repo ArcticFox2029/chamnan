@@ -82,18 +82,12 @@ def _distinct_slug(directory_, title):
 
 def threads(root):
     """Every declared thread's path, sorted by filename. [] when the directory does not exist —
-    which is the common case and not an error, the same way every other store here reads."""
-    d = directory(root)
-    if not d.is_dir():
-        return []
-    # 🐛 [2026-09-06] `ws.inside` guarded `memory/` and `skills/` and not this. A committed
-    # symlink under `threads/` pointing outside the repository made `chamnan-timeline show` print
-    # the full, unredacted content of whatever it named -- an SSH config, internal prose, anything
-    # the process can read. Nothing about that content is secret-SHAPED, so the redactor cannot
-    # help; the refusal is the only thing that can. The workspace arrives with a clone, so the link
-    # is the repository's choice and not the reader's (R9 agent 2, 2026-09-06).
-    return sorted(p for p in d.glob("*.md")
-                  if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
+    which is the common case and not an error, the same way every other store here reads.
+
+    The symlink refusal (a link under `threads/` pointing outside the repository) is
+    `ws.store_entries`'s own history now -- see its docstring for the incident.
+    """
+    return ws.store_entries(directory(root), root)
 
 
 def resolve(root, ident):

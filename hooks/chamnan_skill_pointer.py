@@ -45,7 +45,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
@@ -118,12 +117,12 @@ def _the_work_itself(command):
         return command
 
 def _nudge_path(wsdir, session_id):
-    """One state file per session, never one shared dict keyed by session id — the same reasoning
-    as chamnan_scratch_watch.py's `_nudge_path`: a shared file is a read-modify-write with no lock,
-    and two writers on one repository is normal rather than exotic. This hook does not reuse that
-    module's file, because its entries are keyed per procedure rather than one counter."""
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(session_id))[:64] or "none"
-    return wsdir / NUDGE_DIR / f"{safe}.json"
+    """One state file per session, never one shared dict keyed by session id. Body moved to
+    `ws.nudge_path` — see its docstring for the lost-update history this fixed, first in
+    `chamnan_scratch_watch.py` and then here. This hook does not reuse that module's file, because
+    its entries are keyed per procedure rather than one counter — hence the separate `NUDGE_DIR`.
+    """
+    return ws.nudge_path(wsdir, session_id, NUDGE_DIR)
 
 
 def _nudge_read(wsdir, session_id):
@@ -136,16 +135,8 @@ def _nudge_read(wsdir, session_id):
 
 
 def _nudge_write(wsdir, session_id, entry):
-    if ws.read_only():
-        return
-    p = _nudge_path(wsdir, session_id)
-    try:
-        ws.atomic_write_text(p, json.dumps(entry))
-        for old in p.parent.glob("*.json"):
-            if old != p and time.time() - old.stat().st_mtime > NUDGE_MAX_AGE:
-                old.unlink()
-    except OSError:
-        pass
+    """Body moved to `ws.nudge_write` — see `_nudge_path` above."""
+    ws.nudge_write(wsdir, session_id, entry, NUDGE_DIR, max_age=NUDGE_MAX_AGE)
 
 
 # 🐛 [2026-09-18] (R19 agent 4, 2026-09-18) The division is the owner's, set 2026-09-16 and written in two skills and in the

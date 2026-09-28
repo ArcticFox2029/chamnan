@@ -373,14 +373,13 @@ def read(root, sequence):
 
 
 def entries(root):
-    """Every candidate file, sorted for a stable order in diffs and injections."""
-    d = directory(root)
-    if not d.is_dir():
-        return []
-    # Same refusal as threads/ and memory/: a symlink out of the repository is the repository's
-    # choice, arriving with a clone, and its content is not this store's to read.
-    return sorted(p for p in d.glob("*.md")
-                  if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
+    """Every candidate file, sorted for a stable order in diffs and injections.
+
+    Same refusal as threads/ and memory/: a symlink out of the repository is the repository's
+    choice, arriving with a clone, and its content is not this store's to read -- see
+    `ws.store_entries` for the incident that made this a shared rule rather than a local check.
+    """
+    return ws.store_entries(directory(root), root)
 
 
 def fields_of(path):

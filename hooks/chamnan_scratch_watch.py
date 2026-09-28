@@ -18,7 +18,6 @@ import json
 import re
 import shlex
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -140,23 +139,12 @@ NUDGE_MAX_AGE = 2 * 24 * 3600     # a session older than this is over; its marke
 
 
 def _nudge_path(wsdir, session_id):
-    """One state file per session, never one shared dict keyed by session id.
-
-    The shared file was a read-modify-write with no lock, and two sessions in one repository is
-    normal rather than exotic -- 98 of 100 concurrent increments were lost when it was measured
-    at the function level. It stayed valid JSON the whole time, just wrong, which is the lost
-    update anomaly: an atomic write does not prevent it, only a lock spanning read AND write, or
-    not sharing the file at all.
-
-    lib/pointer.py reached the same conclusion for exactly the same shape of store and chose the
-    same answer, with the reasoning written out there: a lock would have to survive flock's
-    non-reentrancy and fcntl's rule that closing any descriptor drops the process's locks, while
-    a per-session file needs none of that to be correct. This applies that decision to the one
-    store in this package that had not received it. The eviction loop goes with it -- a sweep of
-    files older than the session that wrote them replaces counting entries in one dict.
+    """One state file per session, never one shared dict keyed by session id. Body moved to
+    `ws.nudge_path` — `chamnan_skill_pointer.py` carried an identical copy of this and
+    `_nudge_write` below; see that function's docstring for the lost-update history. Kept as a
+    one-line alias because `tests/run_tests.py` calls this module's `_nudge_write` directly.
     """
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(session_id))[:64] or "none"
-    return wsdir / NUDGE_DIR / f"{safe}.json"
+    return ws.nudge_path(wsdir, session_id, NUDGE_DIR)
 
 
 def _nudge_read(wsdir, session_id):
@@ -170,17 +158,8 @@ def _nudge_read(wsdir, session_id):
 
 
 def _nudge_write(wsdir, session_id, entry):
-    if ws.read_only():
-        return
-    p = _nudge_path(wsdir, session_id)
-    try:
-        # Shared `.tmp` name, same bug as pointer.py and chamnan-map had. See ws.atomic_write_text.
-        ws.atomic_write_text(p, json.dumps(entry))
-        for old in p.parent.glob("*.json"):
-            if old != p and time.time() - old.stat().st_mtime > NUDGE_MAX_AGE:
-                old.unlink()
-    except OSError:
-        pass
+    """Body moved to `ws.nudge_write` — see `_nudge_path` above."""
+    ws.nudge_write(wsdir, session_id, entry, NUDGE_DIR, max_age=NUDGE_MAX_AGE)
 
 
 def say(text):

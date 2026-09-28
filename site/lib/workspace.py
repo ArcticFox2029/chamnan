@@ -691,6 +691,28 @@ def inside(path, root, _resolved_root=None):
         return False          # a broken or looping link is not inside anything
 
 
+def store_entries(directory_, root):
+    """Every `*.md` file directly in `directory_`, sorted, skipping a store's own README/index and
+    anything a symlink walks outside `root`. `[]` when `directory_` does not exist — the common
+    case for a store nobody has written to yet, not an error.
+
+    The shared body behind `timeline.threads()` and `candidates.entries()` — both list a store's
+    directory the same way BY COINCIDENCE, not because a thread and a candidate are the same
+    concept, so each module keeps its own public name and calls this rather than the two merging.
+
+    🐛 [2026-09-06] `inside()` guarded `memory/` and `skills/` and not `threads/`. A committed
+    symlink under `threads/` pointing outside the repository made `chamnan-timeline show` print
+    the full, unredacted content of whatever it named — an SSH config, internal prose, anything
+    the process can read. Nothing about that content is secret-SHAPED, so the redactor cannot
+    help; the refusal is the only thing that can. The workspace arrives with a clone, so the link
+    is the repository's choice and not the reader's (R9 agent 2, 2026-09-06).
+    """
+    if not directory_.is_dir():
+        return []
+    return sorted(p for p in directory_.glob("*.md")
+                  if p.is_file() and not is_store_index(p) and inside(p, root))
+
+
 def find_root(start=None):
     """Repo root: the nearest ancestor holding either a workspace or a VCS marker.
 
@@ -794,6 +816,31 @@ def upper_bound(key):
     block that stops mid-sentence (R9 agent 3, finding 3).
     """
     return _UPPER_BOUND.get(key)
+
+
+# 🐛 [2026-09-27] (R169 acc4, 2026-09-27) `chamnan-doctor` and `chamnan-report` each carried their
+# own copy of this check, and neither had a place to say `CHAMNAN_OUTPUT_CEILING` was set at all --
+# exported once, then forgotten, it halved every session's block with `config.json` reading exactly
+# as shipped and nothing in either command explaining why. One home means the two readings can no
+# longer drift apart just because one copy was edited by hand and the other was not.
+def ceiling_env_status(raw):
+    """Whether `CHAMNAN_OUTPUT_CEILING`'s value is honoured or ignored.
+
+    The same rule `hooks/chamnan_session_start.py:_ceiling_from_env` applies -- a value that is not
+    a positive integer, or that exceeds `upper_bound("output_byte_ceiling")`, is ignored rather than
+    clamped. Calling `upper_bound` here rather than restating its number is the point: the bound and
+    this status can no longer read differently just because one of them was copied by hand.
+    """
+    try:
+        asked = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return "ignored — not a whole number"
+    cap = upper_bound("output_byte_ceiling")
+    if asked > 0 and (cap is None or asked <= cap):
+        return "in force"
+    if asked <= 0:
+        return "ignored — must be positive"
+    return f"ignored — above the ceiling's bound of {cap}"
 
 
 def _in_range(key, value):
@@ -3100,6 +3147,47 @@ def atomic_write_text(dest, text, encoding="utf-8"):
             except OSError:
                 pass
         return False
+
+
+# 🐛 [chamnan_scratch_watch.py, undated] The shared file was a read-modify-write with no lock, and
+# two sessions in one repository is normal rather than exotic -- 98 of 100 concurrent increments
+# were lost when it was measured at the function level. It stayed valid JSON the whole time, just
+# wrong, which is the lost update anomaly: an atomic write does not prevent it, only a lock
+# spanning read AND write, or not sharing the file at all. `lib/pointer.py` reached the same
+# conclusion for exactly the same shape of store and chose the same answer, with the reasoning
+# written out there.
+NUDGE_DEFAULT_MAX_AGE = 2 * 24 * 3600  # a session older than this is over; its marker is dead weight
+
+
+def nudge_path(wsdir, session_id, nudge_dir):
+    """One state file per session, never one shared dict keyed by session id — see the note above
+    for why a shared file is the wrong shape.
+
+    The shared body behind `chamnan_scratch_watch.py`'s and `chamnan_skill_pointer.py`'s own
+    `_nudge_path`. `nudge_dir` stays a caller-supplied argument rather than something this function
+    decides, because each hook keeps its OWN directory — a session-wide call counter and a
+    per-procedure ledger are different shapes of state, sharing only the file-per-session pattern.
+    """
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(session_id))[:64] or "none"
+    return wsdir / nudge_dir / f"{safe}.json"
+
+
+def nudge_write(wsdir, session_id, entry, nudge_dir, max_age=NUDGE_DEFAULT_MAX_AGE):
+    """Write one session's nudge-state JSON, then sweep sibling files older than `max_age` — the
+    eviction loop that replaces counting entries in one shared dict. Best-effort: silent on any
+    OSError, like every other write in this module that a hook must never fail loudly over.
+    """
+    if read_only():
+        return
+    p = nudge_path(wsdir, session_id, nudge_dir)
+    try:
+        # Shared `.tmp` name, same bug as pointer.py and chamnan-map had. See atomic_write_text.
+        atomic_write_text(p, json.dumps(entry))
+        for old in p.parent.glob("*.json"):
+            if old != p and time.time() - old.stat().st_mtime > max_age:
+                old.unlink()
+    except OSError:
+        pass
 
 
 NOTICE_TIMES = 3
