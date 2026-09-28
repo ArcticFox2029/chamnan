@@ -492,17 +492,30 @@ def whose_session(root, env=None):
         return ("generic", "")
 
 
-def describe(rec, now=None):
-    """One line a person can read: when it fires, whether anything is still waiting for it.
+def _watching(rec):
+    """True when a waiter is still watching `rec` — the exact liveness test `describe()` used to
+    inline, now shared with `lost()` so the two agree by construction rather than by two people
+    copying the same three lines.
 
-    `watching` starts from `alive()` — a pid that is not alive is gone, full stop — and only
-    downgrades that to "gone" when a recorded `pid_started` and a freshly-read one are BOTH present
-    and disagree, the same pid-reuse case `still_the_same` exists to catch (R27.7). Any other combination —
-    no `pid_started` recorded, or the current start time unreadable on this platform — leaves the
-    answer at whatever `alive()` said, on the same bias `workspace._lock_holder_state` uses: "cannot
-    tell" resolves to still watching, because a false "gone" costs a live job the user cancels, while
-    a false "watching" only withholds a warning.
+    Starts from `alive()` — a pid that is not alive is gone, full stop — and only downgrades that
+    to "gone" when a recorded `pid_started` and a freshly-read one are BOTH present and disagree,
+    the same pid-reuse case `still_the_same` exists to catch (R27.7). Any other combination — no
+    `pid_started` recorded, or the current start time unreadable on this platform — leaves the
+    answer at whatever `alive()` said, on the same bias `workspace._lock_holder_state` uses:
+    "cannot tell" resolves to still watching, because a false "gone" costs a live job the user
+    cancels, while a false "watching" only withholds a warning.
     """
+    pid_started = rec.get("pid_started")
+    watching = alive(rec.get("pid"))
+    if watching and pid_started:
+        current_started = process_started(rec.get("pid"))
+        if current_started and current_started != pid_started:
+            watching = False
+    return watching
+
+
+def describe(rec, now=None):
+    """One line a person can read: when it fires, whether anything is still waiting for it."""
     now = _aware(now or datetime.now())
     try:
         due = _instant(rec.get("when")).astimezone()
@@ -518,17 +531,48 @@ def describe(rec, now=None):
                 "`cancel` it to clear." % (rec.get("id"), rec.get("started") or "?"))
     if status != "pending":
         return "%s — %s at %s" % (rec.get("id"), status, due.strftime("%H:%M"))
-    pid_started = rec.get("pid_started")
-    watching = alive(rec.get("pid"))
-    if watching and pid_started:
-        current_started = process_started(rec.get("pid"))
-        if current_started and current_started != pid_started:
-            watching = False
+    watching = _watching(rec)
     secs = int(left.total_seconds())
     when = ("%dh%02dm" % (secs // 3600, (secs % 3600) // 60)) if secs > 0 else "now"
     return ("%s — fires %s (in %s)%s" %
             (rec.get("id"), due.strftime("%H:%M"), when,
              "" if watching else "  ⚠ nothing is waiting for it; the process is gone"))
+
+
+# 🎯 [2026-09-28] (R62 #1 acc2, 2026-09-28) A reboot or logout kills the detached waiter, but the
+# record stays `status: pending` forever — only `chamnan-schedule list` ever said so. Reproduced in
+# a scratch repo: two pending records with a dead pid (one past due, one an hour out) warned on
+# `list` while the SessionStart hook, `chamnan-report` and `chamnan-doctor` said nothing about
+# either. `lost()` is the one place that answers "which appointments will never fire", so the hook
+# and the report can both say it instead of only `list`.
+def lost(root, now=None):
+    """Pending records whose waiter is gone — the population `describe()` already flags with its
+    ⚠, gathered here once so a caller other than `list` can act on it. Never raises: an unreadable
+    store, or any record this cannot make sense of, is simply not counted rather than crashing the
+    caller.
+
+    Skips anything created less than 60 seconds ago. `add()` writes a record with `pid: 0` and only
+    fills in `pid`/`pid_started` once `spawn()` returns a moment later, so a record younger than
+    that gap can carry no live pid yet even though a waiter is about to start.
+    """
+    now = _aware(now or datetime.now())
+    out = []
+    try:
+        rows = read(root)
+        for r in rows:
+            if (r.get("status") or "pending") != "pending":
+                continue
+            try:
+                age = (now - _instant(r.get("created"))).total_seconds()
+            except ValueError:
+                age = None
+            if age is not None and age < 60:
+                continue
+            if not _watching(r):
+                out.append(r)
+    except Exception:      # noqa: BLE001 — an unreadable store is "nothing lost", not a crash
+        return []
+    return out
 
 
 def _now_iso():

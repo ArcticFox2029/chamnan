@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A scheduled resume that can no longer fire is announced at session start.** A reboot or logout
+  ends the process waiting for a `chamnan-schedule` appointment, and until now only
+  `chamnan-schedule list` said so. The session block and `chamnan-report --full` now name it and
+  the command that clears it. Nothing is re-run on its own.
 - **A note edited while `chamnan-recall` builds its index is no longer kept stale forever.** The
   index recorded a note's time after reading it, so an edit landing in between was stored with the
   old text and the new time, and the index never saw it as behind. The time is now taken first.

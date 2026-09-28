@@ -53,6 +53,7 @@ import ledger  # noqa: E402
 import mdblock  # noqa: E402
 import candidates  # noqa: E402
 import rulecheck  # noqa: E402
+import schedule  # noqa: E402
 import skill_overlap  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
@@ -765,6 +766,23 @@ def print_inventory(root):
         if len(dangling) > 5:
             print(f"    …and {len(dangling) - 5} more")
         print("    `/chamnan:remember` writes it, or drop the reference.")
+
+    # 🎯 [2026-09-28] (R62 #1 acc2, 2026-09-28) A reboot or logout kills the detached waiter a
+    # `chamnan-schedule` appointment depends on, and the record stays `status: pending` forever —
+    # before this, only `chamnan-schedule list` ever said so. Reported here beside the other
+    # workspace-health signals rather than only on `list`, for the same reason `dangling` above is.
+    try:
+        _lost_sched = schedule.lost(root)
+    except Exception:
+        _lost_sched = []
+    if _lost_sched:
+        noun = "appointment" if len(_lost_sched) == 1 else "appointments"
+        print(f"\n  {len(_lost_sched)} scheduled {noun} will not fire — the waiting process is gone:")
+        for r in _lost_sched[:5]:
+            print(f"    `{r.get('id')}` due {r.get('when')}")
+        if len(_lost_sched) > 5:
+            print(f"    …and {len(_lost_sched) - 5} more")
+        print("    `chamnan-schedule list` shows them, `chamnan-schedule cancel <id>` clears one.")
 
     # 🎯 [2026-09-07] The file beside the block, which chamnan had never mentioned.
     #

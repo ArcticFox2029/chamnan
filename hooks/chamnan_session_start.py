@@ -1831,6 +1831,24 @@ def main():
                            f"`{ws.plugin_version(HERE.parent)}` keeps them because `.version` says a "
                            f"newer one has been here.\n")
 
+        # 🎯 [2026-09-28] (R62 #1 acc2, 2026-09-28) A reboot or logout kills the detached waiter a
+        # `chamnan-schedule` appointment depends on, and the record stays `status: pending` forever
+        # — before this, only `chamnan-schedule list` ever said so. Checked here, not imported at
+        # module load: on the common case, no store at all, this must cost nothing more than one
+        # `Path.is_file()`, so `schedule` (and everything it imports) is only pulled in once there
+        # is something to report.
+        if (wsdir / "state" / "scheduled.json").is_file():
+            import schedule as sched
+            _lost = sched.lost(root)
+            if _lost:
+                _first = _lost[0]
+                out.append(
+                    f"\n_⚠ {len(_lost)} scheduled appointment"
+                    f"{'s' if len(_lost) != 1 else ''} will not fire — the waiting process is gone "
+                    f"(a reboot or logout ends it, and nothing re-arms it on its own). The first is "
+                    f"`{_first.get('id')}`, due {_first.get('when')}. `chamnan-schedule list` shows "
+                    f"them, `chamnan-schedule cancel {_first.get('id')}` clears this one._\n")
+
         # A repository can carry a complete workspace on this machine and lose it on the next
         # clone. RQ6 found that tracked/committed status was invisible, and one issue plus one
         # discussion independently showed users unsure whether `.chamnan/` was meant to be
