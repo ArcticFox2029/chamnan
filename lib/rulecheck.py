@@ -73,8 +73,10 @@ MAX_BYTES = 400_000
 # inside the quantifier budget, and a rule checked at session start over a bundled or minified file
 # is exactly that. A file with a line longer than this is not searched and counts as not read,
 # like a file over MAX_BYTES: the verdict becomes "not checked", never a guess. 2,000 is the line
-# length The Silver Searcher stops at for minified code; the worst allowed pattern measured 12 ms
-# on a line that long.
+# length The Silver Searcher stops at for minified code. The "12 ms worst case" this comment used
+# to claim was measured only on shapes with non-overlapping quantifiers -- it is false for the
+# overlapping-adjacent-atom shape `_overlapping_adjacent_quantifiers` refuses below, several of
+# which ran for seconds to hours at or under this cap (R49 acc4, 2026-09-28).
 MAX_LINE = 2_000
 # 🐛 [2026-09-06] The two above bound ONE check. Nothing bounded the SUM, and the sum is what a
 # session start actually pays: measured ~90-100 ms per check at those caps' own worst case, so 50
@@ -391,6 +393,171 @@ def _too_many_quantifiers(pattern):
     return False
 
 
+# 🐛 [2026-09-28] (R49 acc4, 2026-09-28) The TENTH family, and the first one that needs no brackets
+# and no repeated group at all: two or more UNBOUNDED quantified atoms placed side by side whose
+# character sets overlap. Every guard above requires either a nested quantifier, an alternation, or
+# a raw count over MAX_QUANTIFIERS; a flat `\w+\s?\w+\s?\w+$` has three quantifiers (under the cap
+# of four) and no group or `|` anywhere, and sailed straight through. Measured with Python's `re`
+# against the repeated matching character plus a trailing "!" (the classic non-matching tail that
+# forces the engine to backtrack all the way through before giving up):
+#
+#     \w+\s?\w+\s?\w+$     n=400   19.2s     n=2,000   hours (killed)
+#     \w+\w+$              n=500    0.4s     n=2,000    22.4s
+#     \w+\s?\w+$                             n=2,000    22.0s
+#     \s*\s*x  (input spaces)                n=2,000     7.9s
+#     \s*\s*\s*x                              n=400       6.6s
+#     \d+\d+\d+x  (input "1"s)                n=400       7.5s
+#     a*a*a*b  (input "a"s)                   n=400       2.1s
+#     .*=.*=.*;  (input "="s)                 n=400       2.2s
+#
+# all comfortably inside MAX_LINE = 2,000 and admitted by every guard above them.
+#
+# The distinguishing property is not shape, it is whether the two atoms can trade characters: `\w+`
+# next to `\d+` overlaps (digits are word characters) but `\d+` next to `-` does not, and `\s*=\s*`
+# is two unbounded atoms separated by a literal that neither one can match, which breaks the chain
+# and keeps ordinary patterns like `foo\s*=\s*bar` fast. So this scanner tokenises the pattern into
+# top-level atoms (an escape, a character class, `.`, a literal character, or a whole group taken
+# as one unit -- the model is `_quantified_group_over_quantifier`'s escape/class-skip loop above,
+# not a regex parser) and asks, for each character in a fixed probe alphabet, whether the bare atom
+# (its quantifier stripped) matches it. Two unbounded atoms whose probed sets intersect, with
+# nothing but nullable or absorbable atoms between them, is refused. A group's set is taken as
+# EVERY probe character rather than parsed recursively -- over-refusal is the stated direction of
+# this whole module, and the other guards already own what happens inside a group.
+_PROBE_ALPHABET = "".join(chr(_cp) for _cp in range(0x300)) + "กขฃคฅฆงจฉชซฌญฎ" + "一二三四五六七八九十"
+_PROBE_SET = frozenset(_PROBE_ALPHABET)
+
+# `{m,n}` forms Python's `re` actually accepts: `{m}`, `{m,}`, `{,n}`, `{m,n}`, and `{,}` (0 or
+# more, same as `*`). `{}` alone and any other brace content is NOT a quantifier and is matched
+# literally by `re`, which is why this requires a comma or at least one digit rather than accepting
+# any `{...}` blindly.
+_QUANT_BRACE = re.compile(r"\{(\d*),(\d*)\}|\{(\d+)\}")
+
+_ATOM_SET_CACHE = {}
+
+
+def _atom_charset(atom_text):
+    """The probe-alphabet characters `atom_text` alone (quantifier stripped) fullmatches.
+
+    Probing rather than parsing character-class syntax by hand: escapes, negation and ranges
+    combine in ways `re` already knows how to answer and a hand-rolled interpreter would have to
+    relearn. Cached per atom text, since the same atom (`\\w`, `\\s`, a literal) recurs constantly
+    within one pattern and across the whole check population.
+    """
+    if atom_text not in _ATOM_SET_CACHE:
+        try:
+            _rx = re.compile(atom_text)
+            _ATOM_SET_CACHE[atom_text] = frozenset(c for c in _PROBE_ALPHABET if _rx.fullmatch(c))
+        except re.error:
+            # An atom this scanner mis-tokenised (a multi-character escape like `\x41`, split into
+            # `\x` plus two literal digits) cannot be probed honestly. Assume it matches everything,
+            # the same over-refusal direction as a group's charset below.
+            _ATOM_SET_CACHE[atom_text] = _PROBE_SET
+    return _ATOM_SET_CACHE[atom_text]
+
+
+def _quantifier_at(pattern, i):
+    """(end_index, unbounded, nullable) for the quantifier starting at `pattern[i]`, or None.
+
+    UNBOUNDED: `*`, `+`, or a `{...}` form with no upper bound (`{n,}`, `{,}`). NULLABLE: `?`, `*`,
+    or a `{...}` form whose lower bound is 0 or absent (`{,n}`, `{,}`). A trailing `?` makes the
+    quantifier lazy, which changes nothing here -- a lazy quantifier still backtracks to the same
+    depth once the tail fails to match, it only tries the short paths first.
+    """
+    n = len(pattern)
+    if i >= n:
+        return None
+    ch = pattern[i]
+    if ch == "*":
+        end, unbounded, nullable = i + 1, True, True
+    elif ch == "+":
+        end, unbounded, nullable = i + 1, True, False
+    elif ch == "?":
+        end, unbounded, nullable = i + 1, False, True
+    elif ch == "{":
+        m = _QUANT_BRACE.match(pattern, i)
+        if not m:
+            return None
+        if m.group(3) is not None:                       # `{m}` -- exact count
+            end, unbounded, nullable = m.end(), False, m.group(3) == "0"
+        else:                                             # `{m,n}` / `{m,}` / `{,n}` / `{,}`
+            lo, hi = m.group(1), m.group(2)
+            end, unbounded, nullable = m.end(), hi == "", lo in ("", "0")
+    else:
+        return None
+    if end < n and pattern[end] == "?":
+        end += 1
+    return end, unbounded, nullable
+
+
+def _atoms(pattern):
+    """[(atom_text, is_group, unbounded, nullable), ...] for `pattern`'s top-level atoms.
+
+    Escape sequences, character classes and groups are each taken whole, exactly as
+    `_quantified_group_over_quantifier` above skips them -- a backslash-escaped bracket or a `+`
+    inside `[...]` is not a group boundary or a quantifier. A group's own text is not inspected
+    further here; it is one atom, whatever hazards it holds are the other guards' job.
+    """
+    out = []
+    i, n = 0, len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            atom_end = min(i + 2, n)
+        elif ch == "[":                    # a character class: quantifier characters are literal
+            j = i + 1
+            if j < n and pattern[j] == "^":
+                j += 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            while j < n and pattern[j] != "]":
+                j += 2 if pattern[j] == "\\" else 1
+            atom_end = min(j + 1, n)
+        elif ch == "(":
+            depth, j = 1, i + 1
+            while j < n and depth:
+                if pattern[j] == "\\":
+                    j += 2
+                    continue
+                if pattern[j] == "(":
+                    depth += 1
+                elif pattern[j] == ")":
+                    depth -= 1
+                j += 1
+            atom_end = j
+        else:
+            atom_end = i + 1
+        is_group = ch == "("
+        q = _quantifier_at(pattern, atom_end)
+        end, unbounded, nullable = q if q else (atom_end, False, False)
+        out.append((pattern[i:atom_end], is_group, unbounded, nullable))
+        i = end
+    return out
+
+
+def _overlapping_adjacent_quantifiers(pattern):
+    """True for two unbounded atoms whose character sets overlap, with nothing unabsorbable between.
+
+    `A (earlier) ... B (later)`, both unbounded. Everything strictly between them must be either
+    NULLABLE (contributes nothing the engine cannot just skip) or have a set that is a SUBSET of
+    A's (A can absorb whatever it matched) -- `foo\\s*=\\s*bar` keeps working because `=` is in
+    neither atom's set and breaks that chain, while `.*=.*=.*;` keeps refusing because `=` is inside
+    what `.` already matches.
+    """
+    atoms = _atoms(pattern)
+
+    def _charset(atom):
+        text, is_group, _unbounded, _nullable = atom
+        return _PROBE_SET if is_group else _atom_charset(text)
+
+    unbounded_idx = [k for k, a in enumerate(atoms) if a[2]]
+    for pos, k in enumerate(unbounded_idx):
+        set_a = _charset(atoms[k])
+        for k2 in unbounded_idx[pos + 1:]:
+            if all(a[3] or _charset(a) <= set_a for a in atoms[k + 1:k2]) and set_a & _charset(atoms[k2]):
+                return True
+    return False
+
+
 # 🐛 [2026-09-06] `_matches` returned None for four different reasons and the caller printed one
 # sentence covering all of them: "matched no readable file, or is not a valid pattern". Those need
 # different actions -- a refused pattern is a rule to REWRITE, an empty glob is a path to FIX, and
@@ -472,7 +639,8 @@ def _matches(root, pattern, glob, why=None):
     # nested, quantified, or side by side -- instead of adding a fifth shape and inviting a sixth.
     if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
             or _ambiguous(pattern) or _too_many_quantifiers(pattern)
-            or _overlapping_alternations(pattern) > MAX_QUANTIFIERS):
+            or _overlapping_alternations(pattern) > MAX_QUANTIFIERS
+            or _overlapping_adjacent_quantifiers(pattern)):
         return _no(WHY_REFUSED)
     try:
         rx = re.compile(pattern)

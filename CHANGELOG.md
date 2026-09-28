@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A rule check can no longer hang session start with a slow pattern.** A `**Check:**` regex with two
+  repeated parts that can match the same text side by side — `\w+\w+$`, `\s*\s*x`, `.*=.*=.*;` — was
+  admitted, and took 22 seconds on one 2,000-character line. Such a pattern is now refused as a
+  backtracking hazard, like the nested shapes before it; ordinary patterns such as `foo\s*=\s*bar`
+  still run.
 - **No command-log record is lost when several sessions write while the log is trimmed.** The
   append took the lock on Windows only; on macOS and Linux an append landing between the trim's
   re-read and its rename went into the file being replaced. Six writers x 300 records kept 843 of
