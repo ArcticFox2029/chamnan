@@ -21,6 +21,14 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **No command-log record is lost when several sessions write while the log is trimmed.** The
+  append took the lock on Windows only; on macOS and Linux an append landing between the trim's
+  re-read and its rename went into the file being replaced. Six writers x 300 records kept 843 of
+  900 of chamnan's own entries; all 900 now. The lock costs about 1 ms per call.
+- **Two file names macOS treats as one are now warned about as one.** The name key folded case
+  before normalising, so a Greek letter with accents and its capital spelled with combining marks
+  got different keys while APFS stores a single file for both — 19 characters in all.
+
 - **A secret named in one field and held in a sibling field is now redacted.** `<Variable
   name="SERVICE_SECRET_KEY" value="..."/>`, `<add key="ApiToken" value="..." />` and
   `{"name": "DB_PASSWORD", "value": "..."}` — the shape ECS task definitions, Kubernetes env

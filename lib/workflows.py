@@ -21,7 +21,6 @@ any two working sessions share `git status` and `ls`. Four guards keep it quiet 
 It speaks once, at the threshold, the same restraint scratch_watch uses. A hint that fires on
 every repetition is a hint people learn to scroll past.
 """
-import os
 import json
 
 import workspace as ws
@@ -436,22 +435,25 @@ def record(log_path, sigs, when, tool=None, interrupted=False, history=None):
         # short lines each: 1,034 of 1,200 lines reached the disk. 166 gone, 13.8%, no error
         # anywhere. The same lab on ubuntu-latest in the same run: 1,200 of 1,200.
         #
-        # So the append takes the lock too, on that platform only. POSIX keeps the lock-free path
-        # because it is correct there and this runs on every Bash call; paying a lock per call to
-        # fix a platform that does not have the problem would be the wrong trade.
-        if os.name == "nt":
-            with ws.exclusive(log_path) as held:
-                # Appended either way, and deliberately. The trim below RETURNS when the lock was
-                # not taken, because rewriting unguarded destroys other processes' records; an
-                # append cannot destroy anything, it can only fail to survive a collision. Not
-                # appending loses this record with certainty; appending unguarded loses it with the
-                # probability the lab measured, 13.8% under six-way contention. The certain loss is
-                # the worse one, so the flag is read and the decision is written down rather than
-                # the block silently doing the same thing either way.
-                if not held:
-                    _unlocked_appends.append(str(log_path))
-                _append_entries(log_path, fresh)
-        else:
+        # So the append takes the lock too.
+        #
+        # 🐛 [2026-09-28] (R39 acc4, 2026-09-28) It took it on Windows only, on the grounds that
+        # POSIX append-against-append is safe -- which it is, but append-against-TRIM is not. The
+        # trim below re-reads under the lock and then renames a new file over the log; a lock-free
+        # append landing between that read and the rename goes into the file being replaced.
+        # Measured on macOS, six processes x 300 records into one log: 843 of 900 chamnan-owned
+        # signatures survived, 900 of 900 when run one after another. The lock costs ~1 ms (median
+        # of 500), on a hook process of ~100 ms, and `ws.append_jsonl` already pays it on every Read.
+        with ws.exclusive(log_path) as held:
+            # Appended either way, and deliberately. The trim below RETURNS when the lock was
+            # not taken, because rewriting unguarded destroys other processes' records; an
+            # append cannot destroy anything, it can only fail to survive a collision. Not
+            # appending loses this record with certainty; appending unguarded loses it with the
+            # probability the lab measured, 13.8% under six-way contention. The certain loss is
+            # the worse one, so the flag is read and the decision is written down rather than
+            # the block silently doing the same thing either way.
+            if not held:
+                _unlocked_appends.append(str(log_path))
             _append_entries(log_path, fresh)
 
     history = (list(history) + fresh) if history is not None else read(log_path)
