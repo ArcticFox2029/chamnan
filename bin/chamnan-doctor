@@ -208,7 +208,9 @@ def which_hook_crashes(wsdir, lines):
     cutoff = time.time() - 7 * 86400
     seen = {}
     try:
-        rows = log.read_text(encoding="utf-8", errors="replace").splitlines() if log.is_file() else []
+        # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085
+        # too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+        rows = ws.jsonl_lines(log.read_text(encoding="utf-8", errors="replace")) if log.is_file() else []
     except OSError:
         rows = []
     for raw in rows:

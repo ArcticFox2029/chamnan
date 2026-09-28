@@ -353,7 +353,9 @@ def read(log_path):
     if not log_path.is_file():
         return []
     out = []
-    for line in log_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+    # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085 too,
+    # which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+    for line in ws.jsonl_lines(log_path.read_text(encoding="utf-8-sig", errors="replace")):
         if not line.strip():
             continue
         try:

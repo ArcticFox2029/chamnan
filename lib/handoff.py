@@ -59,6 +59,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import workspace as ws
+
 # Eight hours, the owner's number, chosen as "a night" rather than fitted to data. It is a
 # CONFIGURABLE floor rather than a constant so a team that works in shifts can move it; the pair of
 # conditions is what makes the default safe, not the precision of this figure.
@@ -136,7 +138,10 @@ def last_response_at(transcript):
             tail = fh.read().decode("utf-8", errors="replace")
     except (OSError, ValueError):
         return None
-    for line in reversed(tail.splitlines()):
+    # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085 too,
+    # which JSON does not escape -- see `ws.jsonl_lines`'s docstring. Node's `JSON.stringify`, which
+    # writes these transcripts, leaves those three raw inside a string value.
+    for line in reversed(ws.jsonl_lines(tail)):
         line = line.strip()
         if not line.startswith("{"):
             continue
@@ -290,7 +295,10 @@ def last_user_messages(transcript, limit=HANDOFF_MESSAGES):
     except (OSError, ValueError):
         return []
     found = []
-    for line in reversed(tail.splitlines()):
+    # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085 too,
+    # which JSON does not escape -- see `ws.jsonl_lines`'s docstring. Node's `JSON.stringify`, which
+    # writes these transcripts, leaves those three raw inside a string value.
+    for line in reversed(ws.jsonl_lines(tail)):
         if not line.startswith("{"):
             continue
         try:

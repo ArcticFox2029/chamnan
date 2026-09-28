@@ -961,7 +961,9 @@ def print_followed(root):
         if not p.is_file():
             return []
         out = []
-        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085
+        # too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+        for line in ws.jsonl_lines(p.read_text(encoding="utf-8", errors="replace")):
             line = line.strip()
             if not line:
                 continue
@@ -1139,7 +1141,9 @@ def _read_pointer_log(root):
         return 0, {}
     fired, named = 0, {}
     try:
-        for line in log.read_text(encoding="utf-8-sig").splitlines():
+        # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085
+        # too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+        for line in ws.jsonl_lines(log.read_text(encoding="utf-8-sig")):
             try:
                 rec = json.loads(line)
             except (ValueError, RecursionError):

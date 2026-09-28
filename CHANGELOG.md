@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A log record carrying a Unicode line or paragraph separator is no longer lost.** JSON leaves
+  U+2028, U+2029 and U+0085 unescaped inside a string, and every chamnan reader of its own `.jsonl`
+  logs split on them, so such a record became two unreadable fragments and was deleted at the next
+  trim. The session handoff read Claude Code transcripts the same way and could drop the person's
+  last message. All of them now split on the newline alone.
 - **`chamnan-recall` answers about four times faster.** Every query re-split every note's title
   and summary into words; the index now stores them. Measured on this repository's 1,328 entries:
   571 ms of scoring per query down to 139 ms, results identical over 297 queries. The index file

@@ -927,6 +927,34 @@ def actor(payload):
     return out
 
 
+def jsonl_lines(text, keepends=False):
+    """Split JSONL text into candidate lines on `\\n` only -- never `str.splitlines()`.
+
+    🐛 [2026-09-28] (R123 acc2, 2026-09-28) `json.dumps(..., ensure_ascii=False)` escapes C0
+    controls but writes U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR and U+0085 NEL RAW inside
+    a string value. `str.splitlines()` breaks on all three of those (plus \\x1c-\\x1e, \\x0b, \\x0c),
+    so a value carrying one turns one physical JSONL record into two unparseable fragments and the
+    record is silently lost -- including at trim time, where a reader like this one re-reads the
+    file and rewrites it, permanently deleting the record on the next trim. Reproduced: six records
+    each carrying one such character in a value, plus a plain one -- a `splitlines()` reader
+    recovered only 4 of 7 (losing LS, PS, NEL); splitting on "\\n" alone recovers all 7. A JSONL
+    record's own line break is "\\n" (optionally "\\r\\n" from a Windows-written file); it is never
+    any of the wider set `str.splitlines()` treats as a boundary, so this is not merely safer than
+    `splitlines()` for this format, it is what the format actually specifies.
+
+    `keepends=True` mirrors `str.splitlines(True)`: each returned line keeps its trailing `"\\n"`,
+    for a caller that reassembles the text with `"".join(...)` rather than `"\\n".join(...)`.
+    """
+    parts = text.split("\n")
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    # A file decoded without universal-newline translation (raw bytes, `bytes.decode`) can still
+    # carry a trailing "\r" from a "\r\n" pair once split on "\n" alone; `Path.read_text` has
+    # already normalised that away, so this is a no-op there and a fix only where it is needed.
+    parts = [p[:-1] if p.endswith("\r") else p for p in parts]
+    return [p + "\n" for p in parts] if keepends else parts
+
+
 def append_jsonl(root, rel, row, keep):
     """Append one record to a workspace `.jsonl` and trim it to the newest `keep`. Never raises.
 
@@ -970,7 +998,7 @@ def append_jsonl(root, rel, row, keep):
                 return True
             prior = []
             if raw:
-                for line in raw.decode("utf-8-sig", errors="replace").splitlines():
+                for line in jsonl_lines(raw.decode("utf-8-sig", errors="replace")):
                     try:
                         one = json.loads(line)
                     except (json.JSONDecodeError, RecursionError):

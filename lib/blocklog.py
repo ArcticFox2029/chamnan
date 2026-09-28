@@ -348,7 +348,9 @@ def trend(root, last=10, resent_only=True):
         if not log.is_file():
             return []
         out = []
-        for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085
+        # too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+        for line in ws.jsonl_lines(log.read_text(encoding="utf-8-sig", errors="replace")):
             try:
                 one = json.loads(line)
             except (json.JSONDecodeError, RecursionError):

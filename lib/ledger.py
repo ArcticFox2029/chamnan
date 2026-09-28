@@ -199,7 +199,9 @@ def snapshot(root, now=None):
         _he = ws.workspace(root) / ws.HOOK_ERRORS
         if _he.is_file():
             _today = datetime.date.fromtimestamp(now).isoformat()
-            for _ln in _he.read_text(encoding="utf-8", errors="replace").splitlines():
+            # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/
+            # U+0085 too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+            for _ln in ws.jsonl_lines(_he.read_text(encoding="utf-8", errors="replace")):
                 try:
                     _ts = datetime.datetime.fromisoformat(json.loads(_ln).get("ts", ""))
                 except (ValueError, AttributeError, TypeError, RecursionError):

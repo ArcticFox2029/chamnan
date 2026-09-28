@@ -846,7 +846,9 @@ def main():
         prior = []
         _raw = log.read_bytes() if log.is_file() else b""
         if _raw:
-            for line in _raw.decode("utf-8-sig", errors="replace").splitlines():
+            # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/
+            # U+0085 too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+            for line in ws.jsonl_lines(_raw.decode("utf-8-sig", errors="replace")):
                 try:
                     _rec = json.loads(line)
                     # A line that is valid JSON but not an object -- a stray number left by a

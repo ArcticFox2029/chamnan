@@ -133,7 +133,9 @@ def _record_a_firing(root, agent_type, size, outcome="delivered", costly=None, s
         # word for word; this file is the one member of SELF_PRUNING_LOGS that trims itself from a
         # hook and never got it (R7 agent 5, 2026-09-07).
         def _with_firing(text):
-            lines = (text or "").splitlines()[-(MAX_FIRINGS - 1):]
+            # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/
+            # U+0085 too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+            lines = ws.jsonl_lines(text or "")[-(MAX_FIRINGS - 1):]
             lines.append(json.dumps(entry, ensure_ascii=False))
             return "\n".join(lines) + "\n"
 

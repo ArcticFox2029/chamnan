@@ -126,7 +126,9 @@ def _trim(dest):
         # only ever fire early, which costs one read, never late, which costs the cap.
         if dest.stat().st_size < TRIM_AT * 20:
             return
-        lines = dest.read_text(encoding="utf-8-sig", errors="replace").splitlines(True)
+        # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085
+        # too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+        lines = ws.jsonl_lines(dest.read_text(encoding="utf-8-sig", errors="replace"), keepends=True)
         if len(lines) <= TRIM_AT:
             return
         kept = lines[-MAX_LINES:]

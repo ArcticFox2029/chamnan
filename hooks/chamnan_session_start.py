@@ -334,7 +334,9 @@ def _fences_recorded_for(transcript_path, limit=40):
             return []
         tail_key = str(transcript_path)[-120:]
         out = []
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines()[-400:]:
+        # 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `str.splitlines()` breaks on U+2028/U+2029/U+0085
+        # too, which JSON does not escape -- see `ws.jsonl_lines`'s docstring.
+        for line in ws.jsonl_lines(log.read_text(encoding="utf-8", errors="replace"))[-400:]:
             if '"nc"' not in line or '"tr"' not in line:
                 continue
             try:
