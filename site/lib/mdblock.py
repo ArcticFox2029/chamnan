@@ -573,8 +573,17 @@ def filesystem_key(name):
     nobody needed, and the opposite error is one file quietly replacing another with nothing on
     screen. A key that over-matches costs a reader a glance; a key that under-matches costs them the
     file. Measured 2026-09-08 (R7 agent 1, 2026-09-09).
+
+    🐛 [2026-09-28] (R36 acc4, 2026-09-28) NFC-then-casefold under-matched: `casefold()` can emit a
+    decomposed sequence, so `ΐ` and `Ϊ́` got different keys while APFS keeps
+    only one of the two files -- measured on this machine, 4 of 4 such pairs collapsed. Over every
+    code point, 19 were canonically caseless-equal to a spelling this key called different, all
+    Greek with dialytika, tonos or iota subscript (U+0345, which Unicode names as the reason). The
+    fold is now Unicode's canonical caseless match, NFD(casefold(NFD(x))), recomposed to NFC so a
+    key still reads as the name it came from.
     """
-    return unicodedata.normalize("NFC", name).casefold()
+    folded = unicodedata.normalize("NFD", unicodedata.normalize("NFD", name).casefold())
+    return unicodedata.normalize("NFC", folded)
 
 
 def canonical_title(source):
