@@ -465,12 +465,34 @@ if __name__ == "__main__":
         pr.join()
     _fr_lines = [ln for ln in (_fr / ".chamnan" / "logs" / "subagent_start.jsonl")
                  .read_text(encoding="utf-8-sig").splitlines() if ln.strip()]
-    _fr_types = {json.loads(ln)["agent_type"] for ln in _fr_lines}
-    _fr_have = sum(1 for i in range(_n_fr) if f"agent-{i}" in _fr_types)
-    check(f"EVERY ONE OF {_n_fr} CONCURRENT SUBAGENT FIRINGS IS RECORDED ({_fr_have}/{_n_fr})",
-          _fr_have == _n_fr)
-    check("...and the firing log is still valid JSON Lines throughout",
-          all(isinstance(json.loads(ln), dict) for ln in _fr_lines))
+    # 🐛 [2026-09-28] (R85 acc4, 2026-09-28) CI run 36320674307 (ubuntu, Python 3.8) saw this block
+    # at 28/30 once in the last 40 runs. The writer goes through `ws.append_jsonl` -> `ws.exclusive`,
+    # which is documented (lib/workspace.py, append_jsonl docstring, ~line 930) to SKIP the record
+    # rather than wait once the holder has made no progress for LOCK_TIMEOUT (2s) -- "a dropped
+    # telemetry record is a cheaper outcome than an interleaved file". Asserting 30/30 contradicted
+    # that contract and turned a documented skip under a slow runner into a false failure. What the
+    # 84% loss this block exists to catch actually looked like -- a torn/interleaved line, a
+    # duplicated record, or the rate collapsing toward that 84% -- is what is checked below instead.
+    _fr_all_parse = True
+    _fr_parsed = []
+    for _ln in _fr_lines:
+        try:
+            _obj = json.loads(_ln)
+        except ValueError:
+            _fr_all_parse = False
+            continue
+        if not isinstance(_obj, dict):
+            _fr_all_parse = False
+            continue
+        _fr_parsed.append(_obj)
+    check("...and every line in the firing log parses as a whole JSON object, none torn or "
+          "interleaved", _fr_all_parse)
+    _fr_types_seen = [o.get("agent_type") for o in _fr_parsed]
+    check("...and no firing is recorded twice",
+          len(_fr_types_seen) == len(set(_fr_types_seen)))
+    _fr_have = sum(1 for i in range(_n_fr) if f"agent-{i}" in _fr_types_seen)
+    check(f"AT LEAST 90% OF {_n_fr} CONCURRENT SUBAGENT FIRINGS ARE RECORDED, NONE TORN OR "
+          f"DUPLICATED ({_fr_have}/{_n_fr})", _fr_have >= 27)
 
     # `ensure()` runs at the start of every command and every hook, and both of its self-repairs
     # read-decided-appended without a lock, so each concurrent caller appended the whole block.
