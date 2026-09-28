@@ -237,6 +237,10 @@ def _entry(ws_dir, path, kind, weight):
         "weight": weight,
         "title": title,
         "blurb": blurb,
+        # 🎯 [2026-09-28] (R96 acc4, 2026-09-28) precomputed exactly as `_hits` used to compute them
+        # on every query -- see the header on `_hits` for what this saves.
+        "tt": terms(title.lower()),
+        "bt": terms(blurb.lower()),
         "body": body,
         # 🐛 Kept as `text[:4000]` first, and the index came out at 547 KB against a 407 KB
         # corpus — an index larger than the thing it indexes is not an index. Only the lines
@@ -275,8 +279,10 @@ def _tool_entries(ws):
         for t in terms(f"{name} {desc}"):
             if len(t) > 2:
                 counted[t] = counted.get(t, 0) + 1
+        title, blurb = str(name), str(desc)[:240]
         out.append({"path": f"tools/{name}", "kind": "tool", "weight": 2.0,
-                    "title": str(name), "blurb": str(desc)[:240], "body": counted,
+                    "title": title, "blurb": blurb, "body": counted,
+                    "tt": terms(title.lower()), "bt": terms(blurb.lower()),
                     "text": _non_ascii_lines(f"{name} {desc}"), "mtime": 0})
     return out
 
@@ -337,8 +343,10 @@ def _symbol_entries(ws):
         for term in terms(f"{name} {desc}"):
             if len(term) > 2:
                 counted[term] = counted.get(term, 0) + 1
+        title, blurb = f"{name}()", desc[:240]
         row = {"path": owner, "kind": "symbol", "weight": 1.0,
-               "title": f"{name}()", "blurb": desc[:240], "body": counted}
+               "title": title, "blurb": blurb, "body": counted,
+               "tt": terms(title.lower()), "bt": terms(blurb.lower())}
         if desc:
             # Only a described symbol can carry non-ASCII worth indexing; a bare identifier is
             # ASCII by definition and the field would be an empty list on every row.
@@ -432,14 +440,25 @@ def _hits(entry, wanted, phrases, idf=None, pidf=None):
     entries, 44 containing ำ): the queries ทำ, จำ, คำ, น้ำ each returned 0 hits. Fixed by
     normalising the field text at compare time too (once per field per call, not once per phrase);
     `build()`'s stored shape is unchanged, so old indexes keep working.
+
+    🎯 [2026-09-28] (R96 acc4, 2026-09-28) This was calling `terms(value.lower())` on every entry's
+    title and blurb on EVERY query, even though a title/blurb only changes when its document does.
+    Measured (cProfile, 3 queries against this repository's 1,313-entry, 1.1 MB index): 7,878
+    `terms()` calls and ~36,000 `stem()` calls per query, most of the ~362 ms scoring time (index
+    load itself was ~62 ms). `_entry()`/`_tool_entries()`/`_symbol_entries()` now precompute
+    `terms(title.lower())` and `terms(blurb.lower())` once at `build()` time and store them as
+    `"tt"`/`"bt"` on the entry. An index built before this change carries neither key, so this reads
+    them with `.get()` and recomputes on the spot when absent -- the module's existing convention
+    for a shape an older writer did not promise (see `query()`'s `entries` handling above).
     """
     score, why = 0.0, []
-    fields = (("title", entry.get("title", "")), ("blurb", entry.get("blurb", "")))
-    for name, value in fields:
-        low = value.lower()
+    fields = (("title", entry.get("title", ""), entry.get("tt")),
+              ("blurb", entry.get("blurb", ""), entry.get("bt")))
+    for name, value, stored_terms in fields:
+        field_terms = stored_terms if stored_terms is not None else terms(value.lower())
         norm_value = unicodedata.normalize("NFKC", value)
         for w in wanted:
-            if w in terms(low):
+            if w in field_terms:
                 score += FIELD_WEIGHT[name] * (idf.get(w, 1.0) if idf else 1.0)
                 why.append(name)
         for p in phrases:

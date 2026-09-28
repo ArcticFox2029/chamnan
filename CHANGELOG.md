@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-recall` answers about four times faster.** Every query re-split every note's title
+  and summary into words; the index now stores them. Measured on this repository's 1,328 entries:
+  571 ms of scoring per query down to 139 ms, results identical over 297 queries. The index file
+  grows about a quarter; an index built by an older version still works.
 - **A dependency declared as its own table is now read.** `[dependencies.serde_json]`, and its
   `dev-`, `target.…`, `workspace.` and Poetry variants, were invisible to the dependency reader, so
   re-adding a package your repository had removed went unnoticed when it was written that way.
