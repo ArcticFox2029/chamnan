@@ -95,7 +95,22 @@ def record(wsdir, path, op=None, actor=None):
             # workflows.record() already make for exactly this shape of shared, hot-path log.
             if not held:
                 return
+            # 🐛 [2026-09-28] (R134 acc2, 2026-09-28) Same defect, same fix, as
+            # `workflows._append_entries`: a torn final line glued the next append onto it and lost
+            # the new record too. `ws.append_jsonl` and `chamnan_scratch_watch`'s own append already
+            # guard this by prefixing a newline when the existing bytes do not end in one; this did
+            # not. Only the last byte is read, never the whole file.
+            needs_sep = False
+            try:
+                if dest.stat().st_size:
+                    with dest.open("rb") as rf:
+                        rf.seek(-1, 2)
+                        needs_sep = rf.read(1) != b"\n"
+            except OSError:
+                pass  # no file yet, or a transient race -- nothing to glue onto either way
             with dest.open("a", encoding="utf-8") as fh:
+                if needs_sep:
+                    fh.write("\n")
                 row = {"at": int(time.time()), "fp": str(path)}
                 # Absent rather than empty when it does not apply, so a main-thread edit costs the
                 # same two keys it has always cost and a reader can tell "the session did this"

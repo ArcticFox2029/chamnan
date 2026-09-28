@@ -378,8 +378,26 @@ _unlocked_appends = []
 
 
 def _append_entries(log_path, fresh):
-    """The append itself, so the locked and unlocked paths cannot drift apart."""
+    """The append itself, so the locked and unlocked paths cannot drift apart.
+
+    🐛 [2026-09-28] (R134 acc2, 2026-09-28) A torn final line (a writer killed mid-record, or a
+    full disk) used to get the next append glued onto it on the same physical line, losing the
+    new record too. `ws.append_jsonl` and `chamnan_scratch_watch`'s own append already guard
+    this by prefixing a newline when the existing bytes do not end in one; this covers both the
+    locked and the unlocked-Windows-fallback caller the same way. Only the last byte is read,
+    never the whole file -- this runs on every Bash tool call.
+    """
+    needs_sep = False
+    try:
+        if log_path.stat().st_size:
+            with log_path.open("rb") as handle:
+                handle.seek(-1, 2)
+                needs_sep = handle.read(1) != b"\n"
+    except OSError:
+        pass  # no file yet, or a transient race -- nothing to glue onto either way
     with log_path.open("a", encoding="utf-8") as handle:
+        if needs_sep:
+            handle.write("\n")
         for entry in fresh:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
