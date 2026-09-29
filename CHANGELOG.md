@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A commit-guard hook that git will not run is no longer reported as installed.** If chamnan's
+  pre-commit hook lost its executable bit, git skipped it in silence while every chamnan report said it
+  was installed. It now reads as out of date, and `chamnan-map` restores the bit when it refreshes it.
 - **On Windows, a save waits about a second for a scanner to let go instead of a quarter.** When
   antivirus, an indexer or another reader holds a store open, Windows refuses the replace; chamnan
   retried for about 0.24 s and then gave up, the shortest wait of five tools compared. It now backs

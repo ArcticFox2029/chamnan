@@ -404,6 +404,9 @@ def install_git_hook(root):
             # look again (R4 agent 1, 2026-09-10).
             try:
                 ws.write_or_raise(target, existing[:start] + body.strip() + existing[end:])
+                # A stale hook can be stale because it lost its exec bit, which git treats as no
+                # hook at all; the rewrite keeps the file's mode, so restore it here (R136 acc4).
+                target.chmod(target.stat().st_mode | 0o111)
             except OSError as err:
                 print(f"chamnan: {err}", file=sys.stderr)
                 return 1

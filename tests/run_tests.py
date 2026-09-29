@@ -6183,6 +6183,8 @@ _tmpl2 = _ss2._current_hook_template()
         ws.GIT_HOOK_MARKER,
         f"{ws.GIT_HOOK_MARKER}\n{ws.GIT_HOOK_STAMP} {ws.git_hook_stamp(_tmpl2)}", 1),
     encoding="utf-8")
+# A real install is executable; since R136 a hook git will not run reads as stale, not installed.
+(_ghooks / "pre-commit").chmod(0o755)
 check("...while a current one inside a larger hook still counts as installed",
       _ss2.rebuild_hook_installed(_gh) is True)
 check("a directory that is not a git repo answers no rather than raising",
@@ -25783,6 +25785,7 @@ try:
     _stamped = _hb.format(marker=ws.GIT_HOOK_MARKER,
                           stamp=f"{ws.GIT_HOOK_STAMP} {ws.git_hook_stamp(_tmpl)}")
     _pc.write_text(_stamped, encoding="utf-8")
+    _pc.chmod(0o755)      # a real install is executable; a hook git will not run is stale (R136)
     check("...and a hook made from the current template reads as installed",
           ws.git_hook_state(_d, _tmpl) == "installed", saw=ws.git_hook_state(_d, _tmpl))
     # An older copy, and the shape every hook installed before today has: no stamp at all.

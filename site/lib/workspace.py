@@ -3708,7 +3708,8 @@ def git_hook_state(root, current_body=None):
     "stale" is chamnan's own hook, made from an older template. It is only ever returned when the
     caller passes the template it is comparing against; a caller that cannot know the current body
     gets "installed" exactly as before, because reporting drift it did not measure would be worse
-    than saying nothing.
+    than saying nothing. A chamnan hook that git will not run (no exec bit on POSIX) is also
+    reported as "stale", so the next `chamnan-map` refreshes it.
     """
     hooks = git_hooks_dir(root)
     if hooks is None:
@@ -3722,6 +3723,14 @@ def git_hook_state(root, current_body=None):
         return None
     if GIT_HOOK_MARKER not in existing:
         return "theirs"
+    # 🐛 [2026-09-29] (R136 acc4, 2026-09-29) A chamnan hook with the exec bit removed was still
+    # reported "installed". Reproduced on this Mac: `chamnan-map --install-git-hook` writes
+    # .git/hooks/pre-commit as -rwxr-xr-x and this said "installed"; after `chmod 644` it STILL said
+    # "installed", yet git silently ignores a hook without the executable bit (githooks
+    # documentation), so the commit guard never ran while every report said it did. Measured
+    # directly, so it is checked before the template comparison. Git for Windows ignores the bit.
+    if not _IS_WINDOWS and not os.access(target, os.X_OK):
+        return "stale"
     if current_body is None:
         return "installed"
     want = git_hook_stamp(current_body)
