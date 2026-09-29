@@ -159,7 +159,8 @@ import re as _re
 
 _SECTION_RE = _re.compile(r"### (?P<title>[^\n]+)\n\[repo:(?P<nonce>[0-9a-fA-F]{6})\]\n"
                           r"(?P<body>.*?)\n\[/repo:(?P=nonce)\]", _re.S)
-_ANY_FENCE = _re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+import mdblock as _mdblock
+_ANY_FENCE = _mdblock.FENCE_SHAPED
 
 
 def _masked(body):

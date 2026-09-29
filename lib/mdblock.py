@@ -81,6 +81,11 @@ def fenced_lines(text):
 #
 # Whitespace is FOLDED to a space and everything else is deleted. That is what the docstring
 # always said this function does.
+# The shape of a session fence marker, `[repo:ab12cd]` or `[/repo:ab12cd]`, whatever its nonce. One
+# definition for the two hooks that neutralise fence-shaped text and the adapter that compares a
+# snapshot's sections with a session's, so the three cannot disagree about what a fence is.
+FENCE_SHAPED = re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+
 _WHITESPACE = "\t\n\v\f\r"
 _CONTROLS = str.maketrans(
     {**{c: " " for c in _WHITESPACE + "\x85"},

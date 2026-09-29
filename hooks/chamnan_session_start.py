@@ -441,7 +441,7 @@ def display(path, root):
 
 
 # Any `[repo:xxxxxx]` or `[/repo:xxxxxx]`, whatever the six hex digits are -- see section().
-_FENCE_SHAPED = re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+_FENCE_SHAPED = mdblock.FENCE_SHAPED
 
 
 def section(title, body, source="", brief=""):

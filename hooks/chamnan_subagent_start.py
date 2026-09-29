@@ -78,7 +78,7 @@ OPEN_MARK = f"[repo:{NONCE}]"
 CLOSE_MARK = f"[/repo:{NONCE}]"
 # Any `[repo:xxxxxx]` or `[/repo:xxxxxx]`, whatever the six hex digits are. Matched on SHAPE rather
 # than on this session's nonce, for the reason spelled out where it is used below.
-_FENCE_SHAPED = re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+_FENCE_SHAPED = mdblock.FENCE_SHAPED
 
 FIRINGS = "logs/subagent_start.jsonl"
 MAX_FIRINGS = 400

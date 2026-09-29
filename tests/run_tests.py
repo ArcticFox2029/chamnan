@@ -43853,6 +43853,409 @@ try:
               ["The", "quick", "brown", "fox", "jumps", "over", "a", "lazy", "dog"]) is True)
 finally:
     shutil.rmtree(_d322, ignore_errors=True)
+# ---- 324_a_secret_in_a_name_value_pair_is_redacted.py
+# ---------------- a secret in a name-field/value-field pair is redacted
+# 🐛 [2026-09-28] (R214 acc4, 2026-09-27) A secret whose NAME and VALUE sit in two SIBLING fields on
+# one line -- not one field carrying both, the shape every rule in `redact.py` already covered --
+# passed through `scrub()` untouched. `<Variable name="SERVICE_SECRET_KEY" value="..."/>`, `<add
+# key="ApiToken" value="..." />` and `{"name": "DB_PASSWORD", "value": "..."}` (the shape ECS task
+# definitions, Kubernetes env arrays and GitHub Actions all write) each name the credential in one
+# field and hold it in another, and none of the existing rules connect the two: `XML_SECRET`
+# requires the word in the TAG name, and every assignment rule requires `[:=]` between the name and
+# its own value, which this shape never has.
+sys.path.insert(0, str(ROOT / "lib"))                                                # noqa: E402
+import redact as _rd324                                                              # noqa: E402
+
+# Built at runtime, never written out: this file is folded into the suite it scans, and a
+# key-shaped literal in a check is exactly what the redactor's own self-scan looks for.
+_v324 = "Q9x" + "Lm2" * 8 + "Zr7Tk"
+
+_positives324 = {
+    "XML attribute pair (name= then value=)":
+        '<Variable name="SERVICE_SECRET_KEY" value="%s"/>' % _v324,
+    "XML attribute pair (key= then value=)":
+        '<add key="ApiToken" value="%s" />' % _v324,
+    "JSON member pair (\"name\" then \"value\"), the ECS/Kubernetes/GitHub Actions env shape":
+        '{"name": "DB_PASSWORD", "value": "%s"}' % _v324,
+}
+
+_leaked324 = []
+_unredacted324 = []
+_name_lost324 = []
+for _label324, _line324 in _positives324.items():
+    _out324 = _rd324.scrub(_line324)
+    if _v324 in _out324:
+        _leaked324.append((_label324, _out324))
+    if _rd324.PLACEHOLDER not in _out324:
+        _unredacted324.append((_label324, _out324))
+    # The NAME field must survive -- only the value goes.
+    if not (("SERVICE_SECRET_KEY" in _out324) or ("ApiToken" in _out324) or ("DB_PASSWORD" in _out324)):
+        _name_lost324.append((_label324, _out324))
+
+check("THE VALUE IS GONE IN ALL THREE NAME/VALUE PAIR SHAPES",
+      not _leaked324, saw=_leaked324)
+check("...AND EACH IS ACTUALLY MARKED REDACTED, NOT SILENTLY DROPPED",
+      not _unredacted324, saw=_unredacted324)
+check("...AND THE NAME FIELD ITSELF SURVIVES BESIDE THE REDACTED VALUE",
+      not _name_lost324, saw=_name_lost324)
+
+_negatives324 = {
+    "XML: an ordinary (non-secret) attribute name":
+        '<Variable name="LOG_LEVEL" value="debug"/>',
+    "JSON: an ordinary (non-secret) member name":
+        '{"name": "region", "value": "us-east-1"}',
+    "XML: a name that is not a secret word at all":
+        '<add key="Theme" value="dark" />',
+}
+
+_changed324 = [(label, _rd324.scrub(line), line)
+               for label, line in _negatives324.items() if _rd324.scrub(line) != line]
+check("A NAME THAT IS NOT A SECRET WORD LEAVES THE SIBLING VALUE ALONE",
+      not _changed324, saw=_changed324)
+# ---- 325_a_greek_name_apfs_folds_gets_one_key.py
+# ---- 325_a_greek_name_apfs_folds_gets_one_key.py
+# 🐛 [2026-09-28] (R36 acc4, 2026-09-28) `mdblock.filesystem_key` was NFC-then-casefold, and
+# `casefold()` can hand back a decomposed sequence, so a precomposed Greek letter with dialytika and
+# tonos and its capital spelled with combining marks got two different keys. APFS keeps one file for
+# the pair -- measured on macOS, 4 of 4 pairs written into one directory left a single file -- so a
+# collision the key exists to warn about went unwarned. 19 code points in all, every one Greek with
+# dialytika, tonos or the iota subscript. The key is now Unicode's canonical caseless match.
+#
+# Asserted over the whole population rather than the pair that was found: every code point whose
+# canonical caseless form equals that of its upper, lower, title or decomposed spelling must share
+# the key with it.
+sys.path.insert(0, str(ROOT / "lib"))
+import unicodedata as _ud325
+import mdblock as _md325
+
+
+def _canon325(s):
+    return _ud325.normalize("NFD", _ud325.normalize("NFD", s).casefold())
+
+
+_t_miss325 = []
+for _cp325 in range(0x110000):
+    _c325 = chr(_cp325)
+    if _ud325.category(_c325) in ("Cs", "Cn", "Co"):
+        continue
+    for _y325 in (_c325.upper(), _c325.lower(), _c325.title(), _ud325.normalize("NFD", _c325)):
+        if (_y325 != _c325 and _canon325(_c325) == _canon325(_y325)
+                and _md325.filesystem_key(_c325) != _md325.filesystem_key(_y325)):
+            _t_miss325.append("U+%04X vs %r" % (_cp325, _y325))
+check("EVERY SPELLING UNICODE CALLS CASELESS-EQUAL GETS ONE FILESYSTEM KEY",
+      not _t_miss325,
+      saw="%d pair(s), first: %s" % (len(_t_miss325), _t_miss325[:5]))
+
+_t_pair325 = ("ΐ", "Ϊ́")
+check("...including the Greek pair APFS was measured collapsing",
+      _md325.filesystem_key(_t_pair325[0]) == _md325.filesystem_key(_t_pair325[1]),
+      saw="%r vs %r" % tuple(_md325.filesystem_key(x) for x in _t_pair325))
+
+# The fold must not have widened past what it already did: full folding stays, whitespace stays apart.
+check("...while sharp s still folds to ss and two spaces are still not one",
+      _md325.filesystem_key("Straße.md") == _md325.filesystem_key("STRASSE.md")
+      and _md325.filesystem_key("a b.md") != _md325.filesystem_key("a  b.md"),
+      saw="%r / %r" % (_md325.filesystem_key("Straße.md"), _md325.filesystem_key("a  b.md")))
+# ---- 326_an_append_racing_the_command_log_trim_survives.py
+# ---- 326_an_append_racing_the_command_log_trim_survives.py
+# 🐛 [2026-09-28] (R39 acc4, 2026-09-28) `workflows.record` appended without the lock everywhere but
+# Windows, because POSIX append-against-append is safe. Append-against-trim is not: the trim re-reads
+# the log under the lock and renames a new file over it, and an append landing between the two goes
+# into the file being replaced. Six processes x 300 records into one log kept 843 of 900 of
+# chamnan's own signatures -- which `prune` never drops, so every missing one was a lost write --
+# and 900 of 900 run one after another. The append now takes the lock on every platform.
+#
+# Reproduced here the way it was measured, smaller: six writers, each interleaving ordinary commands
+# (which make the trim run) with chamnan-owned ones (which the trim must keep). Every chamnan-owned
+# signature written must be in the log afterwards.
+import subprocess as _sp326
+import tempfile as _tf326
+
+_t_dir326 = Path(_tf326.mkdtemp(prefix="chamnan-326-"))
+_t_log326 = _t_dir326 / "logs" / "commands.jsonl"
+_t_src326 = (
+    "import sys; sys.path.insert(0, %r)\n"
+    "import workflows\n"
+    "from datetime import datetime\n"
+    "from pathlib import Path\n"
+    "log, me = Path(sys.argv[1]), sys.argv[2]\n"
+    "when = datetime.now().astimezone().isoformat(timespec='seconds')\n"
+    "for i in range(150):\n"
+    "    workflows.record(log, ['ls'], when)\n"
+    "    workflows.record(log, ['chamnan-probe-%%s-%%d' %% (me, i)], when)\n"
+) % str(ROOT / "lib")
+_t_procs326 = [_sp326.Popen([sys.executable, "-c", _t_src326, str(_t_log326), str(_n326)],
+                            stdout=_sp326.PIPE, stderr=_sp326.PIPE)
+               for _n326 in range(6)]
+_t_errs326 = []
+for _p326 in _t_procs326:
+    _o326, _e326 = _p326.communicate(timeout=300)
+    if _p326.returncode:
+        _t_errs326.append(_e326.decode("utf-8", "replace")[-300:])
+_t_kept326 = set()
+if _t_log326.is_file():
+    for _l326 in _t_log326.read_text(encoding="utf-8").splitlines():
+        try:
+            _s326 = json.loads(_l326).get("sig", "")
+        except ValueError:
+            continue
+        if _s326.startswith("chamnan-probe-"):
+            _t_kept326.add(_s326)
+check("NO CHAMNAN-OWNED RECORD IS LOST WHEN SIX WRITERS RACE THE COMMAND-LOG TRIM",
+      not _t_errs326 and len(_t_kept326) == 900,
+      saw="kept %d of 900; writer errors: %s" % (len(_t_kept326), _t_errs326[:1]))
+_rmtree(_t_dir326)
+# ---- 327_a_rule_check_pattern_with_overlapping_neighbours_is_refused.py
+# ---- 327_a_rule_check_pattern_with_overlapping_neighbours_is_refused.py
+# 🐛 [2026-09-28] (R49 acc4, 2026-09-28) `_matches` refused a NESTED quantifier, a quantified group
+# over a quantifier, an ambiguous alternation and too many raw quantifiers, but admitted two or more
+# unbounded atoms placed side by side whose character sets overlap -- no group, no alternation, and
+# as few as two or three quantifiers, well under MAX_QUANTIFIERS. Measured with Python's own `re`
+# against the repeated matching character plus a trailing "!": `\w+\s?\w+\s?\w+$` took 19.2s at
+# n=400 and did not finish at n=2,000 in hours; `\w+\w+$` took 22.4s and `\s*\s*x` 7.9s at n=2,000,
+# all inside MAX_LINE = 2,000 and all admitted before this fix. `_overlapping_adjacent_quantifiers`
+# closes the shape; this file proves the defect-table patterns are now refused, the patterns that
+# must keep working still do, and a generated population of simple two-atom combinations is fast
+# whenever it is admitted.
+import re as _re327          # noqa: E402
+import time as _time327      # noqa: E402
+import shutil as _sh327      # noqa: E402
+import subprocess as _sp327  # noqa: E402
+import tempfile as _tf327    # noqa: E402
+from pathlib import Path as _P327  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "lib"))
+import rulecheck as _rc327   # noqa: E402
+
+# --- 1/2. The measured defect table and the must-stay-admitted table, run through `_matches`
+# itself (not just the scanner function) so this covers the wiring into the guard, not only the
+# scanner in isolation.
+_REFUSED327 = [
+    r"\w+\s?\w+\s?\w+$",
+    r"\w+\w+$",
+    r"\w+\s?\w+$",
+    r"\s*\s*x",
+    r"\s*\s*\s*x",
+    r"\d+\d+\d+x",
+    r"a*a*a*b",
+    r".*=.*=.*;",
+]
+_ADMITTED327 = [
+    r"foo\s*=\s*bar",
+    r"\d+-\d+x",
+    r"a.*z",
+    r"TODO",
+    r"(GET|POST|PUT)",
+    r"import\s+os",
+    r"def \w+\(",
+]
+
+_dir327 = _P327(_tf327.mkdtemp(prefix="chamnan-overlap-"))
+try:
+    _sp327.run(["git", "init", "-q", str(_dir327)], check=True)
+    (_dir327 / "f.txt").write_text("foo = bar\n1-2x\naz\nTODO\nGET\nimport os\ndef f(\n",
+                                    encoding="utf-8")
+
+    _still_admitted327 = []
+    for _p327 in _REFUSED327:
+        _why327 = []
+        _got327 = _rc327._matches(_dir327, _p327, "*.txt", _why327)
+        if not (_got327 is None and _why327 and _why327[0] == _rc327.WHY_REFUSED):
+            _still_admitted327.append((_p327, _got327, _why327))
+    check("EVERY MEASURED-HAZARD PATTERN FROM THE DEFECT TABLE IS NOW REFUSED",
+          not _still_admitted327,
+          saw="%d/%d still admitted: %s" % (len(_still_admitted327), len(_REFUSED327),
+                                             _still_admitted327[:3]))
+
+    _wrongly_refused327 = []
+    for _p327 in _ADMITTED327:
+        _why327 = []
+        _got327 = _rc327._matches(_dir327, _p327, "*.txt", _why327)
+        if _got327 is None and _why327 and _why327[0] == _rc327.WHY_REFUSED:
+            _wrongly_refused327.append(_p327)
+    check("...WHILE EVERY PATTERN THAT MUST STAY ADMITTED IS NOT REFUSED FOR THIS REASON",
+          not _wrongly_refused327,
+          saw="%d/%d wrongly refused: %s" % (len(_wrongly_refused327), len(_ADMITTED327),
+                                              _wrongly_refused327))
+
+    # --- 3. A population of simple two-atom combinations. For every pair admitted by `_matches`,
+    # `re.search` on a 2,000-character adversarial string must finish fast -- the guard's whole job
+    # is to keep the admitted set safe, not just to refuse the hand-picked defect table.
+    _ATOMS327 = [r"\w+", r"\d+", r"\s*", r"[a-z]+", "x", "=", r".*", "-"]
+    # The character each atom actually matches, used to build the adversarial probe string; the
+    # ones with no quantifier (`x`, `=`, `-`) are never the "first unbounded atom" but still need an
+    # entry so the pair can be built and probed.
+    _CHAR327 = {r"\w+": "a", r"\d+": "1", r"\s*": " ", r"[a-z]+": "a",
+                "x": "x", "=": "=", r".*": "a", "-": "-"}
+    _UNBOUNDED327 = {r"\w+": True, r"\d+": True, r"\s*": True, r"[a-z]+": True,
+                     "x": False, "=": False, r".*": True, "-": False}
+
+    _slow327 = []
+    _n_admitted327, _n_refused327 = 0, 0
+    for _a327 in _ATOMS327:
+        for _b327 in _ATOMS327:
+            _pat327 = _a327 + _b327 + "$"
+            _why327 = []
+            _got327 = _rc327._matches(_dir327, _pat327, "*.txt", _why327)
+            _refused327 = _got327 is None and _why327 and _why327[0] == _rc327.WHY_REFUSED
+            if _refused327:
+                _n_refused327 += 1
+                continue                       # never run a refused pattern
+            _n_admitted327 += 1
+            _first_unbounded327 = _a327 if _UNBOUNDED327[_a327] else (
+                _b327 if _UNBOUNDED327[_b327] else None)
+            _ch327 = _CHAR327[_first_unbounded327] if _first_unbounded327 else "a"
+            # A short probe first, so a guard that regresses makes this check FAIL rather than hang:
+            # without the guard, `\w+\d+$` never returned on the 2,000-character probe, and a check
+            # that hangs takes the whole gate down with it. The cubic shapes this guards against take
+            # ~20 ms at 200 characters and linear ones well under 1 ms, so 10 ms separates them, and
+            # only a pattern that passes at 200 is trusted with the full 2,000.
+            _re327_ok = True
+            _dt327 = 0.0
+            for _n327, _limit327 in ((200, 0.01), (2000, 0.5)):
+                _probe327 = (_ch327 * _n327) + "!"
+                _t0327 = _time327.perf_counter()
+                try:
+                    _re327.compile(_pat327).search(_probe327)
+                except _re327.error:
+                    _re327_ok = False
+                    break
+                _dt327 = _time327.perf_counter() - _t0327
+                if _dt327 >= _limit327:
+                    _slow327.append((_pat327, _n327, round(_dt327, 3)))
+                    break
+    check("EVERY ADMITTED TWO-ATOM COMBINATION FINISHES `re.search` ON A 2,000-CHAR ADVERSARIAL "
+          "STRING UNDER 0.5s",
+          not _slow327,
+          saw="%d admitted, %d refused, slow: %s" % (_n_admitted327, _n_refused327, _slow327[:5]))
+finally:
+    _sh327.rmtree(_dir327, ignore_errors=True)
+# ---- 328_a_path_that_does_not_exist_is_refused_not_crashed.py
+# ---- 328_a_path_that_does_not_exist_is_refused_not_crashed.py
+# 🐛 [2026-09-28] (R69 acc2, 2026-09-28) `chamnan-context zzq` (a nonexistent positional root)
+# crashed with an uncaught `FileNotFoundError` traceback from `os.chdir(str(root))` deep inside
+# `_capture_session_start`, instead of the clean refusal every other command in this file already
+# gives for the same shape of mistake. The cause: `ws.workspace(root)` is
+# `find_root(root) / ".chamnan"`, and `find_root` walks UP from `root` looking for an ANCESTOR
+# workspace or `.git` -- so a nonexistent `root` sitting under a real repository still found that
+# repository's own `.chamnan/` on an ancestor and passed the "does a workspace exist" check. The
+# fix checks that `root` itself is a directory before anything asks what its ancestors are.
+#
+# The population, not the member: every `bin/chamnan-*` command that accepts a positional or flag
+# argument naming a directory/root/path was found with
+#   grep -n "add_argument" bin/chamnan-* | grep -iE "root|path|dir"
+#   grep -n "argv\[0\]|Path(argv" bin/chamnan-*
+# and each was run by hand with a nonexistent path from a scratch repository. Two were found NOT
+# to belong in the "must refuse loudly" set below and are excluded on purpose, not by oversight:
+#   - chamnan-setup --root: only feeds `stale_artefacts()`, which wraps its whole body in a bare
+#     `except Exception` (a report must not be why the command fails) and silently reports zero
+#     stale artefacts for a path that is not there. No traceback, but also no refusal to assert.
+#   - chamnan-impact <target>: its OWN docstring makes "nothing on disk at this path" a valid,
+#     exit-0 answer ("chamnan: nothing recorded for ..."), not an error -- asserting a refusal here
+#     would fail a case that is working as designed.
+# The six below all have an explicit "this path must exist" contract already (five since before
+# this fix, `chamnan-context` from this fix), so their behaviour is asserted together.
+import subprocess as _sp328
+
+_t_cmds328 = {
+    "chamnan-context": [str(ROOT / "bin" / "chamnan-context"), "zzq_328_missing_ctx"],
+    "chamnan-open": [str(ROOT / "bin" / "chamnan-open"), "zzq_328_missing_open"],
+    "chamnan-map": [str(ROOT / "bin" / "chamnan-map"), "zzq_328_missing_map"],
+    "chamnan-gotcha": [str(ROOT / "bin" / "chamnan-gotcha"), "zzq_328_missing_gotcha",
+                       "anchor", "a lesson"],
+    "chamnan-peek": [str(ROOT / "bin" / "chamnan-peek"), "zzq_328_missing_peek"],
+    "chamnan-promote": [str(ROOT / "bin" / "chamnan-promote"), "zzq_328_missing_promote",
+                        "some-tool"],
+}
+
+for _name328, _argv328 in _t_cmds328.items():
+    _p328 = _sp328.run([sys.executable] + _argv328, capture_output=True, cwd=str(ROOT),
+                       stdin=_sp328.DEVNULL, timeout=60)
+    _out328 = _p328.stdout.decode("utf-8", "replace")
+    _err328 = _p328.stderr.decode("utf-8", "replace")
+    _missing328 = _argv328[1]
+    check(f"{_name328.upper()}: A NONEXISTENT PATH EXITS NON-ZERO",
+          _p328.returncode != 0,
+          saw=f"exit {_p328.returncode}")
+    check(f"{_name328.upper()}: ...WITH NO TRACEBACK ON STDERR",
+          "Traceback" not in _err328,
+          saw=_err328[-300:])
+    check(f"{_name328.upper()}: ...AND THE REFUSAL NAMES THE PATH IT WAS GIVEN",
+          _missing328 in _err328 or _missing328 in _out328,
+          saw=(_err328 + _out328)[-300:])
+# ---- 329_a_note_edited_during_an_index_build_reads_as_stale.py
+# ------------------ a note edited mid-build is caught by stale_by, not hidden by it forever
+# 🐛 [2026-09-28] (R77 acc2, 2026-09-28) git's racy-timestamp problem in miniature: `recall._entry`
+# read a note's text and only afterwards recorded `path.stat().st_mtime_ns`. A note edited between
+# the read and the stat left the OLD content indexed under the NEW mtime, and `stale_by` -- which
+# flags a file only when its mtime is newer than the index's `newest` -- then read 0 forever, since
+# the recorded mtime already matched (or exceeded) the file's real one. Fixed by taking the stat
+# BEFORE the read, so a concurrent edit can only leave the file's real mtime newer than what was
+# recorded, never equal or older.
+#
+# Reproduced here the way it was measured: patch `pathlib.Path.read_text` so that reading the one
+# note rewrites it right after returning the OLD text -- the same race, deterministic -- then build
+# the index and assert `stale_by` still counts the file as behind.
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(ROOT / "lib"))
+import recall as _rc329  # noqa: E402
+
+_root329 = Path(tempfile.mkdtemp(prefix="chamnan-329-"))
+_orig_read_text329 = pathlib.Path.read_text
+try:
+    subprocess.run(["git", "init", "-q"], cwd=str(_root329), capture_output=True)
+    _rules329 = _root329 / ".chamnan" / "memory" / "rules"
+    _rules329.mkdir(parents=True)
+    _note_name329 = "".join(["n", "o", "t", "e"]) + ".md"
+    _note329 = _rules329 / _note_name329
+    _old329 = "# Old title\n\nBody before the race.\n"
+    _new329 = "# New title\n\nBody after the concurrent edit.\n"
+    _note329.write_text(_old329, encoding="utf-8")
+    _ws329 = _root329 / ".chamnan"
+
+    # A helper that swaps a module attribute must swap it back -- restored in `finally` below, not
+    # just at the end of the happy path, so a failed assertion cannot leave the patch live for a
+    # later check in the same process.
+    def _racy_read_text329(self, *a, **kw):
+        text = _orig_read_text329(self, *a, **kw)
+        if self == _note329:
+            # The edit lands strictly AFTER the read returns -- the exact ordering the bug needed.
+            _orig_write329 = pathlib.Path.write_text
+            _orig_write329(_note329, _new329, encoding="utf-8")
+        return text
+
+    pathlib.Path.read_text = _racy_read_text329
+    try:
+        _idx329 = _rc329.build(_ws329)
+    finally:
+        pathlib.Path.read_text = _orig_read_text329
+
+    check("pathlib.Path.read_text WAS RESTORED AFTER THE RACY BUILD",
+          pathlib.Path.read_text is _orig_read_text329,
+          saw=pathlib.Path.read_text)
+
+    _entries329 = {e["path"]: e for e in _idx329.get("entries", [])}
+    _rel329 = f"memory/rules/{_note_name329}"
+    check("THE RACE WAS ACTUALLY EXERCISED: THE INDEXED TITLE IS THE OLD ONE",
+          _entries329.get(_rel329, {}).get("title") == "Old title",
+          saw=_entries329.get(_rel329))
+    check("THE FILE ON DISK NOW HOLDS THE NEW TITLE (the edit really happened mid-build)",
+          _note329.read_text(encoding="utf-8").startswith("# New title"),
+          saw=_note329.read_text(encoding="utf-8"))
+
+    _behind329 = _rc329.stale_by(_ws329, _idx329)
+    check("A NOTE EDITED DURING THE BUILD IS FLAGGED STALE (stat taken before the read, not after)",
+          _behind329 >= 1,
+          saw=_behind329)
+finally:
+    pathlib.Path.read_text = _orig_read_text329
+    shutil.rmtree(_root329, ignore_errors=True)
 # ---- 32_the_stdlib_fallback_is_the_real_stdlib.py
 # ------------------------------------------- a hand-written list of what Python ships with
 # 🐛 [2026-09-09] `impact_mod._STDLIB` prefers `sys.stdlib_module_names` and falls back to a list typed
@@ -43896,6 +44299,1106 @@ if hasattr(sys, "stdlib_module_names"):
 else:
     skip("  · this interpreter has no sys.stdlib_module_names — the fallback IS the live path, "
          "which is the case the finding is about; the two checks above still ran")
+# ---- 330_a_schedule_that_lost_its_waiter_is_announced.py
+# ------------------ a schedule that lost its waiter is announced
+# 🎯 [2026-09-28] (R62 #1 acc2, 2026-09-28) `chamnan-schedule` keeps an appointment with a detached
+# waiter process. A reboot or logout kills the waiter; the record in `.chamnan/state/scheduled.json`
+# stays `status: pending` and nothing ever fires it. Only `chamnan-schedule list` said so (its own
+# `describe()` line, "⚠ nothing is waiting for it; the process is gone") -- reproduced in a scratch
+# repo: two pending records with a dead pid warned on `list` while the SessionStart hook,
+# `chamnan-report` and `chamnan-doctor` said nothing about either (0 lines). `schedule.lost()` is
+# the shared answer now; this proves the SessionStart hook and `chamnan-report` both use it and
+# neither false-positives on a live waiter or a record too young to have one yet.
+import subprocess as _sp330
+import tempfile as _tf330
+from datetime import datetime as _dt330, timedelta as _td330
+from pathlib import Path as _Path330
+
+import schedule as _sched330
+
+_root330 = _Path330(_tf330.mkdtemp(prefix="chamnan-330-"))
+_hook330 = ROOT / "hooks" / "chamnan_session_start.py"
+_report330 = ROOT / "bin" / "chamnan-report"
+
+
+def _fire330(root, session="check330-a"):
+    return _sp330.run([sys.executable, str(_hook330)],
+                      input=json.dumps({"session_id": session, "cwd": str(root)}),
+                      cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+                      errors="replace", timeout=60).stdout
+
+
+try:
+    _sp330.run(["git", "init", "-q"], cwd=str(_root330), capture_output=True, timeout=10)
+
+    # Build the workspace the way a session actually does -- one ordinary firing, no schedule yet.
+    _before330 = _fire330(_root330, session="check330-bootstrap")
+    check("(b) NO SCHEDULE STORE YET -- THE HOOK SAYS NOTHING ABOUT A LOST APPOINTMENT",
+          "will not fire" not in _before330 and "scheduled appointment" not in _before330,
+          saw=[l for l in _before330.splitlines() if "schedul" in l.lower()])
+    check("(b) ...AND HAS NOT CREATED THE STORE ITSELF",
+          not (_root330 / ".chamnan" / "state" / "scheduled.json").is_file(),
+          saw=list((_root330 / ".chamnan" / "state").glob("*")) if
+          (_root330 / ".chamnan" / "state").is_dir() else "no state dir")
+
+    _now330 = _dt330.now()
+    _old_created330 = (_now330 - _td330(minutes=5)).isoformat(timespec="seconds")
+    _due330 = (_now330.astimezone() + _td330(hours=1)).isoformat(timespec="seconds")
+
+    # (a) A pending appointment whose waiter's pid is not a real process on this machine at all.
+    _sched330.add(_root330, {
+        "id": "a330a330", "when": _due330, "status": "pending",
+        "created": _old_created330, "pid": 999999,
+    })
+    _after_a330 = _fire330(_root330, session="check330-a")
+    check("(a) A PENDING RECORD WITH A DEAD PID NAMES ITS ID AND `cancel`",
+          "1 scheduled appointment will not fire" in _after_a330
+          and "the waiting process is gone" in _after_a330
+          and "`a330a330`" in _after_a330
+          and "chamnan-schedule cancel a330a330" in _after_a330
+          and "chamnan-schedule list" in _after_a330,
+          saw=[l for l in _after_a330.splitlines() if "a330a330" in l or "will not fire" in l])
+
+    # (c) A pending appointment whose pid is THIS process, with its real birth time -- a live waiter.
+    _sched330.add(_root330, {
+        "id": "c330c330", "when": _due330, "status": "pending",
+        "created": _old_created330, "pid": os.getpid(),
+        "pid_started": _sched330.process_started(os.getpid()),
+    })
+    # (d) A pending appointment created moments ago, pid 0 -- `add()` writes this and `spawn()`
+    # fills the real pid in a moment later, so this must not be read as an abandoned waiter yet.
+    _sched330.add(_root330, {
+        "id": "d330d330", "when": _due330, "status": "pending",
+        "created": _now330.isoformat(timespec="seconds"), "pid": 0,
+    })
+    _after_cd330 = _fire330(_root330, session="check330-cd")
+    check("(c) A RECORD WATCHED BY THIS PROCESS'S OWN LIVE PID IS NOT COUNTED AS LOST",
+          "c330c330" not in _after_cd330,
+          saw=[l for l in _after_cd330.splitlines() if "c330c330" in l])
+    check("(d) A RECORD CREATED SECONDS AGO WITH PID 0 IS NOT COUNTED AS LOST EITHER",
+          "d330d330" not in _after_cd330,
+          saw=[l for l in _after_cd330.splitlines() if "d330d330" in l])
+    check("...THE COUNT STAYS AT THE ONE GENUINELY-LOST RECORD, NOT THREE",
+          "1 scheduled appointment will not fire" in _after_cd330
+          and "a330a330" in _after_cd330,
+          saw=[l for l in _after_cd330.splitlines() if "will not fire" in l])
+
+    # (e) chamnan-report says the same thing, in its own workspace-health section.
+    _report_out330 = _sp330.run([sys.executable, str(_report330), "--full"], cwd=str(_root330),
+                                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=60).stdout
+    check("(e) `chamnan-report` NAMES THE LOST APPOINTMENT AND HOW TO CLEAR IT",
+          "a330a330" in _report_out330
+          and "will not fire" in _report_out330
+          and "chamnan-schedule cancel <id>" in _report_out330
+          and "c330c330" not in _report_out330 and "d330d330" not in _report_out330,
+          saw=[l for l in _report_out330.splitlines() if "appt-" in l or "will not fire" in l])
+finally:
+    _rmtree(_root330, ignore_errors=True)
+# ---- 331_a_refusal_does_not_echo_terminal_controls.py
+# ---- 331_a_refusal_does_not_echo_terminal_controls.py
+# 🐛 [2026-09-28] (R82 acc4, 2026-09-28) chamnan-context's refusals and notices called
+# `sys.stderr.write` directly, skipping the `redact.emit` filter every other line of output passes
+# through. A path argument holding an escape sequence reached the terminal intact, while the same
+# bytes inside a note were stripped from the session block. The outside incident this round cited
+# (util-linux `wall`) was the same shape: one route into the terminal left unguarded beside a
+# guarded one. The control characters are built at runtime so this file holds none of its own.
+import subprocess as _sp331
+import tempfile as _tf331
+
+_t_dir331 = Path(_tf331.mkdtemp(prefix="chamnan-331-"))
+try:
+    _sp331.run(["git", "init", "-q", str(_t_dir331)], check=True)
+    _t_esc331 = chr(27)
+    _t_arg331 = "d" + _t_esc331 + "[2Jx" + chr(7) + "/nope"
+    _t_run331 = _sp331.run([sys.executable, str(ROOT / "bin" / "chamnan-context"), _t_arg331],
+                           cwd=str(ROOT), stdin=_sp331.DEVNULL, capture_output=True, text=True)
+    _t_err331 = _t_run331.stderr
+    check("A PATH ARGUMENT'S ESCAPE SEQUENCE DOES NOT REACH THE TERMINAL IN A REFUSAL",
+          _t_run331.returncode != 0 and _t_esc331 not in _t_err331 and chr(7) not in _t_err331
+          and "no such directory" in _t_err331 and "Traceback" not in _t_err331,
+          saw="exit %s, stderr %r" % (_t_run331.returncode, _t_err331[-200:]))
+    # And the file must not have gained a new raw route since: every stderr write goes through `_err`.
+    _t_src331 = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
+    _t_raw331 = [n for n, l in enumerate(_t_src331.split("\n"), 1)
+                 if "sys.stderr" + ".write(" in l and "def _err" not in l]
+    check("...and chamnan-context writes to stderr only through its filtered helper",
+          not _t_raw331, saw="raw writes at lines %s" % _t_raw331)
+finally:
+    _rmtree(_t_dir331)
+# ---- 332_recall_scores_titles_from_stored_terms.py
+# ------------------ _hits scores title/blurb via an exact prefilter, not stored terms
+# 🎯 [2026-09-28] (R96 acc4, 2026-09-28) `_hits` called `terms(value.lower())` on every entry's
+# title and blurb on EVERY query -- 7,878 `terms()` calls and ~36,000 `stem()` calls per query on
+# this workspace's own 1,313-entry index, most of the ~362 ms scoring time (cProfile, 3 queries).
+# The FIX at the time was to precompute `terms(title.lower())`/`terms(blurb.lower())` once at
+# `build()` time and store them on every entry as `"tt"`/`"bt"`.
+#
+# 🐛 [2026-09-28] (R122 acc2, 2026-09-28) Storing them cost real bytes on EVERY entry for a gain
+# that needs no storage: measured on this workspace, `"tt"`/`"bt"` took the index from 82% of the
+# corpus (before commit b247174) to 104% at HEAD -- over an already-guarded budget. Reversed:
+# `_hits` now computes `norm = NFKC(value.lower())` once per field per call and skips `terms()`
+# ENTIRELY for a field when no wanted word is a substring of `norm` -- exact, because every term
+# `terms(value.lower())` can produce is itself a substring of that same `norm` (verified against
+# `terms()`'s own code: the whole tokens come straight from a regex `findall` over `norm`, and the
+# compound parts `_HUMP` adds are substrings of the token they were split from, hence of `norm`
+# too). `"tt"`/`"bt"` are no longer written by `_entry()`/`_tool_entries()`/`_symbol_entries()`, and
+# `_hits` no longer reads either field AT ALL -- an index that still carries them from before this
+# change is read exactly like one that never did.
+#
+# Builds a tiny real index (git-inited scratch workspace, three notes) and asserts:
+# (a) a freshly built entry carries NO `tt`/`bt` key at all -- the removal actually happened;
+# (b) an index whose entries carry DELIBERATELY WRONG `tt`/`bt` (the shape old data left behind
+#     could have, and a stronger proof than merely-absent data: if `_hits` still consulted them
+#     even by accident, the wrong values would corrupt the ranking) scores and ranks IDENTICALLY
+#     to the same index with those fields removed -- `_hits` truly ignores them;
+# (c) the prefilter is exact both ways: a query with no substring match anywhere skips `terms()`
+#     entirely (only the one call tokenising the query itself), and a query that DOES match calls
+#     `terms()` only for the fields that could possibly contain it, never for ones that can't;
+# (d) the prefilter is not merely an early-exit that ALSO happens to skip scoring: a wanted word
+#     that IS a substring of an entry's title/blurb but is NOT actually a term of it (a fragment
+#     inside a longer word) contributes no title/blurb score to that entry -- the exact `in
+#     field_terms` check after the prefilter is what protects this, not the prefilter alone. A
+#     mutation that turns the prefilter into an unconditional skip is caught by (a real regression,
+#     not a hypothetical) missing `"title"`/`"blurb"` from `why` and a lower score on a query that
+#     legitimately matches both fields -- proven at the bottom of this file via `mutation-check.py`.
+import copy
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(ROOT / "lib"))
+import recall as _rc332  # noqa: E402
+
+_root332 = Path(tempfile.mkdtemp(prefix="chamnan-332-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=str(_root332), capture_output=True)
+    _rules332 = _root332 / ".chamnan" / "memory" / "rules"
+    _rules332.mkdir(parents=True)
+    _notes332 = {
+        "alpha.md": "# Alpha boundary rule\n\nA boundary check on every table, alpha style.\n",
+        "beta.md": "# Beta redaction lesson\n\nRedact before writing, beta corpus notes.\n",
+        "gamma.md": "# Gamma checklist\n\nA plain checklist entry with no special terms.\n",
+    }
+    for _name332, _body332 in _notes332.items():
+        (_rules332 / _name332).write_text(_body332, encoding="utf-8")
+    _ws332 = _root332 / ".chamnan"
+
+    _idx332 = _rc332.build(_ws332)
+    _entries332 = _idx332["entries"]
+
+    check("(a) A FRESHLY BUILT ENTRY CARRIES NO 'tt'/'bt' KEY AT ALL",
+          bool(_entries332) and all("tt" not in e and "bt" not in e for e in _entries332),
+          saw=[(e["path"], "tt" in e, "bt" in e) for e in _entries332])
+
+    # (b) An index carrying WRONG tt/bt (the shape stale-but-still-present data from before this
+    # change could leave behind) must rank IDENTICALLY to the same index with those fields gone --
+    # anything else means `_hits` is still reading them.
+    _words332 = ["boundary"]
+    _idx_wrong332 = copy.deepcopy(_idx332)
+    for _e332 in _idx_wrong332["entries"]:
+        _e332["tt"] = ["zzznonsense332"]
+        _e332["bt"] = ["zzznonsense332"]
+    _res_clean332 = _rc332.query(_idx332, _words332, limit=10)
+    _shape_clean332 = [(round(s, 6), e["path"], w) for s, e, w in _res_clean332]
+    _res_wrong332 = _rc332.query(_idx_wrong332, _words332, limit=10)
+    _shape_wrong332 = [(round(s, 6), e["path"], w) for s, e, w in _res_wrong332]
+
+    check("(b) AN INDEX WITH DELIBERATELY WRONG tt/bt RANKS IDENTICALLY (the fields are ignored)",
+          bool(_shape_clean332) and _shape_clean332 == _shape_wrong332,
+          saw=(_shape_clean332, _shape_wrong332))
+
+    # (c) terms() call counting -- restored in `finally`, not just the happy path, so a failed
+    # assertion cannot leave the patch live for a later check in this process.
+    _orig_terms332 = _rc332.terms
+    _calls332 = {"n": 0, "args": []}
+
+    def _counting_terms332(text):
+        _calls332["n"] += 1
+        _calls332["args"].append(text)
+        return _orig_terms332(text)
+
+    _rc332.terms = _counting_terms332
+    try:
+        _calls332["n"], _calls332["args"] = 0, []
+        _rc332.query(_idx332, ["zzznomatchanywhere332"], limit=10)
+        _n_nomatch332 = _calls332["n"]
+
+        _calls332["n"], _calls332["args"] = 0, []
+        _rc332.query(_idx332, _words332, limit=10)
+        _n_boundary332 = _calls332["n"]
+        _args_boundary332 = list(_calls332["args"])
+    finally:
+        _rc332.terms = _orig_terms332
+
+    check("recall.terms WAS RESTORED AFTER THE COUNTING QUERIES",
+          _rc332.terms is _orig_terms332, saw=_rc332.terms)
+
+    check("(c) A QUERY THAT MATCHES NOTHING SKIPS terms() FOR EVERY FIELD OF EVERY ENTRY "
+          "(only the one call tokenising the query itself)",
+          _n_nomatch332 == 1, saw=_n_nomatch332)
+
+    # 'boundary' is a substring of alpha's title AND blurb (both contain the word), and of
+    # NEITHER beta's nor gamma's -- so the prefilter must call terms() for alpha's two fields and
+    # skip beta's and gamma's four entirely: 1 (query tokenising) + 2 (alpha) = 3 total.
+    check("(c) A QUERY THAT MATCHES ONE ENTRY CALLS terms() ONLY FOR THAT ENTRY'S FIELDS "
+          "(1 query-tokenise + 2 for alpha's title/blurb = 3, none for beta/gamma)",
+          _n_boundary332 == 3, saw=(_n_boundary332, _args_boundary332))
+    check("(c) ...AND BETA'S/GAMMA'S FIELD TEXT WAS NEVER PASSED TO terms()",
+          not any("beta" in a or "gamma" in a for a in _args_boundary332 if a != "boundary"),
+          saw=_args_boundary332)
+
+    # (d) The prefilter finding a substring is necessary, not sufficient -- confirm the entry that
+    # DOES match scores from title AND blurb (both are in `why`), which is exactly what a
+    # mutation that turns the prefilter into an unconditional skip would remove.
+    _alpha_hit332 = next((s, e, w) for s, e, w in _res_clean332 if e["path"] == "memory/rules/alpha.md")
+    check("(d) THE MATCHING ENTRY'S 'why' NAMES BOTH title AND blurb (not just body)",
+          "title" in _alpha_hit332[2] and "blurb" in _alpha_hit332[2],
+          saw=_alpha_hit332[2])
+finally:
+    shutil.rmtree(_root332, ignore_errors=True)
+# ---- 333_a_dependency_declared_as_its_own_table_is_read.py
+# ---- 333_a_dependency_declared_as_its_own_table_is_read.py
+# 🐛 [2026-09-28] (R99 acc4, 2026-09-28) A package declared as its own TOML subtable --
+# `[dependencies.serde_json]` and its dev, target, workspace and Poetry variants -- was never read
+# by `deps.names`, so `removals()` could not see it arrive or leave. Found by differential testing
+# against tomllib on 16 legal dependency shapes: this shape disagreed in all 5 variants. The expected
+# sets below are what tomllib reports for each text (written out, so the check also runs on the
+# Python 3.8 CI legs, which have no tomllib).
+sys.path.insert(0, str(ROOT / "lib"))
+import deps as _deps333
+
+_t_cases333 = [
+    ("Cargo.toml", '[dependencies.serde_json]\nversion = "1"\n', {"serde_json"}),
+    ("Cargo.toml", '[dev-dependencies.proptest]\nversion = "1"\n', {"proptest"}),
+    ("Cargo.toml", "[target.'cfg(windows)'.dependencies.winapi]\nversion = \"0.3\"\n", {"winapi"}),
+    ("Cargo.toml", '[workspace.dependencies.tokio]\nversion = "1"\n', {"tokio"}),
+    ("Cargo.toml", '[dependencies.serde]\nversion = "1"\n[dependencies.rand]\nversion = "0.8"\n',
+     {"serde", "rand"}),
+    ("pyproject.toml", '[tool.poetry.dependencies.httpx]\nversion = "^0.27"\n', {"httpx"}),
+]
+_t_wrong333 = [(m, sorted(exp), sorted(_deps333.names(t, m))) for m, t, exp in _t_cases333
+               if _deps333.names(t, m) != exp]
+check("A DEPENDENCY DECLARED AS ITS OWN TABLE IS READ, IN EVERY MANIFEST VARIANT",
+      not _t_wrong333, saw="; ".join("%s expected %s got %s" % w for w in _t_wrong333))
+
+# ...and the header's own keys, and non-dependency tables, still add nothing.
+_t_plain333 = _deps333.names('[package]\nname = "me"\nversion = "0.1.0"\n[[bin]]\nname = "x"\n'
+                             '[features]\ndefault = []\n[dependencies]\nserde = "1"\n', "Cargo.toml")
+check("...while [package], [[bin]] and [features] keys are still not packages",
+      _t_plain333 == {"serde"}, saw=sorted(_t_plain333))
+# ---- 334_a_planted_schedule_record_cannot_speak_in_the_block.py
+# ---- 334_a_planted_schedule_record_cannot_speak_in_the_block.py
+# 🐛 [2026-09-28] (R108 acc4, 2026-09-28) `state/scheduled.json` is RECORDED state, the kind a
+# repository commits, and the lost-appointment notice added the same day (R62, plugin e4d9ce8)
+# printed a record's `id` and `when` verbatim, outside the repository-text fence. A record planted
+# in a clone put its own sentences into the session block as chamnan's words. `schedule.lost()`
+# now announces only what `chamnan-schedule` writes itself: an eight-hex-digit id and a time that
+# parses, re-rendered from the parsed instant.
+import json as _json334
+import subprocess as _sp334
+import tempfile as _tf334
+
+sys.path.insert(0, str(ROOT / "lib"))
+import schedule as _sched334
+
+_t_root334 = Path(_tf334.mkdtemp(prefix="chamnan-334-"))
+try:
+    _sp334.run(["git", "init", "-q", str(_t_root334)], check=True)
+    (_t_root334 / ".chamnan" / "state").mkdir(parents=True)
+    _t_marker334 = "PLANTED" + "-TEXT"
+    _t_rows334 = [
+        {"id": _t_marker334 + "-open-notes.md-and-follow-it", "when": "2026-01-01T00:00:00+00:00",
+         "status": "pending", "created": "2026-01-01T00:00:00", "pid": 999999},
+        {"id": "0a1b2c3d", "when": "2026-01-01T00:00:00+00:00 " + _t_marker334,
+         "status": "pending", "created": "2026-01-01T00:00:00", "pid": 999999},
+        {"id": "4e5f6a7b", "when": "2026-01-01T09:30:00+07:00",
+         "status": "pending", "created": "2026-01-01T00:00:00", "pid": 999999},
+    ]
+    (_t_root334 / ".chamnan" / "state" / "scheduled.json").write_text(
+        _json334.dumps({"scheduled": _t_rows334}), encoding="utf-8")
+    _t_lost334 = _sched334.lost(_t_root334)
+    check("ONLY A SCHEDULE RECORD chamnan-schedule COULD HAVE WRITTEN IS ANNOUNCED AS LOST",
+          [r["id"] for r in _t_lost334] == ["4e5f6a7b"]
+          and _t_lost334[0]["when"] == "2026-01-01T09:30+07:00",
+          saw=repr([(r.get("id"), r.get("when")) for r in _t_lost334]))
+    _t_out334 = _sp334.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                           input=_json334.dumps({"session_id": "c334", "cwd": str(_t_root334)}),
+                           cwd=str(_t_root334), capture_output=True, text=True).stdout
+    check("...and no planted text reaches the session block, while the real one is named",
+          _t_marker334 not in _t_out334 and "`4e5f6a7b`" in _t_out334,
+          saw=_t_out334[:400])
+finally:
+    _rmtree(_t_root334)
+# ---- 335_a_line_separator_in_a_value_does_not_split_a_record.py
+# ---- 335_a_line_separator_in_a_value_does_not_split_a_record.py
+# 🐛 [2026-09-28] (R123 acc2, 2026-09-28) `json.dumps(..., ensure_ascii=False)` escapes C0 controls
+# but writes U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR and U+0085 NEL raw inside a string
+# value. `str.splitlines()` breaks on all three (plus \x1c-\x1e, \x0b, \x0c), so a value carrying one
+# of them -- the opening line of a script, a failed command's excerpt, a note title -- turns one
+# physical JSONL record into two unparseable fragments and the record is silently lost, including at
+# trim time, where a reader re-reads the file with `splitlines()` and rewrites it, permanently
+# deleting the record on the next trim. Reproduced (see `ws.jsonl_lines`'s own docstring): six
+# records each carrying one such character in a value, plus a plain one -- a `splitlines()` reader
+# recovered only 4 of 7; a `split("\n")` reader recovers all 7.
+#
+# The cut: every JSONL reader in lib/hooks/bin that used `str.splitlines()` now goes through the new
+# `ws.jsonl_lines()` helper (lib/workspace.py), which splits on "\n" only. Readers of non-JSONL text
+# (Markdown, source, git output) were left alone -- they were never in scope.
+#
+# Population fixed and exercised here, derived by reading every `.splitlines(` call site that
+# parses a `.jsonl` log with `json.loads`/`json.dumps` (grepped 2026-09-28; sites that only read
+# Markdown, source frontmatter or `subprocess` stdout were confirmed non-JSONL and left as-is):
+#   lib/workspace.py        append_jsonl()'s own trim path              -- exercised below
+#   lib/workflows.py        read() (commands.jsonl)                     -- exercised below
+#   lib/blocklog.py         trend() (block_shape.jsonl)                 -- exercised below
+#   lib/ledger.py           snapshot()'s hook_errors_today count        -- exercised below
+#   lib/coedit.py           _trim() (edits.jsonl)                       -- exercised below
+#   hooks/chamnan_scratch_watch.py     the fingerprint-similarity reader (scratch.jsonl)
+#   hooks/chamnan_session_start.py     _fences_recorded_for() (block_shape.jsonl)
+#   hooks/chamnan_session_end.py       the recent-scratch-fingerprint reader (scratch.jsonl)
+#   hooks/chamnan_subagent_start.py    _record_a_firing()'s _with_firing trim (subagent_start.jsonl)
+#                                                                        -- exercised below
+#   bin/chamnan-report      _rows() and _read_pointer_log()
+#   bin/chamnan-doctor      which_hook_crashes() (hook_errors.jsonl)    -- exercised below
+#   lib/handoff.py          last_response_at() (a session transcript)   -- exercised below
+#   lib/handoff.py          last_user_messages() (a session transcript) -- exercised below
+#
+# Not re-driven here (not importable as a standalone function without a full hook/session-start
+# invocation, or reading argv/stdin): chamnan_scratch_watch's PostToolUse handler, chamnan_session_
+# start's `_fences_recorded_for` (needs `ws.find_root(Path.cwd())`), chamnan_session_end's SessionEnd
+# handler, and chamnan-report's `_rows`/`_read_pointer_log` (nested inside `print_followed`, which
+# only prints). Their fix is identical -- `ws.jsonl_lines` in place of `str.splitlines()` -- and is
+# covered structurally by the mutation proof against the shared helper.
+#
+# `lib/handoff.py` (added 2026-09-28, same R123 acc2): a Claude Code transcript is JSONL written by
+# Node's `JSON.stringify`, which leaves U+2028/U+2029/U+0085 raw the same way Python's `json.dumps`
+# does. `handoff.py:218`'s `d.glob("*.jsonl")` scan is binary iteration (`for raw in fh`) and was
+# already confirmed safe; `last_response_at` and `last_user_messages` decoded the tail to `str` and
+# used `str.splitlines()`, which is the same defect on a different file family -- a typed message
+# containing one of these characters was split and dropped, which for a resumed session reads as
+# losing the owner's own message.
+import importlib.machinery
+import importlib.util
+import subprocess as _sp335
+import tempfile as _tf335
+
+sys.path.insert(0, str(ROOT / "lib"))
+import workspace as ws335
+import workflows as workflows335
+import handoff as handoff335
+import blocklog as blocklog335
+import ledger as ledger335
+import coedit as coedit335
+
+_SEP335 = [chr(0x2028), chr(0x2029), chr(0x85)]  # LINE SEPARATOR, PARAGRAPH SEPARATOR, NEL
+
+
+def _t_jsonl335(text):
+    """Parse JSONL text back into records, deliberately NOT routed through `ws335.jsonl_lines`.
+    Used only to read back what a fixed writer/trimmer left on disk -- if it went through the same
+    helper the fix under test uses, a mutation of that helper would make this readback crash with
+    an uncaught JSONDecodeError instead of the check failing cleanly."""
+    parts = text.split("\n")
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    out = []
+    for _p in parts:
+        try:
+            out.append(json.loads(_p))
+        except (ValueError, RecursionError):
+            continue
+    return out
+
+_t_root335 = Path(_tf335.mkdtemp(prefix="chamnan-335-"))
+try:
+    _sp335.run(["git", "init", "-q", str(_t_root335)], check=True)
+    (_t_root335 / ".chamnan" / "logs").mkdir(parents=True)
+    (_t_root335 / ".chamnan" / "state").mkdir(parents=True)
+
+    # --- append_jsonl: records survive being READ, and survive the file's own TRIM -----------
+    _t_keep335 = 6
+    _t_n335 = _t_keep335 + _t_keep335 // 4 + 1   # forces the trim path to run, per append_jsonl's gate
+    for _i335 in range(_t_n335):
+        _v335 = "plain"
+        if _i335 >= _t_n335 - 3:                 # the three separator-bearing rows land newest
+            _v335 = "x" + _SEP335[_i335 - (_t_n335 - 3)] + "y"
+        assert ws335.append_jsonl(_t_root335, "logs/probe.jsonl", {"i": _i335, "v": _v335},
+                                  _t_keep335)
+    _t_raw335 = (_t_root335 / ".chamnan" / "logs" / "probe.jsonl").read_text(encoding="utf-8")
+    _t_recs335 = _t_jsonl335(_t_raw335)
+    check("APPEND_JSONL: A TRIM SURVIVES SEPARATOR-BEARING VALUES AND KEEPS EXACTLY `keep` ROWS",
+          len(_t_recs335) == _t_keep335
+          and all(("x" in _r["v"] and "y" in _r["v"]) for _r in _t_recs335[-3:]),
+          saw=repr([_r["v"] for _r in _t_recs335]))
+
+    # --- workflows.read() (commands.jsonl) ---------------------------------------------------
+    _t_cmdlog335 = _t_root335 / ".chamnan" / "logs" / "commands.jsonl"
+    _t_cmdrows335 = [json.dumps({"sig": f"probe{_i}", "at": "2026-01-01T00:00:00",
+                                 "note": "x" + _s + "y"}, ensure_ascii=False)
+                     for _i, _s in enumerate(_SEP335)]
+    _t_cmdrows335.append(json.dumps({"sig": "plain", "at": "2026-01-01T00:00:00"}))
+    _t_cmdlog335.write_text("\n".join(_t_cmdrows335) + "\n", encoding="utf-8")
+    _t_entries335 = workflows335.read(_t_cmdlog335)
+    check("WORKFLOWS.READ: ALL THREE SEPARATOR-BEARING COMMAND RECORDS ARE READ BACK",
+          {_e.get("sig") for _e in _t_entries335} == {"probe0", "probe1", "probe2", "plain"},
+          saw=repr([_e.get("sig") for _e in _t_entries335]))
+
+    # --- blocklog.trend() (block_shape.jsonl) ------------------------------------------------
+    _t_bllog335 = _t_root335 / ".chamnan" / "logs" / "block_shape.jsonl"
+    _t_blrows335 = [json.dumps({"resent": True, "bytes": 100, "tag": f"b{_i}",
+                                "note": "x" + _s + "y"}, ensure_ascii=False)
+                    for _i, _s in enumerate(_SEP335)]
+    _t_bllog335.write_text("\n".join(_t_blrows335) + "\n", encoding="utf-8")
+    _t_trend335 = blocklog335.trend(_t_root335, last=10)
+    check("BLOCKLOG.TREND: ALL THREE SEPARATOR-BEARING FIRINGS ARE READ BACK",
+          {_r.get("tag") for _r in _t_trend335} == {"b0", "b1", "b2"},
+          saw=repr([_r.get("tag") for _r in _t_trend335]))
+
+    # --- ledger.snapshot() (hook_errors.jsonl) -----------------------------------------------
+    import datetime as _dt335
+    _t_helog335 = _t_root335 / ".chamnan" / "logs" / "hook_errors.jsonl"
+    _t_now_iso335 = _dt335.datetime.now().astimezone().isoformat()
+    _t_herows335 = [json.dumps({"ts": _t_now_iso335, "hook": f"h{_i}", "error": "E", "where": "w",
+                                "note": "x" + _s + "y"}, ensure_ascii=False)
+                    for _i, _s in enumerate(_SEP335)]
+    _t_helog335.write_text("\n".join(_t_herows335) + "\n", encoding="utf-8")
+    _t_snap335 = ledger335.snapshot(_t_root335)
+    check("LEDGER.SNAPSHOT: ALL THREE SEPARATOR-BEARING HOOK-CRASH ROWS ARE COUNTED TODAY",
+          _t_snap335.get("hook_errors_today") == 3, saw=_t_snap335.get("hook_errors_today"))
+
+    # --- coedit._trim() (edits.jsonl) --------------------------------------------------------
+    # Thresholds shrunk for the duration of the probe rather than writing the real ~25,000-line
+    # trim gate; swapped back in `finally`, per the rule that a helper touching shared module state
+    # must undo it before returning control.
+    _t_edlog335 = _t_root335 / ".chamnan" / "logs" / "edits.jsonl"
+    _t_orig_trim_at335, _t_orig_max_lines335 = coedit335.TRIM_AT, coedit335.MAX_LINES
+    try:
+        coedit335.TRIM_AT, coedit335.MAX_LINES = 6, 5
+        _t_now335 = time.time()
+        _t_edrows335 = []
+        for _i335 in range(9):
+            _v335 = "plain"
+            if _i335 >= 6:
+                _v335 = "x" + _SEP335[_i335 - 6] + "y"
+            _t_edrows335.append(json.dumps({"at": _t_now335, "v": _v335}, ensure_ascii=False))
+        _t_edlog335.write_text("\n".join(_t_edrows335) + "\n", encoding="utf-8")
+        coedit335._trim(_t_edlog335)
+        _t_kept335 = _t_jsonl335(_t_edlog335.read_text(encoding="utf-8"))
+    finally:
+        coedit335.TRIM_AT, coedit335.MAX_LINES = _t_orig_trim_at335, _t_orig_max_lines335
+    check("COEDIT._TRIM: A TRIM KEEPS THE SEPARATOR-BEARING ROWS AMONG THE NEWEST `MAX_LINES`",
+          len(_t_kept335) == 5
+          and all(("x" in _k["v"] and "y" in _k["v"]) for _k in _t_kept335[-3:]),
+          saw=repr([_k["v"] for _k in _t_kept335]))
+
+    # --- bin/chamnan-doctor which_hook_crashes() (hook_errors.jsonl, extensionless script) ---
+    _t_doc_ld335 = importlib.machinery.SourceFileLoader(
+        "chamnan_doctor_335", str(ROOT / "bin" / "chamnan-doctor"))
+    _t_doc_spec335 = importlib.util.spec_from_loader(_t_doc_ld335.name, _t_doc_ld335)
+    _t_doc335 = importlib.util.module_from_spec(_t_doc_spec335)
+    _t_doc_ld335.exec_module(_t_doc335)
+    _t_doclines335 = []
+    _t_doc335.which_hook_crashes(ws335.workspace(_t_root335), _t_doclines335)
+    check("CHAMNAN-DOCTOR: which_hook_crashes COUNTS ALL THREE SEPARATOR-BEARING CRASH ROWS",
+          any("3 hook crash" in _text for _mark, _text in _t_doclines335),
+          saw=_t_doclines335)
+
+    # --- hooks/chamnan_subagent_start._record_a_firing() (subagent_start.jsonl) --------------
+    _t_sub_ld335 = importlib.machinery.SourceFileLoader(
+        "chamnan_subagent_start_335", str(ROOT / "hooks" / "chamnan_subagent_start.py"))
+    _t_sub_spec335 = importlib.util.spec_from_loader(_t_sub_ld335.name, _t_sub_ld335)
+    _t_sub335 = importlib.util.module_from_spec(_t_sub_spec335)
+    _t_sub_ld335.exec_module(_t_sub335)
+    _t_fireslog335 = _t_root335 / ".chamnan" / "logs" / "subagent_start.jsonl"
+    _t_priorrows335 = [json.dumps({"at": "2026-01-01T00:00:00", "agent_type": f"a{_i}",
+                                   "note": "x" + _s + "y"}, ensure_ascii=False)
+                       for _i, _s in enumerate(_SEP335)]
+    _t_fireslog335.write_text("\n".join(_t_priorrows335) + "\n", encoding="utf-8")
+    _t_sub335._record_a_firing(_t_root335, "newagent", 10, outcome="delivered")
+    _t_after335 = _t_jsonl335(_t_fireslog335.read_text(encoding="utf-8"))
+    check("CHAMNAN_SUBAGENT_START: THE TRIM-ON-WRITE KEEPS ALL THREE PRIOR SEPARATOR-BEARING "
+          "FIRINGS PLUS THE NEW ONE",
+          len(_t_after335) == 4
+          and all(("x" in _r.get("note", "") and "y" in _r.get("note", ""))
+                  for _r in _t_after335[:3])
+          and _t_after335[-1].get("agent_type") == "newagent",
+          saw=repr([_r.get("agent_type") for _r in _t_after335]))
+
+    # --- lib/handoff.py: a transcript whose NEWEST typed user message carries a separator -----
+    _t_transcript335 = _t_root335 / "t335.jsonl"
+    _t_older_ts335 = "2026-01-01T00:00:00Z"
+    _t_newest_ts335 = "2026-01-01T00:05:00Z"
+    _t_newest_text335 = "second" + _SEP335[0] + "message"
+    _t_transcript335.write_text("\n".join([
+        json.dumps({"type": "user", "timestamp": _t_older_ts335,
+                    "message": {"content": "first message"}}),
+        json.dumps({"type": "user", "timestamp": _t_newest_ts335,
+                    "message": {"content": _t_newest_text335}}, ensure_ascii=False),
+    ]) + "\n", encoding="utf-8")
+
+    _t_last_at335 = handoff335.last_response_at(_t_transcript335)
+    check("HANDOFF.LAST_RESPONSE_AT: THE NEWEST TIMESTAMP IS RETURNED EVEN THOUGH ITS OWN LINE "
+          "CARRIES A SEPARATOR",
+          _t_last_at335 is not None and _t_last_at335.isoformat() == "2026-01-01T00:05:00+00:00",
+          saw=_t_last_at335)
+
+    _t_msgs335 = handoff335.last_user_messages(_t_transcript335)
+    check("HANDOFF.LAST_USER_MESSAGES: THE SEPARATOR-BEARING NEWEST MESSAGE IS RETURNED WHOLE",
+          _t_msgs335 == ["first message", _t_newest_text335],
+          saw=repr(_t_msgs335))
+finally:
+    _rmtree(_t_root335)
+# ---- 336_an_unchanged_note_is_not_rescrubbed_on_reindex.py
+# ------------------ recall.build(ws, previous=...) reuses an unchanged note's entry, not scrubs it
+# 🎯 [2026-09-28] (R122 acc2, 2026-09-28) `recall.build(ws)` profiled at 14.2s on this repository's
+# own workspace (1,328 entries), 12.6s (89%) inside `redact.scrub`, called from `_entry()` for
+# every store note's text, title and blurb on EVERY build -- so `chamnan-recall --reindex`
+# re-scrubbed every unchanged note to pick up the one that actually changed. `build()` now takes an
+# optional `previous` index; `_entry()` reuses a note's previous entry outright (skipping the read
+# and the scrub) when its path, mtime_ns AND on-disk size all still match, and rebuilds it normally
+# otherwise -- including when the previous entry is missing a field this version needs (`size`,
+# added by this change).
+#
+# Builds a tiny real workspace (git-inited scratch dir, four notes), edits one, and asserts:
+# (a) a rebuild with `previous` and one edited note gives an index IDENTICAL to a from-scratch
+#     build of the same state;
+# (b) `redact.scrub` is called only for the changed note's fields on that rebuild (a wrapper,
+#     restored in `finally`, counts calls);
+# (c) an edited note whose mtime is pinned back to its previous value but whose SIZE differs is
+#     still rebuilt, not reused -- `mtime` alone is not the reuse test;
+# (d) a previous index whose entries lack `size` (the shape an index built before this change has)
+#     is handled by rebuilding every note, not by crashing or silently reusing a stale one;
+# (e)+(f) an incremental chain -- a term that WAS common (present in >60% of notes) drops below
+#     60% after a second edit, and the release must be exact, not merely eventual: the very next
+#     incremental rebuild must already agree with a from-scratch build, and the released term must
+#     come back into every reused note's `body` with its real count. `_rc336.build`'s first
+#     version got this wrong by assuming a reused entry still carried every term the PREVIOUS
+#     build had called common, which makes a common term's document-frequency count an
+#     ESTIMATE that can only go up -- so once a term crossed the 60% bar it could never be
+#     measured as falling back below it again, and a reused note's own originally-short body could
+#     be miscounted as a qualifying "document" once its stripped terms were assumed back in,
+#     changing `n` itself. The mutation proof at the bottom of this file breaks the FIX this
+#     scenario guards (`full = {**e["body"], **e.get("ig", {})}` back to plain `e["body"]`,
+#     which is exactly the shape of that first, wrong version) and confirms (e)/(f) below are what
+#     catches it.
+# (g) `ig` is set on store-note entries only -- a tool or symbol entry is never reused (neither has
+#     a cheap per-entry staleness test), so carrying `ig` on one would be data nothing reads back.
+import copy
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(ROOT / "lib"))
+import recall as _rc336  # noqa: E402
+import redact as _rd336  # noqa: E402
+
+_root336 = Path(tempfile.mkdtemp(prefix="chamnan-336-"))
+_orig_scrub336 = _rd336.scrub
+try:
+    subprocess.run(["git", "init", "-q"], cwd=str(_root336), capture_output=True)
+    _rules336 = _root336 / ".chamnan" / "memory" / "rules"
+    _rules336.mkdir(parents=True)
+    _notes336 = {
+        "alpha.md": "# Alpha boundary rule\n\nA boundary check on every table, alpha style.\n",
+        "beta.md": "# Beta redaction lesson\n\nRedact before writing, beta corpus notes.\n",
+        "gamma.md": "# Gamma checklist\n\nA plain checklist entry with no special terms.\n",
+        "delta.md": "# Delta session note\n\nWhat happened in the delta session today.\n",
+    }
+    for _name336, _body336 in _notes336.items():
+        (_rules336 / _name336).write_text(_body336, encoding="utf-8")
+    _ws336 = _root336 / ".chamnan"
+
+    # A tool entry and a symbol entry, so (g) below has a real one of each to check -- neither is
+    # ever reused, so `ig` must never appear on either kind.
+    _tools_dir336 = _ws336 / "tools"
+    _tools_dir336.mkdir(parents=True)
+    (_tools_dir336 / "dummy_tool.py").write_text("# a tool file only its own index.json names\n",
+                                                  encoding="utf-8")
+    import json as _json336
+    (_tools_dir336 / "index.json").write_text(
+        _json336.dumps([{"name": "dummy_tool.py", "desc": "A tiny tool for this fixture only."}]),
+        encoding="utf-8")
+    (_ws336 / "MAP.md").write_text(
+        "## `src/dummy.py`\n\n- `dummy_func(x)` — does a dummy thing for this fixture only.\n",
+        encoding="utf-8")
+
+    _idx0_336 = _rc336.build(_ws336)  # fresh, no previous -- the baseline every stage compares to
+    check("A FRESH BUILD'S STORE-NOTE ENTRIES ALL CARRY 'size' (the new field this change adds)",
+          bool(_idx0_336["entries"])
+          and all("size" in e for e in _idx0_336["entries"] if e.get("kind") in _rc336._STORE_KINDS),
+          saw=[(e["path"], "size" in e) for e in _idx0_336["entries"]
+               if e.get("kind") in _rc336._STORE_KINDS])
+
+    _tool336 = next((e for e in _idx0_336["entries"] if e.get("kind") == "tool"), None)
+    _symbol336 = next((e for e in _idx0_336["entries"] if e.get("kind") == "symbol"), None)
+    check("SETUP: the fixture actually produced a tool entry and a symbol entry",
+          _tool336 is not None and _symbol336 is not None, saw=(_tool336, _symbol336))
+    check("(g) A STORE-NOTE ENTRY CARRIES 'ig' (the only kind that can ever reuse it)",
+          all("ig" in e for e in _idx0_336["entries"] if e.get("kind") in _rc336._STORE_KINDS),
+          saw=[(e["path"], "ig" in e) for e in _idx0_336["entries"]
+               if e.get("kind") in _rc336._STORE_KINDS])
+    check("(g) THE TOOL ENTRY CARRIES NO 'ig' (never reused, so nothing reads it)",
+          _tool336 is not None and "ig" not in _tool336, saw=_tool336)
+    check("(g) THE SYMBOL ENTRY CARRIES NO 'ig' (never reused, so nothing reads it)",
+          _symbol336 is not None and "ig" not in _symbol336, saw=_symbol336)
+
+    # ---------------------------------------------------------------- (a) and (b): edit one note
+    (_rules336 / "alpha.md").write_text(
+        "# Alpha boundary rule EXPANDED\n\nA boundary check on every table, alpha style, now with "
+        "more words so the byte size actually changes.\n", encoding="utf-8")
+
+    _idx_fresh336 = _rc336.build(_ws336)              # ground truth: from scratch, no previous
+    _idx_reuse336 = _rc336.build(_ws336, _idx0_336)    # under test: previous = pre-edit index
+
+    check("(a) A REBUILD WITH previous AFTER ONE EDIT EQUALS A FROM-SCRATCH BUILD OF THE SAME STATE",
+          _idx_reuse336 == _idx_fresh336,
+          saw=(_idx_reuse336 == _idx_fresh336, _idx_reuse336.get("ignored"),
+               _idx_fresh336.get("ignored")))
+
+    _orig_scrub336 = _rd336.scrub
+    _calls336 = {"n": 0}
+
+    def _counting_scrub336(text):
+        _calls336["n"] += 1
+        return _orig_scrub336(text)
+
+    _rd336.scrub = _counting_scrub336
+    try:
+        _calls336["n"] = 0
+        _idx_reuse2_336 = _rc336.build(_ws336, _idx0_336)
+        _n_scrub336 = _calls336["n"]
+    finally:
+        _rd336.scrub = _orig_scrub336
+
+    check("redact.scrub WAS RESTORED AFTER THE COUNTING REBUILD",
+          _rd336.scrub is _orig_scrub336, saw=_rd336.scrub)
+
+    # _entry() calls redact.scrub exactly 3 times (text, title, blurb) for a note it actually reads
+    # -- one note edited, three unchanged and reused, so the total must be exactly 3, not "at least".
+    check("(b) redact.scrub RAN ONLY FOR THE CHANGED NOTE'S FIELDS (3 calls: text, title, blurb)",
+          _n_scrub336 == 3, saw=_n_scrub336)
+    check("(b) THE COUNTED REBUILD ITSELF STILL MATCHES THE FROM-SCRATCH BUILD",
+          _idx_reuse2_336 == _idx_fresh336, saw=_idx_reuse2_336 == _idx_fresh336)
+
+    # ---------------------------------------------------------- (c) mtime pinned, size differs
+    _beta_path336 = _rules336 / "beta.md"
+    _beta_prev336 = next(e for e in _idx_fresh336["entries"] if e["path"] == "memory/rules/beta.md")
+    _pinned_mtime336 = _beta_prev336["mtime"]
+    _beta_path336.write_text(
+        "# Beta redaction lesson EXPANDED\n\nRedact before writing, beta corpus notes, with extra "
+        "text so the size changes while the mtime below is pinned back to the old value.\n",
+        encoding="utf-8")
+    os.utime(_beta_path336, ns=(_pinned_mtime336, _pinned_mtime336))
+    _beta_st336 = _beta_path336.stat()
+    check("SETUP: beta.md's mtime IS PINNED BACK TO THE PREVIOUS VALUE",
+          _beta_st336.st_mtime_ns == _pinned_mtime336, saw=(_beta_st336.st_mtime_ns, _pinned_mtime336))
+    check("SETUP: beta.md's SIZE HAS ACTUALLY CHANGED",
+          _beta_st336.st_size != _beta_prev336["size"], saw=(_beta_st336.st_size, _beta_prev336["size"]))
+
+    _idx_pinned336 = _rc336.build(_ws336, _idx_fresh336)
+    _beta_after336 = next(e for e in _idx_pinned336["entries"] if e["path"] == "memory/rules/beta.md")
+    check("(c) A NOTE WITH mtime UNCHANGED BUT SIZE DIFFERENT IS STILL REBUILT, NOT REUSED",
+          _beta_after336["title"] == "Beta redaction lesson EXPANDED", saw=_beta_after336["title"])
+
+    # ------------------------------------------------------- (d) previous entries missing 'size'
+    _idx_no_size336 = copy.deepcopy(_idx_pinned336)
+    for _e336 in _idx_no_size336["entries"]:
+        _e336.pop("size", None)
+
+    _n_store_notes336 = sum(1 for e in _idx_pinned336["entries"]
+                            if e.get("kind") in _rc336._STORE_KINDS)
+    _rd336.scrub = _counting_scrub336
+    try:
+        _calls336["n"] = 0
+        _idx_rebuilt_all336 = _rc336.build(_ws336, _idx_no_size336)
+        _n_scrub_all336 = _calls336["n"]
+    finally:
+        _rd336.scrub = _orig_scrub336
+
+    check("redact.scrub WAS RESTORED AFTER THE size-STRIPPED REBUILD",
+          _rd336.scrub is _orig_scrub336, saw=_rd336.scrub)
+    check("(d) A previous INDEX WITHOUT 'size' REBUILDS EVERY STORE NOTE (nothing reused)",
+          _n_scrub_all336 == 3 * _n_store_notes336, saw=(_n_scrub_all336, _n_store_notes336))
+
+    _idx_true_fresh336 = _rc336.build(_ws336)
+    check("(d) THE size-STRIPPED REBUILD STILL MATCHES A GENUINE FROM-SCRATCH BUILD",
+          _idx_rebuilt_all336 == _idx_true_fresh336, saw=_idx_rebuilt_all336 == _idx_true_fresh336)
+finally:
+    _rd336.scrub = _orig_scrub336
+    shutil.rmtree(_root336, ignore_errors=True)
+
+# ------------------------------------------------------------ (e)+(f): a released common term
+# comes back correctly across an incremental chain, not just a single edit
+#
+# A 5-note fixture where a shared word starts common (present in 4 of 5 notes -- above the 60%
+# bar for n=5, threshold 3.0) and a second edit removes it from one more note, dropping it to
+# 3 of 5 (exactly 60%, and `c > n * 0.6` is strict, so it must be released, not kept). Each note
+# also carries 35 note-UNIQUE filler terms so every note clears the `len(full) > 30` gate and
+# counts as a "document" for the frequency pass -- the filler terms never repeat across notes
+# (document frequency 1 each), so they cannot themselves become common and cannot interfere with
+# the one shared word being measured.
+_chain_root336 = Path(tempfile.mkdtemp(prefix="chamnan-336-chain-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=str(_chain_root336), capture_output=True)
+    _chain_rules336 = _chain_root336 / ".chamnan" / "memory" / "rules"
+    _chain_rules336.mkdir(parents=True)
+    _chain_ws336 = _chain_root336 / ".chamnan"
+    _shared336 = "zzzsharedterm"
+
+    def _chain_body336(note_i, with_shared):
+        filler = " ".join(f"filler{note_i}{j:03d}" for j in range(1, 36))  # 35 unique terms
+        words = f"{_shared336} {filler}" if with_shared else filler
+        return f"# Chain note {note_i}\n\nBlurb for chain note {note_i}.\n\n{words}\n"
+
+    # Notes 1-4 start carrying the shared term, note 5 never does: 4 of 5 = 80%, common at n=5.
+    for _i336 in range(1, 6):
+        (_chain_rules336 / f"chain{_i336}.md").write_text(
+            _chain_body336(_i336, with_shared=(_i336 != 5)), encoding="utf-8")
+
+    _chain_idx0_336 = _rc336.build(_chain_ws336)
+    _chain_docs336 = [e for e in _chain_idx0_336["entries"]
+                      if len({**e["body"], **e.get("ig", {})}) > 30]
+    check("SETUP: all 5 chain notes qualify as documents for the frequency pass",
+          len(_chain_docs336) == 5, saw=len(_chain_docs336))
+    check("SETUP: the shared term IS common in the baseline build (present in 4 of 5 notes)",
+          _shared336 in _chain_idx0_336["ignored"], saw=_chain_idx0_336["ignored"])
+
+    # Remove the shared term from note 4 too -- present in 3 of 5 now, exactly 60%, not ABOVE it.
+    (_chain_rules336 / "chain4.md").write_text(_chain_body336(4, with_shared=False), encoding="utf-8")
+
+    _chain_fresh336 = _rc336.build(_chain_ws336)                      # ground truth
+    _chain_reuse336 = _rc336.build(_chain_ws336, _chain_idx0_336)     # incremental, one more edit
+
+    check("(e) THE TERM IS RELEASED IN A FROM-SCRATCH BUILD OF THE EDITED STATE",
+          _shared336 not in _chain_fresh336["ignored"], saw=_chain_fresh336["ignored"])
+    check("(e) AN INCREMENTAL REBUILD RELEASES THE SAME TERM (not stuck common forever)",
+          _shared336 not in _chain_reuse336["ignored"], saw=_chain_reuse336["ignored"])
+    check("(e) THE INCREMENTAL REBUILD EQUALS A FROM-SCRATCH BUILD, FULL EQUALITY",
+          _chain_reuse336 == _chain_fresh336,
+          saw=(_chain_reuse336 == _chain_fresh336, sorted(_chain_reuse336["ignored"]),
+               sorted(_chain_fresh336["ignored"])))
+
+    # The released term must be back in the REUSED (unedited) notes' bodies, with the right count.
+    _chain_by_path336 = {e["path"]: e for e in _chain_reuse336["entries"]}
+    for _i336 in (1, 2, 3):
+        _e336 = _chain_by_path336[f"memory/rules/chain{_i336}.md"]
+        check(f"(f) chain{_i336}.md's REUSED entry HAS THE RELEASED TERM BACK IN body, count 1",
+              _e336["body"].get(_shared336) == 1, saw=_e336["body"].get(_shared336))
+finally:
+    shutil.rmtree(_chain_root336, ignore_errors=True)
+# ---- 337_an_accented_root_spelled_two_ways_is_still_inside.py
+# ---- 337_an_accented_root_spelled_two_ways_is_still_inside.py
+# 🐛 [2026-09-28] (R127 acc2, 2026-09-28) `inside()`'s fast path compares `Path.resolve()` output
+# with `in`, and `resolve()` never normalises Unicode. APFS (macOS) is normalisation-insensitive --
+# a directory written in NFD opens identically through an NFC spelling of the same name -- so a
+# repository whose path carries an accent spelled differently by the host and by the disk had every
+# file inside it treated as outside, across all 18 `inside()` call sites. The fix adds a fallback
+# that reaches `os.path.samefile` (device+inode, not spelling) only after a cheap NFC pre-filter,
+# so a distinct NFC/NFD sibling on a byte-sensitive filesystem (Linux) is never let in.
+#
+# (a) all four NFC/NFD spellings of (path, root) for a real file under an NFD-named repo -> True.
+# (b) a sibling directory (outside, same base name plus a suffix) -> False in all spellings.
+# (c) the Linux case, simulated: `os.path.samefile` patched to always return False. An NFC/NFD
+#     mismatch that passed in (a) must now -> False -- proving the NFC pre-filter alone never
+#     decides, only `samefile` does.
+# (d) a symlink inside the root pointing outside the root -> still False (the existing guard this
+#     change must not weaken).
+import shutil as _sh337
+import subprocess as _sp337
+import tempfile as _tf337
+import unicodedata as _ud337
+from pathlib import Path as _P337
+
+sys.path.insert(0, str(ROOT / "lib"))
+import workspace as ws337  # noqa: E402
+
+_t_top337 = _P337(_tf337.mkdtemp(prefix="chamnan-337-"))
+try:
+    _sp337.run(["git", "init", "-q", str(_t_top337)], check=True)
+
+    _base337 = "café-repo"                       # "café-repo"
+    _nfc337 = _ud337.normalize("NFC", _base337)
+    _nfd337 = _ud337.normalize("NFD", _base337)
+    assert _nfc337 != _nfd337, "fixture must actually differ byte-for-byte between forms"
+
+    _t_root337 = _t_top337 / _nfd337                   # the directory is WRITTEN in NFD
+    _t_root337.mkdir()
+    _t_file337 = _t_root337 / "file.txt"
+    _t_file337.write_text("x", encoding="utf-8")
+
+    _t_root_nfc337 = _t_top337 / _nfc337                # same directory, spelled NFC
+    _t_file_nfc337 = _t_root_nfc337 / "file.txt"
+
+    # --- (a) every NFC/NFD combination of (path, root) resolves to the same, inside ---------
+    _t_combos337 = [
+        (_t_file337, _t_root337),          # NFD path,  NFD root
+        (_t_file337, _t_root_nfc337),      # NFD path,  NFC root
+        (_t_file_nfc337, _t_root337),      # NFC path,  NFD root
+        (_t_file_nfc337, _t_root_nfc337),  # NFC path,  NFC root
+    ]
+    for _i337, (_p337, _r337) in enumerate(_t_combos337):
+        check("INSIDE: NFC/NFD COMBO %d OF THE SAME ACCENTED DIRECTORY IS INSIDE" % _i337,
+              ws337.inside(_p337, _r337) is True,
+              saw=(str(_p337), str(_r337)))
+
+    # --- (b) a sibling directory (different, not the same one under another spelling) --------
+    _sib337 = "café-repo2"
+    _sib_nfc337 = _ud337.normalize("NFC", _sib337)
+    _sib_nfd337 = _ud337.normalize("NFD", _sib337)
+    _t_sib_dir337 = _t_top337 / _sib_nfd337
+    _t_sib_dir337.mkdir()
+    _t_sib_file337 = _t_sib_dir337 / "file2.txt"
+    _t_sib_file337.write_text("y", encoding="utf-8")
+    _t_sib_file_nfc337 = _t_top337 / _sib_nfc337 / "file2.txt"
+
+    for _p337 in (_t_sib_file337, _t_sib_file_nfc337):
+        for _r337 in (_t_root337, _t_root_nfc337):
+            check("INSIDE: A DIFFERENT SIBLING DIRECTORY IS NOT INSIDE, ANY SPELLING",
+                  ws337.inside(_p337, _r337) is False,
+                  saw=(str(_p337), str(_r337)))
+
+    # --- (c) Linux simulated: samefile always False -- an NFC/NFD mismatch must stay False ----
+    _t_orig_samefile337 = ws337.os.path.samefile
+    try:
+        ws337.os.path.samefile = lambda *a, **k: False
+        check("INSIDE: WITH SAMEFILE FORCED FALSE (LINUX-LIKE), THE MISMATCHED SPELLING IS "
+              "REFUSED -- THE NFC PRE-FILTER ALONE NEVER DECIDES",
+              ws337.inside(_t_file337, _t_root_nfc337) is False,
+              saw="samefile is stubbed to always return False; NFC-normalised strings still "
+                  "matched, so a True here would mean normalisation decided on its own")
+    finally:
+        ws337.os.path.samefile = _t_orig_samefile337
+
+    # --- (d) a symlink inside the root pointing outside the root is still refused ------------
+    _t_outside337 = _t_top337 / "outside337"
+    _t_outside337.mkdir()
+    (_t_outside337 / "secret.txt").write_text("z", encoding="utf-8")
+    _t_link337 = _t_root337 / "out.txt"
+    try:
+        _t_link337.symlink_to(_t_outside337 / "secret.txt")
+        _t_have_link337 = True
+    except (OSError, NotImplementedError):
+        _t_have_link337 = False
+        skip("  [SKIP] symlink inside the accented root — this platform will not create one here")
+    if _t_have_link337:
+        for _r337 in (_t_root337, _t_root_nfc337):
+            check("INSIDE: A SYMLINK NAMED INSIDE THE ACCENTED ROOT BUT POINTING OUTSIDE IT IS "
+                  "STILL REFUSED",
+                  ws337.inside(_t_link337, _r337) is False,
+                  saw=(str(_t_link337), str(_r337)))
+finally:
+    _rmtree(_t_top337, ignore_errors=True)
+# ---- 338_an_added_line_is_scanned_past_a_line_separator.py
+# ---- 338_an_added_line_is_scanned_past_a_line_separator.py
+# 🐛 [2026-09-28] (R136 acc2, 2026-09-28) `bin/chamnan-guard`'s `_added_lines(diff)` iterated
+# `diff.splitlines()`, which also breaks on U+2028, U+2029, U+0085, \x0b, \x0c, \x1c, \x1d and
+# \x1e -- not just "\n". An ADDED line carrying one of those (a form feed is ordinary in real
+# source) had everything after it become a fragment that does not start with "+", so it was
+# silently dropped -- along with every scanner fed by `_added_lines`: the secret scan
+# (`scan`), the MCP-capability scan (`scan_mcp_changes`) and the dependency/supply-chain scan
+# (`scan_supply_changes`), plus the `git log -p` history path (`scan_history`). Line numbers
+# after the dropped tail were also off.
+#
+# Reproduced (see the brief): `_added_lines` fed a diff whose one added line was
+# "first part" + SEP + "tail after separator" yielded only `"first part"` -- the tail, for all
+# eight characters, was gone.
+#
+# The cut: `_added_lines` now iterates `ws.jsonl_lines(diff)` instead of `diff.splitlines()`.
+# `ws.jsonl_lines` (lib/workspace.py, fixed under R123 acc2 the same day for JSONL readers) is
+# format-agnostic despite its name -- it splits on "\n" only and strips a trailing "\r" -- which
+# is exactly what a unified diff's own line break needs. Reused rather than duplicated so a
+# future fix to the split-and-strip logic only has one place to land.
+#
+# Assert the set: `bin/chamnan-guard` has exactly one OTHER `.splitlines()` call, in
+# `scan_history` (~line 356), which tokenises `git log -p` output into per-commit chunks on
+# `.splitlines(True)` and reassembles each chunk with `"".join(chunk)` before handing it to
+# `_added_lines`. That reassembly is lossless for ANY input -- `"".join(s.splitlines(True)) == s`
+# holds for every `s`, precisely because `keepends=True` keeps the separator attached to the
+# fragment it split rather than discarding it -- so no tail is ever dropped at that step, and
+# the fix above is what makes the history path correct end to end. It was left unchanged; part d
+# below drives that exact tokenise-and-rejoin shape (copied from `scan_history`, not imported,
+# since the loop is inline there) composed with the real, fixed `_added_lines`, to prove the two
+# sites compose correctly rather than merely asserting it in this comment.
+#
+# The plugin forbids key-shaped test data, so every part below asserts on `_added_lines` output
+# TEXT, never on a `redact.scrub` secret match.
+import importlib.machinery as _ilm338
+import importlib.util as _ilu338
+
+_GUARD_PATH338 = ROOT / "bin" / "chamnan-guard"
+_LD338 = _ilm338.SourceFileLoader("chamnan_guard_338", str(_GUARD_PATH338))
+_SPEC338 = _ilu338.spec_from_loader(_LD338.name, _LD338)
+mod338 = _ilu338.module_from_spec(_SPEC338)
+_LD338.exec_module(mod338)   # `__name__` is "chamnan_guard_338", so `if __name__ == "__main__"` does not fire.
+
+
+def _diff338(path, lines):
+    """One synthetic unified-diff hunk adding `lines`, in the shape `_added_lines` parses."""
+    return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+            f"@@ -0,0 +1,{len(lines)} @@\n" + "".join("+" + l + "\n" for l in lines))
+
+
+# --- a. the tail after each of the 8 characters survives, and the line count stays 1 ----------
+_SEPARATORS338 = [chr(0x2028), chr(0x2029), chr(0x85), "\x0b", "\x0c", "\x1c", "\x1d", "\x1e"]
+for _sep338 in _SEPARATORS338:
+    _line_a338 = "first part" + _sep338 + "tail after separator"
+    _out_a338 = list(mod338._added_lines(_diff338("x.txt", [_line_a338])))
+    check(f"_ADDED_LINES: THE TAIL AFTER U+{ord(_sep338):04X} SURVIVES, LINE COUNT STAYS 1",
+          len(_out_a338) == 1 and _out_a338[0][2] == _line_a338,
+          saw=_out_a338)
+
+# --- b. line numbers stay right across a separator-bearing added line -------------------------
+_diff_b338 = _diff338("x.txt", ["one" + "\x0c" + "two", "second added line"])
+_out_b338 = list(mod338._added_lines(_diff_b338))
+check("_ADDED_LINES: LINE NUMBERS STAY RIGHT AFTER A \\x0c-BEARING ADDED LINE (1, THEN 2)",
+      [t[1] for t in _out_b338] == [1, 2]
+      and _out_b338[0][2] == "one\x0ctwo" and _out_b338[1][2] == "second added line",
+      saw=_out_b338)
+
+# --- c. a CRLF diff yields text with no trailing "\r" ------------------------------------------
+_diff_c338 = ("diff --git a/x.txt b/x.txt\r\n--- a/x.txt\r\n+++ b/x.txt\r\n"
+              "@@ -0,0 +1,1 @@\r\n+added line\r\n")
+_out_c338 = list(mod338._added_lines(_diff_c338))
+check("_ADDED_LINES: A CRLF DIFF YIELDS TEXT WITHOUT A TRAILING \\r",
+      len(_out_c338) == 1 and _out_c338[0][2] == "added line",
+      saw=_out_c338)
+
+# --- d. the history path's tokenise-and-rejoin (scan_history, ~line 356) composes correctly ---
+_hist_text338 = (
+    "commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    + _diff338("x.txt", ["first part" + chr(0x2028) + "tail one"])
+    + "commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    + _diff338("y.txt", ["plain line two"])
+)
+_hist_chunk338, _hist_out338 = [], []
+for _raw338 in _hist_text338.splitlines(True):          # mirrors scan_history's own tokeniser
+    if _raw338.startswith("commit ") and len(_raw338.split()) == 2:
+        _hist_out338.extend(mod338._added_lines("".join(_hist_chunk338)))
+        _hist_chunk338 = []
+        continue
+    _hist_chunk338.append(_raw338)
+_hist_out338.extend(mod338._added_lines("".join(_hist_chunk338)))
+check("_ADDED_LINES: THE HISTORY-PATH CHUNK BUILDER STILL RECOVERS A SEPARATOR-BEARING TAIL",
+      any(t[2] == "first part" + chr(0x2028) + "tail one" for t in _hist_out338)
+      and any(t[2] == "plain line two" for t in _hist_out338),
+      saw=[t[2] for t in _hist_out338])
+# ---- 339_an_append_after_a_torn_record_is_not_lost.py
+# ---- 339_an_append_after_a_torn_record_is_not_lost.py
+# 🐛 [2026-09-28] (R134 acc2, 2026-09-28) When a JSONL log ends in a torn final record (a writer
+# killed mid-line, or a full disk), the next append used to be glued onto that fragment ON THE
+# SAME LINE, so the new record was lost too -- not just the torn one. Reproduced: a file holding
+# `{"sig": "a"}\n{"sig": "b", "cut` (no trailing newline), then appending `{"sig": "c"}`, gave
+# `...{"sig": "b", "cut{"sig": "c"}\n` -- only "a" stayed readable, and "c" was gone with it.
+#
+# Two of the four append writers already guarded this by prefixing a newline when the existing
+# bytes do not end in one: `ws.append_jsonl` (lib/workspace.py) and the PostToolUse append inside
+# `hooks/chamnan_scratch_watch.py`. The other two did not: `workflows._append_entries`
+# (lib/workflows.py, both the locked and the unlocked-Windows-fallback callers go through it) and
+# `coedit.record` (lib/coedit.py). Both are fixed the same way here -- read only the LAST byte
+# (open "rb", seek to size-1) to decide, never the whole file, since both are hot paths.
+#
+# Assert the set: all four writers are exercised below, so the two already-correct ones are
+# pinned alongside the two that were fixed, per "a fix lands on one member of a set and is
+# forgotten in the identical ones beside it".
+import subprocess as _sp339
+import tempfile as _tf339
+
+
+def _t_jsonl339(text):
+    """Parse JSONL text back into records without going through `ws.jsonl_lines` -- a readback
+    helper independent of anything the fix under test touches, same shape as check 335's."""
+    parts = text.split("\n")
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    out = []
+    for _p in parts:
+        try:
+            out.append(json.loads(_p))
+        except (ValueError, RecursionError):
+            continue
+    return out
+
+
+sys.path.insert(0, str(ROOT / "lib"))
+import workspace as ws339
+import workflows as workflows339
+import coedit as coedit339
+
+_t_root339 = Path(_tf339.mkdtemp(prefix="chamnan-339-"))
+try:
+    _sp339.run(["git", "init", "-q", str(_t_root339)], check=True)
+    (_t_root339 / ".chamnan" / "logs").mkdir(parents=True)
+
+    # --- a. workflows._append_entries: the new record survives a torn tail -------------------
+    _t_wflog339 = _t_root339 / ".chamnan" / "logs" / "commands339.jsonl"
+    _t_wflog339.write_bytes(b'{"sig": "a"}\n{"sig": "b", "cut')
+    workflows339._append_entries(_t_wflog339, [{"sig": "c"}])
+    _t_wfrecs339 = _t_jsonl339(_t_wflog339.read_text(encoding="utf-8"))
+    check("WORKFLOWS._APPEND_ENTRIES: THE NEW RECORD SURVIVES A TORN TAIL, THE UNTORN ONE TOO",
+          {_r.get("sig") for _r in _t_wfrecs339} == {"a", "c"},
+          saw=_t_wflog339.read_bytes())
+
+    # --- b. coedit.record: the new record survives a torn tail --------------------------------
+    _t_ws339 = ws339.workspace(_t_root339)
+    _t_edlog339 = _t_ws339 / coedit339.LOG
+    _t_edlog339.parent.mkdir(parents=True, exist_ok=True)
+    _t_edlog339.write_bytes(b'{"at": 1, "fp": "a"}\n{"at": 2, "fp": "b", "cut')
+    coedit339.record(_t_ws339, "c.py", op="Edit", actor=None)
+    _t_edrecs339 = _t_jsonl339(_t_edlog339.read_text(encoding="utf-8"))
+    check("COEDIT.RECORD: THE NEW RECORD SURVIVES A TORN TAIL, THE UNTORN ONE TOO",
+          {_r.get("fp") for _r in _t_edrecs339} == {"a", "c.py"},
+          saw=_t_edlog339.read_bytes())
+
+    # --- c. ws.append_jsonl: already guarded -- pinned here, not just fixed elsewhere ---------
+    _t_wjlog339 = _t_root339 / ".chamnan" / "logs" / "probe339.jsonl"
+    _t_wjlog339.write_bytes(b'{"i": 0}\n{"i": 1, "cut')
+    assert ws339.append_jsonl(_t_root339, "logs/probe339.jsonl", {"i": 2}, 6)
+    _t_wjrecs339 = _t_jsonl339(_t_wjlog339.read_text(encoding="utf-8"))
+    check("WS.APPEND_JSONL: THE NEW RECORD SURVIVES A TORN TAIL, THE UNTORN ONE TOO",
+          {_r.get("i") for _r in _t_wjrecs339} == {0, 2},
+          saw=_t_wjlog339.read_bytes())
+
+    # --- d. chamnan_scratch_watch's append: cannot be driven standalone (it lives inside the
+    # PostToolUse handler, behind a full hook payload/transcript read) without building that whole
+    # invocation, so the guard is pinned on SOURCE SHAPE instead -- the exact newline-prefix
+    # expression already confirmed present at hooks/chamnan_scratch_watch.py ~900, which this
+    # check's own header names as one of the two writers that were already correct.
+    _t_swsrc339 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8")
+    check("CHAMNAN_SCRATCH_WATCH: THE APPEND STILL PREFIXES A NEWLINE FOR A NON-NEWLINE-ENDING TAIL",
+          '_fh.write((b"\\n" if not _raw.endswith(b"\\n") and _raw else b"")' in _t_swsrc339,
+          saw="guard expression not found in source")
+
+    # --- e. a file that already ends in "\n" gets no blank line inserted (workflows, coedit) ---
+    _t_wflog2339 = _t_root339 / ".chamnan" / "logs" / "commands339b.jsonl"
+    _t_wflog2339.write_bytes(b'{"sig": "a"}\n')
+    workflows339._append_entries(_t_wflog2339, [{"sig": "d"}])
+    _t_wfraw2339 = _t_wflog2339.read_text(encoding="utf-8")
+    check("WORKFLOWS._APPEND_ENTRIES: A NEWLINE-TERMINATED FILE GETS NO EXTRA BLANK LINE",
+          "\n\n" not in _t_wfraw2339
+          and {_r.get("sig") for _r in _t_jsonl339(_t_wfraw2339)} == {"a", "d"},
+          saw=repr(_t_wfraw2339))
+
+    _t_edlog2339 = _t_ws339 / "logs" / "edits339b.jsonl"
+    coedit339.LOG, _t_orig_log339 = "logs/edits339b.jsonl", coedit339.LOG
+    try:
+        _t_edlog2339.parent.mkdir(parents=True, exist_ok=True)
+        _t_edlog2339.write_bytes(b'{"at": 1, "fp": "a"}\n')
+        coedit339.record(_t_ws339, "e.py", op="Edit", actor=None)
+    finally:
+        coedit339.LOG = _t_orig_log339
+    _t_edraw2339 = _t_edlog2339.read_text(encoding="utf-8")
+    check("COEDIT.RECORD: A NEWLINE-TERMINATED FILE GETS NO EXTRA BLANK LINE",
+          "\n\n" not in _t_edraw2339
+          and {_r.get("fp") for _r in _t_jsonl339(_t_edraw2339)} == {"a", "e.py"},
+          saw=repr(_t_edraw2339))
+finally:
+    _rmtree(_t_root339)
 # ---- 33_a_default_credential_is_still_a_credential.py
 # ------------------------------------------- the commonest real password looks like a label
 # 🐛 [2026-09-09] `_value_is_the_key_itself` judges an assignment a harmless label when the key has
@@ -43955,6 +45458,670 @@ for _line_33 in ('the admin panel is at /admin', 'run as root to install',
         _t_prose.append(_line_33)
 check("...and prose containing one of those words is untouched",
       not _t_prose, saw="\n".join(_t_prose) or None)
+# ---- 340_no_module_defines_a_top_level_name_twice.py
+# ---- 340_no_module_defines_a_top_level_name_twice.py
+# 🐛 [2026-09-28] (R167 acc4, 2026-09-28) `lib/sessions.py` defined `def prune(root, days):` twice
+# at module top level -- once at line 477 with a body that was only its docstring (so it returned
+# None), and again at line 579 with the real implementation and the same docstring. The second
+# definition silently shadowed the first; nothing called the first separately, because a later
+# top-level `def` of the same name simply replaces the earlier binding and it can never be reached
+# again. Probably left behind by a move (commit 136f2d0) that copied the function to its new home
+# without deleting the old one.
+#
+# The cut: the orphaned stub at line 477 was deleted. This check asserts the population -- every
+# `.py` under lib/ and hooks/, plus every extensionless script in bin/ whose shebang names python --
+# has no top-level function/class name bound twice, so the next stray copy is caught before it ships.
+#
+# Only DIRECT children of `module.body` count as "top level". A name defined a second time inside a
+# top-level `if`/`try` block (a platform fallback -- `if sys.platform == "win32": def f(): ... else:
+# def f(): ...`) is not visited at all by this walk, because `ast.If`/`ast.Try` bodies are not
+# themselves elements of `module.body` -- so that shape is exempt by construction, not by a special
+# case in the logic below.
+import ast as _ast340
+
+_LIB_HOOKS_340 = list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").rglob("*.py"))
+_LIB_HOOKS_340 = [p for p in _LIB_HOOKS_340 if "__pycache__" not in p.parts]
+
+_BIN_340 = []
+for _p340 in (ROOT / "bin").iterdir():
+    if not _p340.is_file() or _p340.suffix or _p340.name.startswith("."):
+        continue
+    try:
+        _first340 = _p340.open(encoding="utf-8").readline()
+    except (OSError, UnicodeDecodeError):
+        continue
+    if _first340.startswith("#!") and "python" in _first340:
+        _BIN_340.append(_p340)
+
+_FILES_340 = sorted(set(_LIB_HOOKS_340) | set(_BIN_340))
+
+check("340: AT LEAST 50 FILES WERE FOUND UNDER lib/, hooks/ AND bin/ (a broken glob cannot pass "
+      "vacuously)",
+      len(_FILES_340) >= 50, saw=len(_FILES_340))
+
+_DUPES_340 = []   # (relpath, name, [linenos])
+_PARSED_340 = 0
+for _f340 in _FILES_340:
+    try:
+        _src340 = _f340.read_text(encoding="utf-8")
+        _tree340 = _ast340.parse(_src340, filename=str(_f340))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        continue
+    _PARSED_340 += 1
+    _seen340 = {}   # name -> [lineno, ...]
+    for _node340 in _tree340.body:   # direct children only -- top level, per the header
+        if isinstance(_node340, (_ast340.FunctionDef, _ast340.AsyncFunctionDef, _ast340.ClassDef)):
+            _seen340.setdefault(_node340.name, []).append(_node340.lineno)
+    for _name340, _lines340 in _seen340.items():
+        if len(_lines340) > 1:
+            _rel340 = _f340.relative_to(ROOT)
+            _DUPES_340.append((str(_rel340), _name340, _lines340))
+
+check("340: AT LEAST 50 FILES PARSED SUCCESSFULLY", _PARSED_340 >= 50, saw=_PARSED_340)
+
+check("340: NO lib/, hooks/ OR bin/ MODULE DEFINES A TOP-LEVEL FUNCTION/CLASS NAME TWICE "
+      "(e.g. the old lib/sessions.py:477+579 `prune`)",
+      not _DUPES_340,
+      saw="; ".join(f"{rel}:{name} at lines {lines}" for rel, name, lines in _DUPES_340))
+# ---- 341_importing_the_redactor_compiles_nothing_it_does_not_use.py
+# ------------------ importing the redactor compiles nothing it does not use
+# 🎯 [2026-09-28] (R172 acc4, 2026-09-28) Measured on the Bash PostToolUse hook for a plain
+# `echo hi` (which never calls `scrub`): `lib/redact.py` alone accounted for 62 `re.compile()` calls
+# at import, 14.5-23.2 ms of a 143-188 ms whole run (load ~30) -- every hook pays this whether or
+# not it ever scrubs anything. All 62 module-level patterns (33 single names plus the elements of
+# `PATTERNS` and `LATE_PREFIXES`) are now wrapped in `_lazy(lambda: re.compile(...))`, the same
+# mechanism the file already used for its other ~40 patterns, so none of them compile until
+# something actually calls `.search`/`.sub`/`.match`/etc. on them.
+#
+# Measured after the change, in a fresh subprocess: importing `redact` compiles exactly ZERO
+# patterns attributed to `redact.py`'s own source (three more come from the interpreter's own
+# `fnmatch`/`glob` startup, pulled in transitively by `pathlib` -- filtered out here by checking
+# each `re.compile` call's calling frame, not just counted, so a future Python that changes how many
+# patterns the stdlib itself compiles at start-up cannot move this number).
+#
+# MARGIN IS DELIBERATELY ZERO. The measured baseline is exactly 0, and reverting even ONE of the 62
+# lazy conversions back to an eager `NAME = re.compile(...)` adds exactly 1 to this count (proved by
+# the mutation below) -- any positive margin would let that regression back in silently, which is
+# the one thing this check exists to catch.
+import inspect
+import subprocess
+import sys
+import textwrap
+
+_REDACT_PATH_341 = ROOT / "lib" / "redact.py"
+_MAX_COMPILES_341 = 0    # baseline 0 + margin 0 -- see header
+
+
+def _count_compiles_341(redact_src_path):
+    """Fresh subprocess: count `re.compile()` calls whose calling frame is `redact_src_path`
+    itself, while importing `redact` from it. A subprocess (not an in-process reload) guarantees a
+    genuinely cold import -- `sys.modules` caching in-process would make every call after the first
+    report zero regardless of what the source does."""
+    script = textwrap.dedent(f"""
+        import re, sys, os, inspect
+        _target = os.path.abspath({str(redact_src_path)!r})
+        _orig = re.compile
+        _count = [0]
+        def _counting(*a, **kw):
+            _frame = inspect.currentframe().f_back
+            if _frame is not None and os.path.abspath(_frame.f_code.co_filename) == _target:
+                _count[0] += 1
+            return _orig(*a, **kw)
+        re.compile = _counting
+        sys.path.insert(0, os.path.dirname(_target))
+        import redact  # noqa: E402
+        print(_count[0])
+    """)
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=60)
+    return result
+
+
+_real341 = _count_compiles_341(_REDACT_PATH_341)
+check("IMPORTING THE SHIPPED redact.py EXITS 0",
+      _real341.returncode == 0, saw=_real341.stdout + _real341.stderr)
+try:
+    _real_n341 = int(_real341.stdout.strip())
+except ValueError:
+    _real_n341 = None
+check(f"IMPORTING THE SHIPPED redact.py COMPILES AT MOST {_MAX_COMPILES_341} "
+      f"OF ITS OWN PATTERNS: saw {_real_n341}",
+      _real_n341 is not None and _real_n341 <= _MAX_COMPILES_341,
+      saw=_real341.stdout + _real341.stderr)
+
+# --- mutation proof: reverting one lazy pattern to eager must fail the check above ---------------
+_mut_src341 = _REDACT_PATH_341.read_text(encoding="utf-8")
+_needle341 = '_ONLY_STRUCTURE = _lazy(lambda: re.compile(r"[}\\]\\s,;]*"))'
+_replacement341 = '_ONLY_STRUCTURE = re.compile(r"[}\\]\\s,;]*")'
+check("THE MUTATION TARGET IS PRESENT IN THE SHIPPED FILE (so the proof below is real)",
+      _needle341 in _mut_src341, saw=_needle341)
+_mutated341 = _mut_src341.replace(_needle341, _replacement341, 1)
+
+_mut_dir341 = Path(tempfile.mkdtemp(prefix="chamnan-341-"))
+try:
+    _mut_path341 = _mut_dir341 / "redact.py"
+    _mut_path341.write_text(_mutated341, encoding="utf-8")
+    _mut_result341 = _count_compiles_341(_mut_path341)
+    check("THE MUTATED redact.py (ONE PATTERN REVERTED TO EAGER) STILL IMPORTS CLEANLY",
+          _mut_result341.returncode == 0,
+          saw=_mut_result341.stdout + _mut_result341.stderr)
+    try:
+        _mut_n341 = int(_mut_result341.stdout.strip())
+    except ValueError:
+        _mut_n341 = None
+    check(f"...BUT NOW COMPILES ONE PATTERN AT IMPORT, WHICH THE THRESHOLD CATCHES: saw {_mut_n341}",
+          _mut_n341 is not None and _mut_n341 == _real_n341 + 1
+          and _mut_n341 > _MAX_COMPILES_341,
+          saw=_mut_result341.stdout + _mut_result341.stderr)
+finally:
+    shutil.rmtree(_mut_dir341, ignore_errors=True)
+# ---- 342_a_non_ascii_path_is_reported_by_its_name.py
+# ---- 342_a_non_ascii_path_is_reported_by_its_name.py
+# 🐛 [2026-09-28] (R185 acc4, 2026-09-28) `bin/chamnan-guard` reads the staged diff (`_staged_diff`,
+# ~line 78) and history diff (`_history_diff`, ~line 386) with git left at its defaults, and
+# `_added_lines` took the path straight off the `+++ ` header, stripping only a leading `a/`/`b/`.
+# Reproduced in a scratch repo with one Thai-named file staged next to an ASCII one:
+#
+#   * default config (`core.quotePath=true`) — the Thai name comes back C-quoted, octal-escaped and
+#     still wearing its `b/` prefix inside the quotes: `"b/\\340\\271\\204...txt"`. Every finding
+#     about a Thai, Chinese or accented filename named garbage.
+#   * repo-local `diff.mnemonicPrefix=true` — the ASCII name loses its `b/` for `i/`; the Thai one
+#     keeps the wrong prefix AND the quoting.
+#   * repo-local `diff.srcPrefix`/`diff.dstPrefix` — the stripped prefix is neither `a/` nor `b/`,
+#     so `_added_lines` leaves the custom prefix attached to every path.
+#   * repo-local `diff.noprefix=true` — happens to work for ASCII names only.
+#
+# The cut pins the git call itself (`-c core.quotePath=false -c diff.mnemonicPrefix=false
+# -c diff.noprefix=false`, plus `--src-prefix=a/ --dst-prefix=b/`) so a REPOSITORY's own config
+# cannot change what `_added_lines` receives, and adds `_unquote_git_path` as the defensive second
+# half: a double quote, a backslash or a control character in a path is ALWAYS C-quoted by git
+# regardless of `core.quotePath`, so a `+++` header can still arrive quoted even with the pin above.
+#
+# Same defect, one other site: `hooks/chamnan_skill_pointer.py`'s `_about_to_discard` reads
+# `git status --porcelain` and prints the dirty paths straight into an advisory a person reads —
+# fixed the same way (`-c core.quotePath=false`).
+#
+# `lib/drift.py`'s `ls-tree --name-only` (~line 100) was examined and left alone: the paths it
+# pathspecs with come from `PATH` there, a regex restricted to `[A-Za-z0-9_.-]*/[A-Za-z0-9_./-]+` —
+# no quote, backslash, control character or non-ASCII byte can reach it, so git never quotes what
+# it is asked to match and there is nothing for this defect to land on.
+import shutil as _sh342
+import subprocess as _sp342
+import tempfile as _tmp342
+from pathlib import Path as _Path342
+
+_GUARD342 = ROOT / "bin" / "chamnan-guard"
+check("the command exists", _GUARD342.is_file(), saw="bin/chamnan-guard is gone")
+
+if not _GUARD342.is_file():
+    skip("  · nothing to exercise")
+else:
+    import importlib.machinery as _ilm342
+    import importlib.util as _ilu342
+    _ld342 = _ilm342.SourceFileLoader("chamnan_guard_342", str(_GUARD342))
+    _spec342 = _ilu342.spec_from_loader(_ld342.name, _ld342)
+    mod342 = _ilu342.module_from_spec(_spec342)
+    _ld342.exec_module(mod342)
+
+    _skp342 = import_hook_module("chamnan_skill_pointer.py")
+
+    _THAI342 = "ไฟล์-ทดสอบ.txt"
+    # A space, a double quote and a backslash — all three of the ALWAYS-quoted characters, on one
+    # name, alongside Thai — for part (f)'s round trip below.
+    _WEIRD342 = 'weird "quote\\slash ไฟล์.txt'
+
+    def _run342(*args, cwd):
+        return _sp342.run(list(args), cwd=str(cwd), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=30)
+
+    def _scratch342():
+        """A git-init'd scratch repo (own directory, so `.git` marks it as one) with the Thai
+        file, the weird-characters file and an ASCII file staged, and nothing committed yet."""
+        d = _Path342(_tmp342.mkdtemp(prefix="chamnan-342-"))
+        _run342("git", "init", "-q", ".", cwd=d)
+        _run342("git", "config", "user.email", "check342@example.invalid", cwd=d)
+        _run342("git", "config", "user.name", "Check 342", cwd=d)
+        (d / "plain.txt").write_text("hello\n", encoding="utf-8")
+        (d / _THAI342).write_text("hello\n", encoding="utf-8")
+        (d / _WEIRD342).write_text("content\n", encoding="utf-8")
+        _run342("git", "add", "-A", cwd=d)
+        return d
+
+    _repo342 = _scratch342()
+    try:
+        _CONFIGS342 = (
+            ("a. default config", ()),
+            ("b. repo-local diff.mnemonicPrefix=true", (("diff.mnemonicPrefix", "true"),)),
+            ("c. repo-local custom diff.srcPrefix/diff.dstPrefix",
+             (("diff.srcPrefix", "SRC/"), ("diff.dstPrefix", "DST/"))),
+            ("d. repo-local diff.noprefix=true", (("diff.noprefix", "true"),)),
+        )
+        for _label342, _cfg342 in _CONFIGS342:
+            for _k342, _v342 in _cfg342:
+                _run342("git", "config", _k342, _v342, cwd=_repo342)
+            _diff342 = mod342._staged_diff(str(_repo342))
+            _found342 = {p: t for p, _ln342, t in mod342._added_lines(_diff342 or "")}
+            check("342 %s: THE THAI PATH IS REPORTED EXACTLY AS ITS REAL NAME" % _label342,
+                  _THAI342 in _found342 and _found342[_THAI342] == "hello",
+                  saw=sorted(_found342))
+            check("342 %s: ...AND THE ASCII PATH KEEPS A CLEAN a//b/ PREFIX STRIP TOO" % _label342,
+                  "plain.txt" in _found342 and _found342["plain.txt"] == "hello",
+                  saw=sorted(_found342))
+            check("342 %s: ...AND THE quote/backslash/Thai NAME SURVIVES TOO" % _label342,
+                  _WEIRD342 in _found342 and _found342[_WEIRD342] == "content",
+                  saw=sorted(_found342))
+            for _k342, _v342 in _cfg342:
+                _run342("git", "config", "--unset", _k342, cwd=_repo342)
+
+        # --- e. the other fixed site, driven standalone: a dirty Thai path is named correctly in
+        # the advisory `_about_to_discard` builds for a person about to run a destructive command.
+        _run342("git", "commit", "-qm", "fixtures", cwd=_repo342)
+        (_repo342 / _THAI342).write_text("hello\nedited\n", encoding="utf-8")
+        _advice342 = _skp342._about_to_discard("git checkout -- .", str(_repo342))
+        check("342 e: THE SKILL-POINTER'S DESTRUCTIVE-COMMAND ADVISORY NAMES THE REAL THAI PATH",
+              _THAI342 in _advice342 and "\\340" not in _advice342,
+              saw=_advice342)
+
+        # --- f. the unquote helper round-trips a name with a space, a quote, a backslash and Thai,
+        # driven through git's OWN quoting (never hand-encoded), by asking `ls-files` to name the
+        # committed file — a double quote or a backslash is ALWAYS quoted, so this is real ground
+        # truth for what a `+++` header can still arrive wearing after the fix.
+        _lsout342 = _run342("git", "ls-files", "--", _WEIRD342, cwd=_repo342).stdout.strip()
+        check("342 f setup: git itself quotes the always-quoted name (sanity, not the fix)",
+              _lsout342.startswith('"') and _lsout342.endswith('"'),
+              saw=_lsout342)
+        _round342 = mod342._unquote_git_path(_lsout342)
+        check("342 f: THE UNQUOTE HELPER ROUND-TRIPS space + quote + backslash + THAI",
+              _round342 == _WEIRD342, saw=repr(_round342))
+        check("342 f: ...and a path that was never quoted passes through unchanged",
+              mod342._unquote_git_path("plain.txt") == "plain.txt",
+              saw=mod342._unquote_git_path("plain.txt"))
+    finally:
+        _sh342.rmtree(_repo342, ignore_errors=True)
+# ---- 343_no_two_modules_carry_the_same_function_body.py
+# ---- 343_no_two_modules_carry_the_same_function_body.py
+# 🐛 [2026-09-28] (R192 acc4, 2026-09-28) An AST hash over every function in lib/, hooks/ and the
+# Python scripts in bin/ found four pairs of byte-identical bodies living in two different files:
+# `lib/timeline.py:threads` / `lib/candidates.py:entries` (a coincidental "list *.md files in a
+# directory" twin, now `ws.store_entries`), `hooks/chamnan_scratch_watch.py:_nudge_path` /
+# `hooks/chamnan_skill_pointer.py:_nudge_path` and the matching `_nudge_write` pair, and
+# `bin/chamnan-doctor:_ceiling_env_status` / `bin/chamnan-report:_ceiling_env_status` (both now
+# `ws.ceiling_env_status`). This repository's most recorded defect class is a fix applied to one
+# copy and forgotten in its twin (`feedback_assert_the_set_not_the_member.md`) -- a duplicated
+# function body is exactly the shape that produces it, so the population is asserted here rather
+# than relying on the next AST sweep to notice by hand.
+#
+# Bodies under 40 AST nodes are SKIPPED on purpose: a one-line `return` or a three-statement guard
+# converges on the same shape by accident constantly (`if not d.is_dir(): return []` alone is under
+# ten nodes), and flagging those would bury real duplication in noise. 40 is the threshold this
+# check enforces; a body has to be a real, non-trivial procedure before two copies of it are worth
+# a finding.
+#
+# A leading docstring is dropped before hashing (and before the node count) -- two functions that
+# do the same thing with two different English explanations of why are still one duplicated body,
+# and a florid docstring should not be able to push a small body over the 40-node line on its own.
+import ast as _ast343
+import hashlib as _hl343
+from collections import defaultdict as _dd343
+
+# Same population as check 340: every `.py` under lib/ and hooks/, plus every extensionless script
+# in bin/ whose shebang names python.
+_LIB_HOOKS_343 = list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").rglob("*.py"))
+_LIB_HOOKS_343 = [p for p in _LIB_HOOKS_343 if "__pycache__" not in p.parts]
+
+_BIN_343 = []
+for _p343 in (ROOT / "bin").iterdir():
+    if not _p343.is_file() or _p343.suffix or _p343.name.startswith("."):
+        continue
+    try:
+        _first343 = _p343.open(encoding="utf-8").readline()
+    except (OSError, UnicodeDecodeError):
+        continue
+    if _first343.startswith("#!") and "python" in _first343:
+        _BIN_343.append(_p343)
+
+_FILES_343 = sorted(set(_LIB_HOOKS_343) | set(_BIN_343))
+
+check("343: AT LEAST 50 FILES WERE FOUND UNDER lib/, hooks/ AND bin/ (a broken glob cannot pass "
+      "vacuously)",
+      len(_FILES_343) >= 50, saw=len(_FILES_343))
+
+_MIN_NODES_343 = 40
+
+
+def _stripped_body_343(node):
+    """`node.body` with a leading docstring Expr dropped, if it has one."""
+    body = node.body
+    if (body and isinstance(body[0], _ast343.Expr)
+            and isinstance(body[0].value, _ast343.Constant)
+            and isinstance(body[0].value.value, str)):
+        return body[1:]
+    return body
+
+
+def _node_count_343(body):
+    total = 0
+    for stmt in body:
+        total += sum(1 for _ in _ast343.walk(stmt))
+    return total
+
+
+def _body_hash_343(body):
+    dumped = "\x00".join(_ast343.dump(stmt, annotate_fields=True, include_attributes=False)
+                          for stmt in body)
+    return _hl343.sha256(dumped.encode("utf-8")).hexdigest()
+
+
+# hash -> [(relpath, funcname, lineno), ...]
+_GROUPS_343 = _dd343(list)
+_PARSED_343 = 0
+for _f343 in _FILES_343:
+    try:
+        _src343 = _f343.read_text(encoding="utf-8")
+        _tree343 = _ast343.parse(_src343, filename=str(_f343))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        continue
+    _PARSED_343 += 1
+    _rel343 = str(_f343.relative_to(ROOT))
+    for _node343 in _ast343.walk(_tree343):
+        if not isinstance(_node343, (_ast343.FunctionDef, _ast343.AsyncFunctionDef)):
+            continue
+        _body343 = _stripped_body_343(_node343)
+        if _node_count_343(_body343) < _MIN_NODES_343:
+            continue
+        _key343 = _body_hash_343(_body343)
+        _GROUPS_343[_key343].append((_rel343, _node343.name, _node343.lineno))
+
+check("343: AT LEAST 50 FILES PARSED SUCCESSFULLY", _PARSED_343 >= 50, saw=_PARSED_343)
+
+# A group is a finding when it spans more than one file, OR when it sits inside one file under
+# more than one name -- either shape is the "fixed one copy, forgot its twin" defect this check
+# exists for; two definitions of the exact same name in the exact same file is check 340's job,
+# not this one's.
+_DUPES_343 = []
+for _entries343 in _GROUPS_343.values():
+    if len(_entries343) < 2:
+        continue
+    _files343 = {e[0] for e in _entries343}
+    _names_by_file343 = _dd343(set)
+    for _f343, _n343, _ln343 in _entries343:
+        _names_by_file343[_f343].add(_n343)
+    if len(_files343) > 1 or any(len(_names343) > 1 for _names343 in _names_by_file343.values()):
+        _DUPES_343.append(_entries343)
+
+_MSG_343 = "\n".join(
+    " == ".join(f"{rel}:{lineno} {name}" for rel, name, lineno in sorted(group))
+    for group in _DUPES_343
+)
+
+check("343: NO TWO FUNCTIONS UNDER lib/, hooks/ OR bin/ SHARE AN IDENTICAL BODY (>= %d AST nodes, "
+      "docstring dropped) IN DIFFERENT FILES OR UNDER DIFFERENT NAMES IN THE SAME FILE" % _MIN_NODES_343,
+      not _DUPES_343, saw=_MSG_343 or "none")
+# ---- 344_a_full_claude_id_reaches_its_family_window.py
+# ---- 344_a_full_claude_id_reaches_its_family_window.py
+# 🐛 [2026-09-29] `by_model()` derives its lookup key from the FIRST hyphen-separated token of the
+# (publisher/region-stripped) name. For a bare family word that token IS the family ("haiku" ->
+# "haiku"), but for any full Anthropic model id it is always the publisher word "claude" --
+# "claude-haiku-4-5", the dated "claude-haiku-4-5-20251001" and the Bedrock
+# "us.anthropic.claude-haiku-4-5-v1:0" all collapsed onto the flat `claude` entry (1,000,000)
+# instead of reaching `haiku` (200,000). The table's own comment calls putting Haiku at its own
+# entry "the difference between a right answer and a lucky one" -- the full id never reached that
+# entry at all. Asserted here for every family word the table actually distinguishes from `claude`
+# (derived from MODEL_WINDOWS, not hand-listed), across every id shape this file's own comments name
+# as something a caller sends: bare, dated, Bedrock, a gateway publisher prefix, and the older
+# "claude-3-5-<family>" token order.
+import importlib as _il344
+
+_t_profiles344 = _il344.import_module("profiles")
+
+# The population this check is about: family words that are actually IN the table and distinct from
+# the flat "claude" entry -- fable/opus/sonnet/haiku today, derived rather than hand-listed so a
+# table edit cannot silently drop this check's coverage.
+_FAMILIES_344 = sorted(k for k in _t_profiles344.MODEL_WINDOWS if k in
+                       ("fable", "opus", "sonnet", "haiku"))
+
+check("344: AT LEAST ONE ANTHROPIC FAMILY WORD IS IN MODEL_WINDOWS (a renamed table cannot pass "
+      "vacuously)", len(_FAMILIES_344) >= 1, saw=_FAMILIES_344)
+
+for _fam344 in _FAMILIES_344:
+    _want344, _ = _t_profiles344.by_model(_fam344)
+    _ids344 = {
+        "bare family": _fam344,
+        "claude-<family>-4-5": f"claude-{_fam344}-4-5",
+        "dated": f"claude-{_fam344}-4-5-20251001",
+        "Bedrock": f"us.anthropic.claude-{_fam344}-4-5-v1:0",
+        "gateway publisher prefix": f"anthropic/claude-{_fam344}-4-5",
+        "older claude-3-5-<family> order": f"claude-3-5-{_fam344}",
+    }
+    for _shape344, _id344 in _ids344.items():
+        _got344, _note344 = _t_profiles344.by_model(_id344)
+        check(f"344: `{_id344}` ({_shape344}) reaches the same profile as bare `{_fam344}` "
+              f"({_want344!r})",
+              _got344 == _want344,
+              saw=f"by_model({_id344!r}) -> ({_got344!r}, {_note344!r})")
+
+# And the other half of the fix: a bare "claude" id, with no family word anywhere in it, must keep
+# reaching the flat `claude` entry rather than falling through to the default or matching by
+# accident.
+_claude_want344 = _t_profiles344.by_window(_t_profiles344.MODEL_WINDOWS["claude"])
+_claude_got344, _claude_note344 = _t_profiles344.by_model("claude")
+check(f"344: bare `claude` (no family word) still reaches the `claude` table entry ({_claude_want344!r})",
+      _claude_got344 == _claude_want344,
+      saw=f"by_model('claude') -> ({_claude_got344!r}, {_claude_note344!r})")
+# ---- 345_agents_md_sections_are_not_sent_twice.py
+# ------------------ a section Claude Code already loaded from AGENTS.md is not sent again
+# 🎯 [2026-09-29] Claude Code 2.1.277 reads the root `AGENTS.md` as project instructions when a
+# project has no CLAUDE.md, and `chamnan-context --write generic` puts a snapshot of the
+# SessionStart block there. The owner chose (2026-09-29) that the hook drop the sections the file
+# already delivered. Two ways this goes wrong, and the second is the one that loses content:
+# deduplicating when Claude Code did NOT read the file, and deduplicating while BUILDING the
+# snapshot, which would hollow out AGENTS.md a little more on every `--write`.
+#
+# Driven through the real hook and the real `chamnan-context`, with Claude Code's settings
+# directory and version injected, so nothing on this machine's own configuration decides a result.
+import importlib as _im345
+import json as _js345
+import os as _os345
+import pathlib as _pl345
+import shutil as _sh345
+import subprocess as _sp345
+import sys as _sy345
+import tempfile as _tf345
+
+_host345 = _im345.import_module("host")
+_PKG345 = _pl345.Path(_im345.import_module("redact").__file__).resolve().parent.parent
+_HOOK345 = _PKG345 / "hooks" / "chamnan_session_start.py"
+_CTX345 = _PKG345 / "bin" / "chamnan-context"
+_NOTE345 = "already loaded from `AGENTS.md`"
+
+
+def _env345(cfg, agent="claude-code_2-1-284_agent"):
+    env = dict(_os345.environ)
+    for k in ("CHAMNAN_SNAPSHOT", "CHAMNAN_OUTPUT_CEILING", "CHAMNAN_READ_ONLY",
+              "CHAMNAN_CONTEXT_PROFILE", "CHAMNAN_CONTEXT_AGENT", "AI_AGENT"):
+        env.pop(k, None)
+    env["CLAUDE_CONFIG_DIR"] = str(cfg)
+    if agent:
+        env["AI_AGENT"] = agent
+    return env
+
+
+def _hook345(root, cfg, cwd=None, agent="claude-code_2-1-284_agent"):
+    r = _sp345.run([_sy345.executable, str(_HOOK345)],
+                   input=_js345.dumps({"cwd": str(cwd or root), "hook_event_name": "SessionStart",
+                                       "session_id": "agentsmd-345", "source": "startup"}),
+                   capture_output=True, text=True, encoding="utf-8", errors="replace",
+                   cwd=str(cwd or root), env=_env345(cfg, agent))
+    return r.stdout
+
+
+def _write345(root, cfg):
+    r = _sp345.run([_sy345.executable, str(_CTX345), "--write", "generic"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace",
+                   cwd=str(root), env=_env345(cfg))
+    return r
+
+
+def _repo345(parent):
+    root = parent / "repo"
+    root.mkdir()
+    _sp345.run(["git", "init", "-q"], cwd=root, capture_output=True)
+    (root / "a.py").write_text("# a file that does a thing\n", encoding="utf-8")
+    (root / ".chamnan").mkdir()
+    (root / ".chamnan" / "STATE.md").write_text("## open\n\nFirst item in flight.\n",
+                                                encoding="utf-8")
+    return root
+
+
+def _settings345(cfg, data):
+    cfg.mkdir(exist_ok=True)
+    (cfg / "settings.json").write_text(data if isinstance(data, str) else _js345.dumps(data),
+                                       encoding="utf-8")
+
+
+_base345 = _pl345.Path(_tf345.mkdtemp(prefix="chamnan-agentsmd-")).resolve()
+try:
+    _cfg345 = _base345 / "cfg"
+    _cfg345.mkdir()
+    _root345 = _repo345(_base345)
+    _w345 = _write345(_root345, _cfg345)
+    _agents345 = _root345 / "AGENTS.md"
+    check("`chamnan-context --write generic` wrote the AGENTS.md region this check stands on",
+          _agents345.is_file() and "<!-- chamnan:start -->" in _agents345.read_text(encoding="utf-8"),
+          saw=(_w345.returncode, _w345.stderr[-400:]))
+    _region345 = _agents345.read_text(encoding="utf-8")
+
+    # 1. default mode, no CLAUDE.md anywhere: identical sections are left out and named.
+    _out1 = _hook345(_root345, _cfg345)
+    check("DEFAULT MODE, NO CLAUDE.md: SECTIONS AGENTS.md DELIVERED ARE NOT SENT AGAIN",
+          _NOTE345 in _out1 and _out1.count("\n### ") < _region345.count("\n### "),
+          saw=_out1[:1500])
+
+    # 7. the snapshot path never deduplicates: a rewrite keeps every section heading. Compared by
+    # heading, not by byte -- the first write made AGENTS.md itself an uncommitted file, which one
+    # section rightly reports, so the bytes move for a reason that has nothing to do with this.
+    _write345(_root345, _cfg345)
+    _heads345 = lambda t: [ln for ln in t.splitlines() if ln.startswith("### ")]
+    check("...and rewriting AGENTS.md in that same repository does not hollow it out",
+          _heads345(_region345) and
+          _heads345(_agents345.read_text(encoding="utf-8")) == _heads345(_region345),
+          saw=(_heads345(_region345), _heads345(_agents345.read_text(encoding="utf-8"))))
+
+    # 5. version unknown or too old: nothing changes.
+    _out5a = _hook345(_root345, _cfg345, agent=None)
+    _out5b = _hook345(_root345, _cfg345, agent="claude-code_2-1-276_agent")
+    check("NO AI_AGENT, OR CLAUDE CODE 2.1.276: EVERY SECTION IS SENT",
+          _NOTE345 not in _out5a and _NOTE345 not in _out5b,
+          saw=(_out5a[:300], _out5b[:300]))
+
+    # 8. a settings file that does not parse is a doubt.
+    _settings345(_cfg345, "{ not json")
+    _out8 = _hook345(_root345, _cfg345)
+    check("A MALFORMED USER settings.json MEANS NO DEDUPE", _NOTE345 not in _out8, saw=_out8[:300])
+
+    # 4. the /config setting, both directions.
+    _settings345(_cfg345, {"pluginConfigs": {"agents-md@builtin": {
+        "options": {"instructionFiles": "claude-md"}}}})
+    _out4a = _hook345(_root345, _cfg345)
+    check("instructionFiles = claude-md: EVERY SECTION IS SENT", _NOTE345 not in _out4a,
+          saw=_out4a[:300])
+    _settings345(_cfg345, {"enabledPlugins": {"agents-md@builtin": False}})
+    _out4c = _hook345(_root345, _cfg345)
+    check("the built-in agents-md plugin disabled: every section is sent",
+          _NOTE345 not in _out4c, saw=_out4c[:300])
+
+    # 2. a CLAUDE.md at the root: Claude Code reads that instead.
+    _settings345(_cfg345, {})
+    (_root345 / "CLAUDE.md").write_text("# ours\n", encoding="utf-8")
+    _out2 = _hook345(_root345, _cfg345)
+    check("A ROOT CLAUDE.md: EVERY SECTION IS SENT", _NOTE345 not in _out2, saw=_out2[:300])
+    _settings345(_cfg345, {"pluginConfigs": {"agents-md@builtin": {
+        "options": {"instructionFiles": "claude-md-and-agents-md"}}}})
+    _out4b = _hook345(_root345, _cfg345)
+    check("...unless instructionFiles = claude-md-and-agents-md, which loads both",
+          _NOTE345 in _out4b, saw=_out4b[:300])
+    (_root345 / "CLAUDE.md").unlink()
+    _settings345(_cfg345, {})
+
+    # 6. a section that changed since the snapshot is sent; the unchanged ones still are not.
+    (_root345 / ".chamnan" / "STATE.md").write_text("## open\n\nA different item now.\n",
+                                                   encoding="utf-8")
+    _out6 = _hook345(_root345, _cfg345)
+    check("A SECTION CHANGED SINCE THE SNAPSHOT IS SENT, THE UNCHANGED ONES ARE NOT",
+          "A different item now." in _out6 and _NOTE345 in _out6, saw=_out6[:1500])
+
+    # 3. CLAUDE.local.md in a PARENT directory counts too.
+    _outer345 = _base345 / "outer"
+    _outer345.mkdir()
+    (_outer345 / "CLAUDE.local.md").write_text("# mine\n", encoding="utf-8")
+    _inner345 = _repo345(_outer345)
+    _write345(_inner345, _cfg345)
+    _out3 = _hook345(_inner345, _cfg345)
+    check("CLAUDE.local.md IN A PARENT DIRECTORY: EVERY SECTION IS SENT",
+          _NOTE345 not in _out3 and (_inner345 / "AGENTS.md").is_file(), saw=_out3[:300])
+
+    # The decision itself, where the managed file can be injected: managed wins over user.
+    _managed345 = _base345 / "managed.json"
+    _managed345.write_text(_js345.dumps({"pluginConfigs": {"agents-md@builtin": {
+        "options": {"instructionFiles": "managed-only"}}}}), encoding="utf-8")
+    _env_d345 = {"AI_AGENT": "claude-code_2-1-284_agent", "CLAUDE_CONFIG_DIR": str(_cfg345)}
+    check("managed settings override the user's choice",
+          _host345.claude_code_loads_agents_md(_root345, env=_env_d345, managed=_managed345) is None
+          and _host345.claude_code_loads_agents_md(
+              _root345, env=_env_d345, managed=_base345 / "absent.json") is not None)
+finally:
+    _sh345.rmtree(_base345, ignore_errors=True)
+
+# The block log counts a section AGENTS.md delivered as delivered: without that, a repository using
+# this reads as a byte collapse and a set of vanished sections on every firing, and the session
+# start warning about a cut block would fire for a block nobody cut.
+_bl345 = _im345.import_module("blocklog")
+_rec345 = _bl345.shape("## chamnan\n\n### Kept\nbody\n", via={"From the file": 400})
+check("the block log records what AGENTS.md delivered, and counts it as present and as size",
+      _rec345.get("via") == {"From the file": 400}
+      and "From the file" in _bl345._delivered(_rec345)
+      and _bl345._delivered_bytes(_rec345) == _rec345["bytes"] + 400,
+      saw=_rec345)
+# ---- 346_every_config_key_the_code_reads_is_declared.py
+# ------------------ every config key the code reads is declared, or setting it does nothing
+# 🐛 [2026-09-29] (R18 acc4, 2026-09-29) `hooks/chamnan_subagent_start.py` read
+# `ws.enabled("subagent_pointer")`, and its comment said the pointer is "switchable off in
+# .chamnan/config.json like every other section". The key was never in `DEFAULT_CONFIG`, and the
+# merge in `workspace._merged` drops every key that is not, so `"subagent_pointer": false` was
+# discarded and the switch did nothing. Nothing failed: the default is True, so the pointer simply
+# kept running for everybody who had turned it off.
+#
+# Derived, not listed: every key read through `ws.enabled(...)`, `load_config(...).get(...)` or a
+# `cfg`/`config` object's `.get(...)` anywhere in lib/, hooks/ and bin/ must be a key of
+# DEFAULT_CONFIG. A switch added later joins the population by being read.
+import importlib as _im346
+import re as _re346
+
+_ws346 = _im346.import_module("workspace")
+_READ346 = _re346.compile(
+    r"""(?:\bws\.enabled|\benabled|load_config\([^)]*\)\.get|\b(?:cfg|config|_cfg)\.get)"""
+    r"""\(\s*["']([a-z][a-z0-9_]*)["']""")
+_found346 = {}
+for _dir346 in ("lib", "hooks", "bin"):
+    for _f346 in sorted((ROOT / _dir346).rglob("*")):
+        if not _f346.is_file() or "__pycache__" in _f346.parts:
+            continue
+        if _f346.suffix not in ("", ".py"):
+            continue
+        try:
+            _t346 = _f346.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for _m346 in _READ346.finditer(_t346):
+            _found346.setdefault(_m346.group(1), "%s/%s" % (_dir346, _f346.name))
+
+check("the scan found the switches it exists to police, so it is not passing on an empty set",
+      len(_found346) >= 10 and "recall" in _found346 and "subagent_pointer" in _found346,
+      saw=sorted(_found346))
+_undeclared346 = sorted("%s (read in %s)" % (k, v) for k, v in _found346.items()
+                        if k not in _ws346.DEFAULT_CONFIG)
+check("EVERY CONFIG KEY THE CODE READS IS DECLARED IN DEFAULT_CONFIG, SO SETTING IT TAKES EFFECT",
+      not _undeclared346, saw=_undeclared346)
 # ---- 34_one_lookalike_letter_does_not_defeat_every_rule.py
 # ------------------------------------------- one Cyrillic letter turns every rule off at once
 # 🐛 [2026-09-09] `SECRET_WORDS` is a plain ASCII alternation, so ONE non-Latin look-alike in a key

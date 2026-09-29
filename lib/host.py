@@ -337,7 +337,9 @@ def _managed_settings_path():
     if family == "linux":
         return Path("/etc/claude-code/managed-settings.json")
     if family == "windows":
-        return Path(r"C:\Program Files\ClaudeCode\managed-settings.json")
+        # From the environment rather than a drive letter: Program Files is not always on C:.
+        base = os.environ.get("ProgramFiles")
+        return Path(base) / "ClaudeCode" / "managed-settings.json" if base else None
     return None
 
 
@@ -359,7 +361,12 @@ def claude_code_loads_agents_md(root, cwd=None, env=None, home=None, managed=Non
         return None
     root = Path(root)
     cwd = Path(cwd) if cwd else root
-    home = Path(home) if home else Path.home()
+    if home is None:
+        try:
+            home = Path.home()
+        except RuntimeError:           # no resolvable home: nothing to read settings from
+            return None
+    home = Path(home)
     try:
         root, cwd = root.resolve(), cwd.resolve()
     except OSError:
@@ -382,7 +389,7 @@ def claude_code_loads_agents_md(root, cwd=None, env=None, home=None, managed=Non
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return None                        # a settings file we cannot read is a doubt
         if not isinstance(data, dict):
             return None
