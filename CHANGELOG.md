@@ -76,12 +76,11 @@ already reports the last released number while running newer code.
   before normalising, so a Greek letter with accents and its capital spelled with combining marks
   got different keys while APFS stores a single file for both — 19 characters in all.
 
-- **A secret named in one field and held in a sibling field is now redacted.** `<Variable
-  name="SERVICE_SECRET_KEY" value="..."/>`, `<add key="ApiToken" value="..." />` and
-  `{"name": "DB_PASSWORD", "value": "..."}` — the shape ECS task definitions, Kubernetes env
-  arrays, GitHub Actions and .NET/Java XML configs all write — used to pass through untouched,
-  because the credential's name and its value sit in two different attributes or JSON members
-  rather than one.
+- **A secret named in one field and held in a sibling field is now redacted.** An XML element
+  whose `name` or `key` attribute names a credential and whose `value` attribute holds it, and the
+  JSON pair `{"name": ..., "value": ...}` — the shape ECS task definitions, Kubernetes env arrays,
+  GitHub Actions and .NET/Java XML configs all write — used to pass through untouched, because the
+  credential's name and its value sit in two different attributes or JSON members rather than one.
 - **Japanese and Korean file names no longer read as mixed-script.** The look-alike-letter check
   named each character's script separately, so ordinary Japanese (`住所ファイル`, kanji with katakana)
   and Korean with Han characters were flagged like a Latin word hiding a Cyrillic letter. Han,
@@ -101,6 +100,12 @@ already reports the last released number while running newer code.
   It only does this when it can tell Claude Code really read the file: version, the
   `instructionFiles` setting, the built-in plugin, and no `CLAUDE.md` or `CLAUDE.local.md` in the
   folder or above it. When anything is unclear, it sends everything as before.
+
+- **`"subagent_pointer": false` now turns the subagent pointer off.** The SubagentStart hook
+  read this switch, but it was missing from the list of known settings, and unknown settings are
+  dropped when the config is loaded — so the pointer kept running for anyone who had switched it
+  off. It is declared and documented now, and a check derives every setting the code reads and
+  fails if one is undeclared.
 
 ## What's new in 1.33.0
 

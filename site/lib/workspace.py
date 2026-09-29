@@ -433,6 +433,12 @@ DEFAULT_CONFIG = {
     # store exactly where it was and only removes `chamnan-recall`.
     "recall": True,
     "agents": True,     # cheap models for scan-shaped work
+    # 🐛 [2026-09-29] (R18 acc4, 2026-09-29) The SubagentStart hook has read this switch since it was
+    # written, and its own comment calls it "switchable off in .chamnan/config.json like every other
+    # section" -- but the key was never declared here, and the merge drops every key that is not,
+    # so `"subagent_pointer": false` was silently discarded and the pointer could not be turned
+    # off. Found by deriving the keys the code reads and comparing them with this table.
+    "subagent_pointer": True,
     # Applied by prune_logs(), which every bin/ command calls. Without this the scratch log and
     # anything else written under logs/ would grow for the life of the repo — a workspace that
     # leaks disk is not one anybody keeps.
