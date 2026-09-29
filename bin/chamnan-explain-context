@@ -84,7 +84,10 @@ def main(argv):
         print(f"chamnan-explain-context: unknown flag {bad[0]} — try --help", file=sys.stderr)
         return 2
 
-    root = ws.find_root(Path.cwd())
+    # 🐛 [2026-09-29] (R47 acc5, 2026-09-29) `Path.cwd()` is built here, before `find_root` runs,
+    # so find_root's own `os.getcwd()` fallback never got a chance to turn a deleted directory
+    # into a sentence -- `ws.current_dir()` is the same call with that handling already in it.
+    root = ws.find_root(ws.current_dir())
     wsdir = ws.workspace(root)
     if wsdir is None or not wsdir.is_dir():
         print("chamnan-explain-context: no chamnan workspace here. "

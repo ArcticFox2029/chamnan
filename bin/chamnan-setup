@@ -242,7 +242,11 @@ def main(argv):
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--host")
-    ap.add_argument("--root", default=os.getcwd())
+    # 🐛 [2026-09-29] (R47 acc5, 2026-09-29) `default=os.getcwd()` runs the moment `add_argument`
+    # is called -- before `--help`/`--version` are even checked -- so a deleted working directory
+    # crashed with a bare traceback here, ahead of every other guard in this function. Deferring
+    # to `ws.current_dir()` after parsing puts the same failure behind `_quiet_broken_pipe`.
+    ap.add_argument("--root", default=None)
     # Before parsing: "which build is this" has to be answerable from any command, including one
     # that would refuse the arguments beside it. Same convention as every other bin/ command --
     # `ws.wants_version` and `ws.version_line` are shared so no command can report a different
@@ -254,6 +258,8 @@ def main(argv):
         print(__doc__.strip())
         return 0
     a = ap.parse_args(argv)
+    if a.root is None:
+        a.root = ws.current_dir()
 
     src, rows = survey()
     art = stale_artefacts(a.root)

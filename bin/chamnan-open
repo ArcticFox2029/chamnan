@@ -71,7 +71,10 @@ def main(argv):
         print(f"chamnan-open: unknown option {_bad[0]!r} — {', '.join(KNOWN_FLAGS)}; "
               f"anything for `claude` itself goes after `--`", file=sys.stderr)
         return 2
-    repo = Path(argv[0]).resolve() if argv else Path.cwd()
+    # 🐛 [2026-09-29] (R47 acc5, 2026-09-29) `Path.cwd()` raised a bare FileNotFoundError when the
+    # directory this was started in had since been removed; `ws.current_dir()` is the same value
+    # with that turned into a readable sentence instead.
+    repo = Path(argv[0]).resolve() if argv else Path(ws.current_dir())
 
     got = handoff.newest_session(repo)
     path = last = None

@@ -113,6 +113,10 @@ already reports the last released number while running newer code.
   leave the store itself as a link to it. The staging file is now created fresh and refuses to
   follow a link.
 
+- **Running a command from a folder that has been deleted prints a sentence, not a traceback.**
+  Ten commands crashed with a Python error when the directory they were started in no longer
+  existed; they now say so in one line and exit. Hooks were never affected.
+
 ## What's new in 1.33.0
 
 _Finding what you stored, and saying only what is true._

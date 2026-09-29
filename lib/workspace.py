@@ -58,6 +58,37 @@ def _to_devnull():
         pass
 
 
+class WorkingDirectoryGone(FileNotFoundError):
+    """The directory this process started in has since been removed out from under it.
+
+    🐛 [2026-09-29] (R47 acc5, 2026-09-29) Subclasses `FileNotFoundError` on purpose: every
+    `except OSError` / `except Exception` already written in a hook or `bin/` command keeps
+    catching it exactly as before. This is a more specific name for a failure those already
+    guard against, not a new kind of failure to guard against.
+    """
+
+
+def current_dir():
+    """os.getcwd(), or WorkingDirectoryGone in place of Python's own bare traceback.
+
+    🐛 [2026-09-29] (R47 acc5, 2026-09-29) Ten `bin/` commands (chamnan-age, -context, -doctor,
+    -explain-context, -guard, -map, -open, -recall, -report, -setup) died with an uncaught
+    `FileNotFoundError: [Errno 2]` when run from a directory removed out from under them --
+    `cd` into it, `rmdir` it, then run the command. Nine of the ten hit this in `find_root`, at
+    a bare `os.getcwd()`; `chamnan-setup` hit the same error even earlier, building its
+    `--root` default. Wrapping the call once, here, means every caller gets one readable
+    sentence on stderr instead of a traceback -- see `_quiet_broken_pipe` below, which is what
+    turns the raise into that sentence for a caller that never catches it itself.
+    """
+    try:
+        return os.getcwd()
+    except FileNotFoundError:
+        raise WorkingDirectoryGone(
+            "the directory this was started in no longer exists -- "
+            "cd into the repository and run it again"
+        ) from None
+
+
 def _quiet_broken_pipe(kind, value, tb, _previous=sys.excepthook):
     if isinstance(kind, type) and (issubclass(kind, BrokenPipeError)
                                    or (issubclass(kind, OSError)
@@ -65,6 +96,13 @@ def _quiet_broken_pipe(kind, value, tb, _previous=sys.excepthook):
                                        and _stdout_is_gone())):
         _to_devnull()
         return
+    # 🐛 [2026-09-29] (R47 acc5, 2026-09-29) An uncaught WorkingDirectoryGone is the same shape
+    # of problem as the broken pipe above -- a condition outside the command's control that a
+    # Python traceback explains badly. One line to stderr and a non-zero exit says the same
+    # thing a person can act on; the traceback said only "FileNotFoundError: [Errno 2]".
+    if isinstance(kind, type) and issubclass(kind, WorkingDirectoryGone):
+        print("chamnan: %s" % (value,), file=sys.stderr)
+        sys.exit(1)
     _previous(kind, value, tb)
 
 
@@ -735,7 +773,7 @@ def find_root(start=None):
 
     A `.git` is the stronger statement of "this is a repository". Nearest wins; workspace breaks the
     tie."""
-    here = Path(start or os.getcwd()).resolve()
+    here = Path(start or current_dir()).resolve()
     # 🐛 [2026-09-26] (self-measured) The walk went past the home folder. A `~/.chamnan` -- made there
     # by accident, by a tool run from the wrong directory -- then claimed every folder under home
     # that had no `.git`: a session in such a folder recorded its logs into it, and `chamnan-map`
