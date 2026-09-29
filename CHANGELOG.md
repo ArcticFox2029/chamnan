@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Two more generator headers are recognised.** `THIS FILE IS AUTO GENERATED` (with a space) and
+  `machine-generated` were not treated as generated-file markers, so such files were counted as
+  missing a summary and offered for commenting. 17 real generator headers are now checked.
 - **A corrupt store kept twice in one second keeps both copies.** chamnan moves an unreadable
   store aside as `<name>.corrupt.<time>` rather than deleting it, but the time had one-second
   resolution and the move replaced, so a second copy made within the same second overwrote the
