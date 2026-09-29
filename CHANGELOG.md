@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **On Windows, a save waits about a second for a scanner to let go instead of a quarter.** When
+  antivirus, an indexer or another reader holds a store open, Windows refuses the replace; chamnan
+  retried for about 0.24 s and then gave up, the shortest wait of five tools compared. It now backs
+  off from 20 ms to 200 ms per try, about 1 s in all. macOS and Linux never wait.
 - **Two more generator headers are recognised.** `THIS FILE IS AUTO GENERATED` (with a space) and
   `machine-generated` were not treated as generated-file markers, so such files were counted as
   missing a summary and offered for commenting. 17 real generator headers are now checked.

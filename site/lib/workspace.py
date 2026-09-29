@@ -3088,7 +3088,7 @@ LOCK_READ_AFTER = 0.25
 LOCK_GIVEUPS = {"no_progress": 0, "waited_too_long": 0, "unexpected_error": 0, "taken": 0}
 
 
-def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
+def _replace_with_retry(tmp, dest, first_pause=0.02, max_pause=0.2, budget=1.0):
     """`os.replace`, which is not always allowed to proceed on Windows.
 
     🐛 On POSIX a rename over a path another process has OPEN is fine -- the reader keeps reading the
@@ -3097,20 +3097,29 @@ def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
     So a write here could fail purely because somebody was reading the file at that instant, and
     whatever the caller was saving was lost.
 
-    A reader holds a small file open for microseconds, so this waits rather than gives up: twelve
-    attempts over about a quarter of a second. If it still cannot land, the original exception is
-    raised -- a caller that cannot write must hear about it, not be told it succeeded.
+    A reader holds a small file open for microseconds, so this waits rather than gives up: the first
+    pause is 20 ms and each later one doubles, capped at 200 ms, until about a second has been slept
+    in total. If it still cannot land, the original exception is raised -- a caller that cannot write
+    must hear about it, not be told it succeeded.
 
     POSIX takes the first attempt every time and pays nothing for this.
     """
-    for n in range(attempts):
+    # 🎯 [2026-09-29] (R116 acc2, 2026-09-29) The old budget was 12 attempts at a flat 20 ms, about
+    # 0.24 s, the shortest of every implementation the round found. Outside, for the same Windows
+    # antivirus / EDR / indexer handles: uv 3 x 100 ms (0.3 s, fixed an EDR case on Windows 10/11),
+    # Chromium 5 x 100 ms, pnpm up to 1 s for access-denied, graceful-fs up to 60 s.
+    slept = 0.0
+    pause = first_pause
+    while True:
         try:
             os.replace(tmp, dest)
             return
         except PermissionError:
-            if n == attempts - 1:
+            if slept >= budget:
                 raise
             time.sleep(pause)
+            slept += pause
+            pause = min(pause * 2, max_pause)
 
 
 # Why the last `atomic_write_text` failed, for `write_or_raise` to put in its message. A list rather
