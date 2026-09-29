@@ -117,6 +117,11 @@ already reports the last released number while running newer code.
   Ten commands crashed with a Python error when the directory they were started in no longer
   existed; they now say so in one line and exit. Hooks were never affected.
 
+- **`chamnan-guard --history` checks every branch and tag, and says how much it checked.** It
+  walked only the branch you had checked out, so a credential committed on another branch was
+  never seen, and a clean result named its 500-commit ceiling rather than the commits it actually
+  examined. It now walks every branch and tag and reports the real count.
+
 ## What's new in 1.33.0
 
 _Finding what you stored, and saying only what is true._

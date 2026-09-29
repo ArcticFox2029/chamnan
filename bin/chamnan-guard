@@ -3,8 +3,10 @@
 
   chamnan-guard          scan the staged diff, name the risks, never fail the commit
   chamnan-guard --strict exit 1 instead, for a hook somebody opted into
-  chamnan-guard --history  the other question: is anything ALREADY committed. A one-off audit over
-                           the last 500 commits, grouped by file, worst first — not a hook
+  chamnan-guard --history  the other question: is anything ALREADY committed. A one-off audit
+                           across every branch and tag (up to 500 commits), grouped by file, worst
+                           first — not a hook. 🐛 [2026-09-29] (R82 acc4, 2026-09-29) used to walk
+                           only HEAD's ancestry, so a commit on a side branch was invisible.
 
 `lib/redact.py` exists to keep a secret out of everything that reaches the MODEL — the SessionStart
 block, `MAP.md`, the file each agent reads. It had never been pointed at the other direction a
@@ -379,7 +381,7 @@ HISTORY_DEFAULT_COMMITS = 500
 
 
 def _history_diff(root, limit):
-    """`git log -p` over the last `limit` commits, or None when git cannot answer."""
+    """`git log -p` over the last `limit` commits across every ref, or None when git cannot answer."""
     if not ws.git_can_speak_for(root):
         return None
     try:
@@ -394,6 +396,12 @@ def _history_diff(root, limit):
              # The same textconv hole as the staged diff above — one member of a set fixed and its
              # twin left is this package's most recorded defect, so both went in together.
              "--no-textconv", "-U0",
+             # 🐛 [2026-09-29] (R82 acc4, 2026-09-29) Without `--all` this only walked HEAD's own
+             # ancestry — a credential committed on another branch was never examined, and the
+             # command still reported "nothing credential-shaped" as if it had looked everywhere.
+             # `--all` adds every branch, tag and remote-tracking ref; git de-duplicates commits
+             # reachable from more than one of them itself, so nothing is scanned twice.
+             "--all",
              "--no-merges", "-n", str(int(limit)),
              "--src-prefix=a/", "--dst-prefix=b/"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -401,6 +409,29 @@ def _history_diff(root, limit):
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout if out.returncode == 0 else None
+
+
+def _is_commit_header(raw):
+    """Is `raw` one of `git log -p`'s own `commit <sha>` header lines.
+
+    The one place this recognition is allowed to exist — `scan_history` below and
+    `_commits_examined` (🐛 [2026-09-29], R82 acc4, 2026-09-29) both call this instead of each
+    keeping its own copy, so a corpus with a commit MESSAGE that starts with the word "commit"
+    is read the same way by both.
+    """
+    return raw.startswith("commit ") and len(raw.split()) == 2
+
+
+def _commits_examined(diff):
+    """How many commits `_history_diff` actually put in front of the scanner.
+
+    🐛 [2026-09-29] (R82 acc4, 2026-09-29) The success message used to print the CEILING
+    (`HISTORY_DEFAULT_COMMITS`) regardless of how much history the repository actually has, which
+    reads as "I looked at up to 500 commits" even on a two-commit repository. Counting the same
+    header line `scan_history` splits on gives the true figure without a second parser to drift
+    out of sync with the first.
+    """
+    return sum(1 for raw in (diff or "").splitlines(True) if _is_commit_header(raw))
 
 
 def scan_history(diff):
@@ -412,7 +443,7 @@ def scan_history(diff):
     found, commit = {}, "?"
     chunk = []
     for raw in (diff or "").splitlines(True):
-        if raw.startswith("commit ") and len(raw.split()) == 2:
+        if _is_commit_header(raw):
             for path, lineno, text in _added_lines("".join(chunk)):
                 if text.strip() and redact.scrub(text) != text:
                     found.setdefault((commit, path), []).append(lineno)
@@ -449,8 +480,13 @@ def main(argv):
             return 1
         hits = scan_history(hist)
         if not hits:
-            print(f"chamnan: nothing credential-shaped in the last "
-                  f"{HISTORY_DEFAULT_COMMITS} commit(s).")
+            # 🐛 [2026-09-29] (R82 acc4, 2026-09-29) This used to name the CEILING
+            # (`HISTORY_DEFAULT_COMMITS`), not what was actually examined — "the last 500 commits"
+            # on a two-commit repository states a limit nothing reached, not a result. Now it names
+            # the true count `_commits_examined` derived from the same diff the scan already ran.
+            print(f"chamnan: nothing credential-shaped in the "
+                  f"{_commits_examined(hist)} commit(s) examined across every branch and tag "
+                  f"(ceiling {HISTORY_DEFAULT_COMMITS}).")
             print("  That is the redactor's recall on this history, not a guarantee — see the "
                   "recall and touch-rate figures in the README for what it can and cannot find.")
             return 0
