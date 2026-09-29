@@ -1621,6 +1621,9 @@ def _dot_m_is_objective_c(path):
     return not _MATLAB_MARK.search(head)
 
 
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _lang_from_shebang(path):
     """The language of an extensionless executable, from its first line, or None.
 
@@ -1638,10 +1641,30 @@ def _lang_from_shebang(path):
     # `#!/usr/bin/env python3` and `#!/bin/bash` both end in the interpreter; `env` is skipped
     # because it is the launcher, not the language.
     words = [w for w in line[2:].replace("\t", " ").split(" ") if w]
+    # 🐛 [2026-09-29] (R103 acc4, 2026-09-29) Only `env` and `-S` were skipped, so an `env` that
+    # carried its own options read one of them as the interpreter and the file lost its language:
+    # `#!/usr/bin/env -S PYTHONPATH=lib python3`, `#!/usr/bin/env -iS python3`,
+    # `#!/usr/bin/env -u HOME python3` and `#!/usr/bin/env PYTHONDONTWRITEBYTECODE=1 python3` all
+    # gave None. Once `env` has been seen, every option and NAME=VALUE word is skipped, and the
+    # options that take a separate argument skip that argument too.
+    seen_env = False
+    skip_next = False
     for word in words:
-        name = word.rsplit("/", 1)[-1]
-        if name in ("env", "-S"):
+        if skip_next:
+            skip_next = False
             continue
+        name = word.rsplit("/", 1)[-1]
+        if name == "env":
+            seen_env = True
+            continue
+        if name == "-S":
+            continue
+        if seen_env:
+            if word in ("-u", "-C", "-P", "--unset", "--chdir"):
+                skip_next = True
+                continue
+            if word.startswith("-") or _ENV_ASSIGN.match(word):
+                continue
         # `python3.12` -> `python3`; a trailing minor version is not a different language.
         base = name.split(".")[0]
         if base in _SHEBANG_LANG:

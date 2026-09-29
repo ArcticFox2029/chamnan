@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-map` recognises a script whose `env` shebang carries options.** A first line such as
+  `#!/usr/bin/env -S PYTHONPATH=lib python3`, `env -iS python3`, `env -u HOME python3` or
+  `env NAME=1 python3` read the option as the interpreter, and the file was indexed with no language.
 - **`chamnan-guard` names files with Thai, Chinese or accented names correctly.** git quotes such
   names by default, and the guard reported them as escaped octal strings with the diff prefix still
   attached; a personal `diff.mnemonicPrefix` or custom prefix setting mislabelled every file. Because
