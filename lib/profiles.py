@@ -330,6 +330,21 @@ def by_model(family):
     # order, because `gpt-5.6` has a dot the version-digit strip is meant to see and the region
     # prefix is only ever ahead of the family, never behind it.
     key = text.rsplit("/", 1)[-1].split("-")[0].split()[0].rsplit(".", 1)[-1].rstrip("0123456789.")
+    # 🐛 [2026-09-29] `key` above is only the FIRST hyphen token, which for any full Anthropic model
+    # id is always the publisher word "claude" -- "claude-haiku-4-5", the dated
+    # "claude-haiku-4-5-20251001" and the Bedrock "us.anthropic.claude-haiku-4-5-v1:0" form all
+    # collapsed onto the flat `claude` entry (1,000,000) instead of reaching `haiku` (200,000),
+    # because the family word sits in the SECOND-or-later token once "claude" itself is part of the
+    # id. Scan every hyphen token of the publisher/region-stripped name for a family word that is
+    # actually in the table, not only the second one, so the older `claude-3-5-haiku-20241022` order
+    # (family word fourth) resolves too. A bare "claude" with no family word keeps this entry.
+    if key == "claude":
+        stripped = text.rsplit("/", 1)[-1]
+        for token in stripped.split("-"):
+            token_key = token.rsplit(".", 1)[-1].rstrip("0123456789.")
+            if token_key != "claude" and token_key in MODEL_WINDOWS:
+                key = token_key
+                break
     if key in AMBIGUOUS:
         small, large = AMBIGUOUS[key]
         return DEFAULT, (f"`{family}` ships in two sizes that want different profiles: {small} "

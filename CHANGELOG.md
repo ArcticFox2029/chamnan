@@ -88,6 +88,11 @@ already reports the last released number while running newer code.
   Hiragana, Katakana and Hangul now count as one writing system; a Cyrillic letter inside a Latin
   word is still caught.
 
+- **A full Claude model id now gets its family's window.** `chamnan-context --model` read only
+  the first word of the name, which for `claude-haiku-4-5` (and the dated, Bedrock and gateway
+  spellings) is `claude`, so Haiku was sized for a million tokens instead of 200K. The family word
+  is now found wherever it sits in the id.
+
 ## What's new in 1.33.0
 
 _Finding what you stored, and saying only what is true._
