@@ -205,6 +205,19 @@ def session():
             _CACHE.clear()
 
 
+def session_memo(key, compute):
+    """`compute()` once per session for `key`; outside a session, every call computes fresh."""
+    # Scoped exactly like the walk cache, for the reason `session()` gives: a caller that scans,
+    # writes a file, and scans again outside a session must see the new file. The tuple slot cannot
+    # collide with `_entries`, whose keys are plain strings.
+    if not _DEPTH:
+        return compute()
+    slot = ("memo", key)
+    if slot not in _CACHE:
+        _CACHE[slot] = compute()
+    return _CACHE[slot]
+
+
 def _entries(root):
     key = str(Path(root).resolve())
     if _DEPTH and key in _CACHE:

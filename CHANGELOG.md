@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A session starts about half a second sooner while the index is behind.** The session-start
+  check filtered the whole tree twice, once to find how far the index is behind and once to name
+  the files it is missing. It now filters once per session start. Measured on an 816-file repository:
+  1.69 s to 1.16 s for that step, identical answers.
 - **`chamnan-map` recognises a script whose `env` shebang carries options.** A first line such as
   `#!/usr/bin/env -S PYTHONPATH=lib python3`, `env -iS python3`, `env -u HOME python3` or
   `env NAME=1 python3` read the option as the interpreter, and the file was indexed with no language.

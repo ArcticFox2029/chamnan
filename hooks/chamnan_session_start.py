@@ -583,13 +583,21 @@ def _indexable(root):
     reads on the day it is true.
     """
     import tree, mapper
-    with tree.session():
-        # `sniff=False`: this walk wants mtimes, not content. Reading 8 KB of every file to decide
-        # whether it is binary cost 16-39 seconds per firing on a 6,000-file repository whose index
-        # was already CURRENT, on a hook that fires up to 82 times a session. Callers that care
-        # whether a specific file is really text call `mapper.is_text_file` on that file alone.
-        for path, _lang in mapper.indexable(root, sniff=False):
-            yield path
+
+    # 🎯 [2026-09-29] (R104 acc4, 2026-09-29) On the 816-file Lumin-App repository, inside one
+    # `tree.session()`: `index_is_behind` 0.8 s, `dead_entries` 0.01 s, `unindexed` 0.5 s. The two
+    # walks already shared the cached listing but each re-ran this per-file filtering in full; the
+    # second pass was ~0.5 s of a ~3.2 s SessionStart hook. Memoised per session, so it is computed
+    # once there and fresh on every call outside one.
+    def _compute():
+        with tree.session():
+            # `sniff=False`: this walk wants mtimes, not content. Reading 8 KB of every file to decide
+            # whether it is binary cost 16-39 seconds per firing on a 6,000-file repository whose index
+            # was already CURRENT, on a hook that fires up to 82 times a session. Callers that care
+            # whether a specific file is really text call `mapper.is_text_file` on that file alone.
+            return [path for path, _lang in mapper.indexable(root, sniff=False)]
+
+    return tree.session_memo(("indexable", str(Path(root).resolve())), _compute)
 
 
 _BUILT_FROM = re.compile(r"\bBuilt from ([0-9a-f]{7,40})\.")
