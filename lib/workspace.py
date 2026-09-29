@@ -1821,6 +1821,27 @@ JSON_READ_CEILING = 4_000_000    # bytes
 QUARANTINE_LOG = "logs/recovered.jsonl"
 
 
+def _unused_corrupt_name(path):
+    """A `<name>.corrupt.<timestamp>` sibling of `path` that does not exist yet.
+
+    🐛 [2026-09-29] (R109 acc2, 2026-09-29) The name had one-second resolution and both writers
+    REPLACE an existing file, so two corrupt copies kept in the same second overwrote each other:
+    `x.json` written as `{bad 1` and loaded with `load_json(p, quarantine=True)`, then written as
+    `{bad 2` and loaded again, left ONE `.corrupt.` file holding `{bad 2`. The first copy was the
+    only copy of whatever it held. `_quarantine` and `preserve_before_rewrite` also collided with
+    each other. A numeric suffix keeps the `.corrupt.` infix that `chamnan-doctor` globs for.
+    """
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    base = path.with_name(path.name + ".corrupt." + stamp)
+    if not base.exists():
+        return base
+    for n in range(1, 1000):
+        cand = base.with_name(base.name + "." + str(n))
+        if not cand.exists():
+            return cand
+    return path.with_name(path.name + ".corrupt." + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f"))
+
+
 def _quarantine(path, why):
     """Move a store that cannot be read aside, and say so. Returns where it went, or ""..
 
@@ -1838,8 +1859,7 @@ def _quarantine(path, why):
         path = pathlib.Path(path)
         if not path.is_file():
             return ""
-        dest = path.with_name(path.name + ".corrupt."
-                              + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"))
+        dest = _unused_corrupt_name(path)
         os.replace(path, dest)
     except OSError:
         return ""
@@ -1880,8 +1900,7 @@ def preserve_before_rewrite(path, text, why):
         if not text:
             return ""
         path = pathlib.Path(path)
-        dest = path.with_name(path.name + ".corrupt."
-                              + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"))
+        dest = _unused_corrupt_name(path)
         if not atomic_write_text(dest, text):
             return ""
     except Exception:              # noqa: BLE001 — a mutate must not fail because of this

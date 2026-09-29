@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A corrupt store kept twice in one second keeps both copies.** chamnan moves an unreadable
+  store aside as `<name>.corrupt.<time>` rather than deleting it, but the time had one-second
+  resolution and the move replaced, so a second copy made within the same second overwrote the
+  first. The name now gets a `.1`, `.2` suffix when it is taken.
 - **A session starts about half a second sooner while the index is behind.** The session-start
   check filtered the whole tree twice, once to find how far the index is behind and once to name
   the files it is missing. It now filters once per session start. Measured on an 816-file repository:
