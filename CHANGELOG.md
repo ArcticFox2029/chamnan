@@ -93,6 +93,15 @@ already reports the last released number while running newer code.
   spellings) is `claude`, so Haiku was sized for a million tokens instead of 200K. The family word
   is now found wherever it sits in the id.
 
+- **Claude Code no longer gets chamnan's block twice from `AGENTS.md`.** Claude Code 2.1.277
+  and later read the root `AGENTS.md` when a project has no `CLAUDE.md`, and `chamnan-context
+  --write generic` puts a snapshot of the session block there, so the same sections arrived from
+  the file and from the hook. The hook now leaves out every section the file already delivered
+  word for word and says which, while a section that changed since the snapshot is still sent.
+  It only does this when it can tell Claude Code really read the file: version, the
+  `instructionFiles` setting, the built-in plugin, and no `CLAUDE.md` or `CLAUDE.local.md` in the
+  folder or above it. When anything is unclear, it sends everything as before.
+
 ## What's new in 1.33.0
 
 _Finding what you stored, and saying only what is true._

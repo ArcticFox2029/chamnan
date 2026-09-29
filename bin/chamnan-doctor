@@ -260,6 +260,8 @@ _ENV_OVERRIDES = (
     (ws.READ_ONLY_ENV, "every write this session makes becomes a no-op"),
     ("CHAMNAN_CONTEXT_PROFILE", "which budget profile sizes the injected block"),
     ("CHAMNAN_CONTEXT_AGENT", "which agent the injected block is written for"),
+    ("CHAMNAN_SNAPSHOT", "sessions resend what AGENTS.md already delivered (meant only for "
+                         "chamnan-context's own snapshot runs)"),
 )
 
 

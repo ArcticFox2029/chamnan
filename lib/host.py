@@ -300,3 +300,122 @@ def context_files(root):
             except (OSError, ValueError):
                 continue
     return sorted(out, key=lambda r: -r[1])
+
+
+# 🎯 [2026-09-29] Claude Code 2.1.277 started reading the root `AGENTS.md` as project instructions
+# when a project has no CLAUDE.md, and `chamnan-context --write generic` puts a snapshot of the
+# SessionStart block into exactly that file. Where both happen, the same sections reach the model
+# twice: once from the file and once from the hook. The owner chose (2026-09-29) that the hook drop
+# what the file already delivered, so the hook has to know whether the file WAS delivered.
+#
+# Every rule below is from https://code.claude.com/docs/en/memory.md, section "AGENTS.md", fetched
+# 2026-09-29. The answer is None on every doubt, because the two mistakes are not the same size: a
+# section sent twice costs tokens, and a section dropped when Claude Code never read the file costs
+# the session that section entirely.
+AGENTS_MD_SINCE = (2, 1, 277)
+_BLOCKING_INSTRUCTIONS = ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md")
+_AGENTS_MD_PLUGIN = "agents-md@builtin"
+
+
+def claude_code_version(env=None):
+    """(major, minor, patch) of the running Claude Code, or None.
+
+    Read from `AI_AGENT`, which Claude Code sets for the processes it launches, hooks included:
+    observed as `claude-code_2-1-283_agent` on 2026-09-29. It is undocumented, so a value that does
+    not have that shape is an unknown version, never a guessed one.
+    """
+    import re
+    value = (os.environ if env is None else env).get("AI_AGENT") or ""
+    m = re.match(r"claude-code_(\d+)-(\d+)-(\d+)(?:_|$)", value)
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def _managed_settings_path():
+    family = os_family()
+    if family == "macos":
+        return Path("/Library/Application Support/ClaudeCode/managed-settings.json")
+    if family == "linux":
+        return Path("/etc/claude-code/managed-settings.json")
+    if family == "windows":
+        return Path(r"C:\Program Files\ClaudeCode\managed-settings.json")
+    return None
+
+
+def claude_code_loads_agents_md(root, cwd=None, env=None, home=None, managed=None):
+    """The root `AGENTS.md` path when Claude Code has certainly loaded it this session, else None.
+
+    `root` is the repository root, where `--write generic` puts the file; `cwd` is the session's
+    working directory (the hook payload's `cwd`), which decides the CLAUDE.md walk. `env`, `home`
+    and `managed` are injectable for tests; `managed` is the managed-settings file path.
+
+    What cannot be seen from here, and is therefore NOT handled: a `--settings` file passed on the
+    command line (the docs allow `instructionFiles` there too), and the first session after an
+    upgrade from 2.1.276 or earlier, which the docs say may not read AGENTS.md yet.
+    """
+    import json
+    env = os.environ if env is None else env
+    version = claude_code_version(env)
+    if version is None or version < AGENTS_MD_SINCE:
+        return None
+    root = Path(root)
+    cwd = Path(cwd) if cwd else root
+    home = Path(home) if home else Path.home()
+    try:
+        root, cwd = root.resolve(), cwd.resolve()
+    except OSError:
+        return None
+    # Claude Code reads AGENTS.md from the working directory and the directories above it, so the
+    # repository root's file is loaded only when the session runs at or below the root.
+    if cwd != root and root not in cwd.parents:
+        return None
+    agents = root / "AGENTS.md"
+    if not agents.is_file():
+        return None
+
+    user_dir = Path(env["CLAUDE_CONFIG_DIR"]) if env.get("CLAUDE_CONFIG_DIR") else home / ".claude"
+    managed = Path(managed) if managed else _managed_settings_path()
+    settings = {}
+    for label, path in (("managed", managed), ("user", user_dir / "settings.json"),
+                        ("project", root / ".claude" / "settings.json"),
+                        ("local", root / ".claude" / "settings.local.json")):
+        if path is None or not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return None                        # a settings file we cannot read is a doubt
+        if not isinstance(data, dict):
+            return None
+        settings[label] = data
+    # Disabled from /plugin, in any file that can carry `enabledPlugins`.
+    for data in settings.values():
+        plugins = data.get("enabledPlugins")
+        if isinstance(plugins, dict) and plugins.get(_AGENTS_MD_PLUGIN) is False:
+            return None
+    # `instructionFiles` is honoured from managed and user settings only; managed wins.
+    mode = "claude-md-or-agents-md"
+    for label in ("user", "managed"):
+        conf = (settings.get(label, {}).get("pluginConfigs") or {})
+        conf = conf.get(_AGENTS_MD_PLUGIN) if isinstance(conf, dict) else None
+        opts = conf.get("options") if isinstance(conf, dict) else None
+        if isinstance(opts, dict) and "instructionFiles" in opts:
+            mode = opts["instructionFiles"]
+    if mode == "claude-md-and-agents-md":
+        return agents
+    if mode != "claude-md-or-agents-md":
+        return None                            # claude-md, managed-only, or a value we do not know
+    # The default: any CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md in the working directory or
+    # ANY directory above it means Claude Code reads those instead. The user's own
+    # `~/.claude/CLAUDE.md` does not count, and it is exactly what `.claude/CLAUDE.md` finds when
+    # the walk reaches the home directory, so that one spelling is skipped there.
+    for d in (cwd, *cwd.parents):
+        for name in _BLOCKING_INSTRUCTIONS:
+            f = d / name
+            try:
+                if name == ".claude/CLAUDE.md" and f.parent.resolve() == user_dir.resolve():
+                    continue
+                if f.is_file():
+                    return None
+            except OSError:
+                return None
+    return agents

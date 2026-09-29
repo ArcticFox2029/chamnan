@@ -147,3 +147,45 @@ def install(root, body, command=""):
         if not write_target(target, head + region + (nl + after if after else "")):
             raise OSError(f"{target.path} could not be written")
         return path
+
+
+# 🎯 [2026-09-29] The region is a snapshot of the SessionStart block, and Claude Code 2.1.277+
+# loads this file itself when a project has no CLAUDE.md -- so the hook needs to know which of its
+# sections the file already delivered. A section is keyed by its heading and compared on its body
+# with the fence nonce masked: the snapshot's nonce is derived from its content (`_stabilise_fence`
+# in `bin/chamnan-context`), the session's is random, and the nonce is the only byte that is
+# supposed to differ between the two.
+import re as _re
+
+_SECTION_RE = _re.compile(r"### (?P<title>[^\n]+)\n\[repo:(?P<nonce>[0-9a-fA-F]{6})\]\n"
+                          r"(?P<body>.*?)\n\[/repo:(?P=nonce)\]", _re.S)
+_ANY_FENCE = _re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+
+
+def _masked(body):
+    return _ANY_FENCE.sub(lambda m: f"[{m.group(1)}repo:*]", body).strip()
+
+
+def section_key(text):
+    """`(title, masked body)` of ONE rendered section, or `(None, None)` when `text` is not one."""
+    m = _SECTION_RE.fullmatch(text.strip())
+    if not m:
+        return None, None
+    return m.group("title").strip(), _masked(m.group("body"))
+
+
+def delivered_sections(text):
+    """`{title: masked body}` for every section inside chamnan's region of an `AGENTS.md`.
+
+    Empty when the region is absent, unclosed, or appears twice -- the same cases `install`
+    refuses, and for the same reason: which text is chamnan's is then a guess.
+    """
+    head, marked, rest = text.partition(START)
+    if not marked or START in rest:
+        return {}
+    region, closed, _tail = rest.partition(END)
+    if not closed:
+        return {}
+    region = region.replace("\r\n", "\n")
+    return {m.group("title").strip(): _masked(m.group("body"))
+            for m in _SECTION_RE.finditer(region)}

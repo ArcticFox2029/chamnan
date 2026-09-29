@@ -146,6 +146,7 @@ def _capture_session_start(root, profile, ceiling, agent=None, payload=None, rea
     was_agent = os.environ.get("CHAMNAN_CONTEXT_AGENT")
     was_ceiling = os.environ.get("CHAMNAN_OUTPUT_CEILING")
     was_read_only = os.environ.get(ws.READ_ONLY_ENV)
+    was_snapshot = os.environ.get("CHAMNAN_SNAPSHOT")
     buffer = io.StringIO()
     try:
         if profile:
@@ -154,6 +155,9 @@ def _capture_session_start(root, profile, ceiling, agent=None, payload=None, rea
         if agent:
             os.environ["CHAMNAN_CONTEXT_AGENT"] = agent
         os.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling)
+        # The hook's SNAPSHOT_ENV: this is a build of the block for a file or a preview, never a
+        # session, so the hook must not leave out what a previous AGENTS.md snapshot already held.
+        os.environ["CHAMNAN_SNAPSHOT"] = "1"
         if read_only:
             os.environ[ws.READ_ONLY_ENV] = "1"
         os.chdir(str(root))
@@ -166,7 +170,8 @@ def _capture_session_start(root, profile, ceiling, agent=None, payload=None, rea
         for name, previous in (("CHAMNAN_CONTEXT_PROFILE", was_profile),
                                ("CHAMNAN_CONTEXT_AGENT", was_agent),
                                ("CHAMNAN_OUTPUT_CEILING", was_ceiling),
-                               (ws.READ_ONLY_ENV, was_read_only)):
+                               (ws.READ_ONLY_ENV, was_read_only),
+                               ("CHAMNAN_SNAPSHOT", was_snapshot)):
             if previous is None:
                 os.environ.pop(name, None)
             else:

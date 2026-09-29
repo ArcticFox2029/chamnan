@@ -43,7 +43,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
           # POSITIONALLY: every argument after that slot shifted by one, silently, and the record
           # would have carried `index_behind` as its origins map. A new parameter goes at the END
           # of a signature that has positional callers, or the callers move with it.
-          short_full=None, origins=None):
+          short_full=None, origins=None, via=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-21] (R84, 2026-09-21) WHAT EACH FIELD MEANS, because a reader of the JSONL had
@@ -83,6 +83,11 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
                DELIVERED size is already in `sec`, so the pair is what the section retained.
                Recorded because the full size is knowable only while the block is being assembled:
                without it, "is the fitter shrinking well" has no answer that is not the calendar.
+      via      {section heading: bytes} for sections left out of the block because Claude Code had
+               already loaded them from the root `AGENTS.md` (2026-09-29). Delivered, not lost:
+               `check` counts them as present and adds their bytes to the block's size, or a
+               repository that turned the feature on would read as a collapse and a vanished set
+               of sections on every firing.
       short    sections cut down to their NAMES ONLY — this is a BUDGET decision, and it is
                **not** the ageing pass. Nothing here records `state.age_out`: a section held back
                for staleness leaves its trace in the block's own text, not in this log.
@@ -212,12 +217,32 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     # to say so afterwards. Same shape as `drop` so the two can be counted together or apart.
     if short:
         rec["short"] = sorted({str(s)[:NAME_CHARS] for s in short})
+    if via:
+        rec["via"] = {str(k)[:NAME_CHARS]: int(v) for k, v in via.items()}
     return rec
+
+
+def _delivered(r):
+    """{section: bytes} that reached the session in record `r`: the block's own plus AGENTS.md's."""
+    out = dict(r.get("sec") or {})
+    via = r.get("via")
+    if isinstance(via, dict):
+        for k, v in via.items():
+            out.setdefault(k, v)
+    return out
+
+
+def _delivered_bytes(r):
+    size = r.get("bytes")
+    if not isinstance(size, int):
+        return size
+    via = r.get("via")
+    return size + (sum(v for v in via.values() if isinstance(v, int)) if isinstance(via, dict) else 0)
 
 
 def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
            index_behind=None, session=None, short=(), transcript=None, nonce=None, model=None,
-           short_full=None, origins=None):
+           short_full=None, origins=None, via=None):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -230,7 +255,8 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     # body in this package written in more than one file, in the package that counts them.
     return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
                                             index_behind, session, short, transcript, nonce,
-                                            model, short_full, origins=origins), KEEP)
+                                            model, short_full, origins=origins, via=via),
+                           KEEP)
 
 
 
@@ -279,8 +305,8 @@ def check(root, window=WINDOW, delivery_only=False):
     if now.get("early"):
         out.append("the last block stopped early — it was cut, not shortened, so everything "
                    "after the cut never reached the session")
-    sizes = [r["bytes"] for r in prior if isinstance(r.get("bytes"), int)]
-    size_now = now.get("bytes")
+    sizes = [_delivered_bytes(r) for r in prior if isinstance(r.get("bytes"), int)]
+    size_now = _delivered_bytes(now)
     if sizes and isinstance(size_now, int):
         ordered = sorted(sizes)
         mid = len(ordered) // 2
@@ -292,14 +318,14 @@ def check(root, window=WINDOW, delivery_only=False):
     if prior:
         seen = {}
         for r in prior:
-            for name in (r.get("sec") or {}):
+            for name in _delivered(r):
                 seen[name] = seen.get(name, 0) + 1
         # Every section this workspace is known to produce: one it delivered at some point, or one
         # it built and cut. A name in neither is a section this repository does not have.
         known = set(seen) | {n for r in prior + [now] for n in (r.get("drop") or [])}
         floor = len(prior) * PRESENT_ENOUGH
         gone = sorted(n for n, c in seen.items()
-                      if c >= floor and n not in (now.get("sec") or {}))
+                      if c >= floor and n not in _delivered(now))
         # 🐛 [2026-09-09] A section had to have ARRIVED before its absence could be reported:
         # `c >= floor` is computed from a window that never saw it, so a section at 0 of 90 can
         # never satisfy it and never will while it stays at zero. Three sections on this repository
@@ -318,7 +344,7 @@ def check(root, window=WINDOW, delivery_only=False):
         # the answer instead of the code guessing it, which is why `shape()` now records what was
         # built and cut.
         _never = sorted(n for n in known
-                        if n not in seen and n not in (now.get("sec") or {}))
+                        if n not in seen and n not in _delivered(now))
         if _never and len(prior) >= 5:
             _shown = ", ".join(_never[:3]) + (f", and {len(_never) - 3} more"
                                               if len(_never) > 3 else "")

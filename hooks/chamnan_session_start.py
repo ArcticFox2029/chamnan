@@ -226,6 +226,10 @@ LEDGER = []
 #
 # This is a mitigation, not a proof. It gives the reader a reliable answer to "who said this",
 # which is the part that was missing; it does not make hostile text safe to act on.
+# Set by `chamnan-context` while it runs `main()` to build a file snapshot of this block. Read in
+# `main()` so the AGENTS.md dedupe never runs on that path; see the note there.
+SNAPSHOT_ENV = "CHAMNAN_SNAPSHOT"
+
 NONCE = ws.nonce_for(None)
 OPEN_MARK = f"[repo:{NONCE}]"
 CLOSE_MARK = f"[/repo:{NONCE}]"
@@ -3000,6 +3004,39 @@ def main():
         _failed = []
     if _failed:
         header = ("_" + " Also: ".join(_failed) + "._\n\n") + header
+    # 🎯 [2026-09-29] Claude Code 2.1.277+ loads the root `AGENTS.md` itself when the project has no
+    # CLAUDE.md, and `--write generic` put a snapshot of THIS block there -- so without this every
+    # section in it reached the model twice. The owner chose (2026-09-29) to drop here what the file
+    # already delivered: a section whose body is byte-identical to the file's, fence nonce aside.
+    # One that changed since the snapshot -- STATE.md moved on, the index was rebuilt -- is still
+    # sent, so the session never has only the stale copy. `host.claude_code_loads_agents_md`
+    # answers None on every doubt, and then nothing here changes.
+    #
+    # Never on the snapshot path: `chamnan-context` builds the AGENTS.md region by running this
+    # function, and deduplicating there would write a snapshot missing whatever the previous
+    # snapshot held -- each `--write` hollowing out the next.
+    _via_agents_md = {}
+    if not os.environ.get(SNAPSHOT_ENV):
+        try:
+            import host as _host
+            from adapters import generic as _generic
+            _agents = _host.claude_code_loads_agents_md(root, payload.get("cwd"))
+            _have = (_generic.delivered_sections(_agents.read_text(encoding="utf-8-sig"))
+                     if _agents else {})
+            _kept, _via = [], {}
+            for _part in (out if _have else ()):
+                _title, _inner = _generic.section_key(_part)
+                if _title is not None and _have.get(_title) == _inner:
+                    _via[_title] = len(_part.encode("utf-8"))
+                    continue
+                _kept.append(_part)
+            if _via:
+                # Both assigned together, last, so a failure above leaves the block untouched.
+                out, _via_agents_md = _kept, _via
+                header += ("_chamnan: already loaded from `AGENTS.md`, so not repeated here — "
+                           + ", ".join(_via) + "._\n")
+        except Exception:     # noqa: BLE001 — a failed dedupe must leave the block as it was
+            pass
     _briefed = []
     _briefed_cost = {}
     body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built,
@@ -3065,6 +3102,7 @@ def main():
                         # because the full text would not fit. Recorded beside `dropped` because
                         # they are the same question asked twice, and only one half was answerable.
                         short=_briefed,
+                        via=_via_agents_md,
                         index_behind=_behind_seconds)
     try:
         sys.stdout.write(body + "\n")
