@@ -3113,7 +3113,21 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # writes gets CRLF, including MAP.md, which is then diffed and grepped by tools that
         # were handed LF everywhere else. chamnan generates its own content and controls its
         # own line endings; nothing here wants the platform's opinion.
-        with tmp.open("w", encoding=encoding, newline="") as fh:
+        # 🐛 [2026-09-29] (R36 acc4, 2026-09-29) `tmp.open("w", ...)` follows a symlink: a symlink
+        # PLANTED at the staging name ahead of time, pointing outside this directory, made the
+        # write land inside whatever it pointed at, and the later `os.replace(tmp, dest)` then
+        # moved the symlink ITSELF over `dest` -- the destination became a symlink to someone
+        # else's file, not the new content. Removing whatever sits at `tmp` first -- never its
+        # target; unlinking a symlink drops only the link -- and then opening with O_EXCL |
+        # O_NOFOLLOW closes both halves: nothing can already be there to write through, and
+        # nothing re-planted between the unlink and the open is followed either.
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o666)
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as fh:
             fh.write(text)
             # 🎯 [2026-09-25] (R8, 2026-09-25) A rename is atomic against a dying PROCESS, not against
             # a power cut: without this the new name can survive a crash while the data behind it

@@ -107,6 +107,12 @@ already reports the last released number while running newer code.
   off. It is declared and documented now, and a check derives every setting the code reads and
   fails if one is undeclared.
 
+- **A symlink waiting at a staging file's name is no longer followed.** Every store is written to
+  a temporary file and renamed into place; that temporary file was opened in a way that followed a
+  symlink already sitting at its name, so the write could land in a file outside the workspace and
+  leave the store itself as a link to it. The staging file is now created fresh and refuses to
+  follow a link.
+
 ## What's new in 1.33.0
 
 _Finding what you stored, and saying only what is true._
