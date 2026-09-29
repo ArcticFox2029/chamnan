@@ -2214,6 +2214,11 @@ _STEM_FILTER = _UNBUILT
 # window grows through the whole identifier run around the hit and then by a fixed margin, which
 # is the same lookback the windows downstream already use.
 _STEM_MARGIN = 64
+# 🎯 [2026-09-29] (R101 acc4, 2026-09-29) `scrub()` on a 543 KB file called `_secret_word_hits` 4
+# times on ONE distinct text: 3.1 s, about 2.3 s of it repeated work. One entry is enough because
+# scrub calls it back-to-back on the same text; strings are immutable, so equality means identical
+# hits. Stored as one tuple so a reader never sees a text paired with another text's hits.
+_LAST_STEM_HITS = (None, None)
 
 
 def _secret_word_hits(text):
@@ -2222,6 +2227,18 @@ def _secret_word_hits(text):
     Identical output to `_SECRET_WORD_ANYWHERE.finditer(text)` by construction and by check 121,
     which holds the two against each other over every file in the installed tree.
     """
+    global _STEM_FILTER, _LAST_STEM_HITS
+    memo = _LAST_STEM_HITS
+    if isinstance(text, str) and memo[0] is not None and text == memo[0]:
+        return list(memo[1])
+    out = _secret_word_hits_uncached(text)
+    if isinstance(text, str):
+        _LAST_STEM_HITS = (text, out)
+    return list(out)
+
+
+def _secret_word_hits_uncached(text):
+    """The computation behind `_secret_word_hits`, unmemoised."""
     global _STEM_FILTER
     if _STEM_FILTER is _UNBUILT:
         _STEM_FILTER = _make_stem_filter()
@@ -2835,7 +2852,8 @@ def _unmask_invisible_secret_words(text):
     dropped, so positions shift -- hence the explicit origin index below instead of the direct
     offset reuse the confusable version uses.
     """
-    if not any(_is_planted_invisible(ch) for ch in text):
+    # 🎯 [2026-09-29] (R101 acc4, 2026-09-29) distinct characters only: 1.0 s -> ~14 ms on MAP.md.
+    if not any(_is_planted_invisible(ch) for ch in set(text)):
         return text
     kept_chars, origin = [], []
     for i, ch in enumerate(text):

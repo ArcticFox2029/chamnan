@@ -24,6 +24,9 @@ already reports the last released number while running newer code.
 - **`chamnan-map` recognises a script whose `env` shebang carries options.** A first line such as
   `#!/usr/bin/env -S PYTHONPATH=lib python3`, `env -iS python3`, `env -u HOME python3` or
   `env NAME=1 python3` read the option as the interpreter, and the file was indexed with no language.
+- **Redaction is about a third faster on large files.** The scan for credential words ran four
+  times over the same text in one pass, and the check for invisible characters looked at every
+  character instead of every distinct one. Measured on a 543 KB file: 9.1 s to 6.3 s, identical output.
 - **`chamnan-guard` names files with Thai, Chinese or accented names correctly.** git quotes such
   names by default, and the guard reported them as escaped octal strings with the diff prefix still
   attached; a personal `diff.mnemonicPrefix` or custom prefix setting mislabelled every file. Because
