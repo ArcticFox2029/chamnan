@@ -265,20 +265,117 @@ def _scoped(holder, pat):
     return [f"{holder}/{lead}", f"{holder}/**/{lead}"]
 
 
-def _is_generated(rel, pats, fold=False):
-    """`rel` against gitattributes-style patterns. `**/` means any depth, and a pattern with no
-    slash in it applies at every level -- which is git's own rule, not fnmatch's.
+_GIT_PATTERN_RE = {}
+_NEVER = re.compile(r"(?!)")
 
-    `fold` is git's `core.ignorecase`, passed in by the caller that knows the root. It was
-    `fnmatch.fnmatch` here, which decides case-folding from `os.name` instead -- see
-    `tree.glob_matches` for the measurement.
+
+def _git_pattern_regex(pat):
+    """(case-sensitive, case-insensitive) compiled regexes for ONE gitattributes pattern.
+
+    Matched with `fullmatch` against a whole relative path using forward slashes. Follows git's
+    wildmatch rules (`git help gitattributes`, `git help gitignore` PATTERN FORMAT): `*` and `?`
+    never cross `/`; a pattern with no `/` (bar a trailing one) applies to the basename at any
+    depth, otherwise it is anchored to the root; leading `**/` is zero or more directories,
+    trailing `/**` is everything inside, `/**/` is zero or more directories; a trailing `/` means
+    directories only, which no file is, so it never matches; `\\` escapes the next character.
     """
-    m = tree.glob_matches
+    got = _GIT_PATTERN_RE.get(pat)
+    if got is not None:
+        return got
+    if pat.endswith("/") and not pat.endswith("\\/"):
+        got = (_NEVER, _NEVER)
+        _GIT_PATTERN_RE[pat] = got
+        return got
+    body = pat[1:] if pat.startswith("/") else pat
+    anchored = pat.startswith("/") or "/" in pat
+    out = []
+    i, n = 0, len(body)
+    if body.startswith("**/"):
+        out.append("(?:.*/)?")
+        i = 3
+        anchored = True
+    elif not anchored:
+        out.append("(?:.*/)?")
+    while i < n:
+        c = body[i]
+        if body.startswith("/**/", i):
+            out.append("/(?:.*/)?")
+            i += 4
+        elif body[i:] == "/**":
+            out.append("/.+")
+            i = n
+        elif c == "*":
+            while i < n and body[i] == "*":
+                i += 1
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        elif c == "\\":
+            if i + 1 < n:
+                out.append(re.escape(body[i + 1]))
+                i += 2
+            else:
+                out.append(re.escape("\\"))
+                i += 1
+        elif c == "[":
+            j = i + 1
+            neg = j < n and body[j] in "!^"
+            if neg:
+                j += 1
+            k = j
+            if k < n and body[k] == "]":
+                k += 1
+            while k < n and body[k] != "]":
+                k += 2 if body[k] == "\\" else 1
+            if k >= n:
+                out.append(re.escape(c))
+                i += 1
+                continue
+            cls, m = [], j
+            while m < k:
+                if body[m] == "\\" and m + 1 < k:
+                    cls.append(re.escape(body[m + 1]))
+                    m += 2
+                    continue
+                cls.append("\\" + body[m] if body[m] in "[&~|^\\" else body[m])
+                m += 1
+            inner = "".join(cls)
+            out.append(f"[^/{inner}]" if neg else f"(?!/)[{inner}]")
+            i = k + 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    text = "".join(out)
+    try:
+        got = (re.compile(text, re.DOTALL), re.compile(text, re.DOTALL | re.IGNORECASE))
+    except re.error:
+        got = (_NEVER, _NEVER)
+    _GIT_PATTERN_RE[pat] = got
+    return got
+
+
+def _is_generated(rel, pats, fold=False):
+    """`rel` against gitattributes patterns, following git's wildmatch rules: `*` stays inside one
+    directory, `**/` and `/**/` cross any number of them (zero included), and a pattern with no
+    slash in it applies at every level.
+
+    `fold` is git's `core.ignorecase`, passed in by the caller that knows the root. Case is matched
+    exactly first; folding is consulted only when a case-insensitive match would succeed, and `fold`
+    may be a callable (see `tree.glob_matches` for the measurement behind that).
+    """
+    # 🐛 [2026-09-29] (R158 acc4, 2026-09-29) This matched with fnmatch via `tree.glob_matches`,
+    # whose `*` crosses `/` and which has no zero-directory rule. A differential test against
+    # `git check-attr linguist-generated` (14 patterns, 23 files) found four disagreements:
+    #   `docs/*.md`          vs `docs/sub/a.md`   ours True,  git False (a real file left unindexed)
+    #   `a/**/b.py`          vs `a/b.py`          ours False, git True
+    #   `src/**/*.gen.ts`    vs `src/j.gen.ts`    ours False, git True
+    #   `\!bang.py`          vs `!bang.py`        ours False, git True
     for pat in pats:
-        bare = pat[3:] if pat.startswith("**/") else pat
-        if m(rel, pat, fold) or m(rel, bare, fold) or m("/" + rel, pat, fold):
+        cs, ci = _git_pattern_regex(pat)
+        if cs.fullmatch(rel):
             return True
-        if "/" not in bare and m(rel.rsplit("/", 1)[-1], bare, fold):
+        if ci.fullmatch(rel) and bool(fold() if callable(fold) else fold):
             return True
     return False
 

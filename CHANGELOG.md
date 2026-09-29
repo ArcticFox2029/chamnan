@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`linguist-generated` patterns now match exactly what git matches.** chamnan read them with shell-glob
+  rules, so `docs/*.md` also matched `docs/sub/a.md` and dropped a real file from the index, while
+  `a/**/b.py` missed `a/b.py` and an escaped `\!name` never matched. Checked against `git check-attr`
+  on 56 files, which now agree on every one.
 - **A commit-guard hook that git will not run is no longer reported as installed.** If chamnan's
   pre-commit hook lost its executable bit, git skipped it in silence while every chamnan report said it
   was installed. It now reads as out of date, and `chamnan-map` restores the bit when it refreshes it.
