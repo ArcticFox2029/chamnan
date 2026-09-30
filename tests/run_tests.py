@@ -47987,9 +47987,16 @@ def _offenders369(paths):
 
 _bad_checks369 = _offenders369(_checks369)
 check("NO POOL CHECK NAMES THIS MACHINE'S HOME DIRECTORY", not _bad_checks369, saw=_bad_checks369)
-_bad_plugin369 = _offenders369(_plugin369)
-check("NO TRACKED PLUGIN FILE NAMES THIS MACHINE'S HOME DIRECTORY", not _bad_plugin369,
-      saw=_bad_plugin369[:20])
+# On a CI runner the home directory is the runner's, a public path the suite's own comments quote
+# when they record a Windows CI finding (first run: run_tests.py named `C:\\Users\\runneradmin`).
+# What must never ship is a developer's home, so the plugin half runs only off CI.
+import os as _os369
+if _os369.environ.get("GITHUB_ACTIONS") == "true":
+    print("      · on a CI runner the home directory is the runner's, so the plugin-file half was skipped")
+else:
+    _bad_plugin369 = _offenders369(_plugin369)
+    check("NO TRACKED PLUGIN FILE NAMES THIS MACHINE'S HOME DIRECTORY", not _bad_plugin369,
+          saw=_bad_plugin369[:20])
 # ---- 36_the_guard_knows_whether_this_tree_can_ship.py
 # ------------------------------------------- a wall of matches from a tree that cannot ship
 # 🐛 [2026-09-10] The publication guard asks "is something about to SHIP that names the owner's real
@@ -48905,8 +48912,13 @@ _t_dir46.mkdir(parents=True, exist_ok=True)
 # the only file that is not doomed -- and that alone is enough to stop the guard firing, because
 # the pass no longer takes "every file". The typo survives (it always would) and the genuinely
 # newest real record is deleted in its place.
-for _t_name46 in ("2020-01-01-old.md", "2020-02-01-older.md", "2020-03-01-newest-real.md"):
+# Each real record gets its own recent mtime, a minute apart and oldest first (their NAMES are
+# what date them): Windows CI (Python 3.8) stamped all three
+# writes alike, and `keep_the_newest` then spared whichever tied file came first, not the newest.
+for _t_i46, _t_name46 in enumerate(("2020-01-01-old.md", "2020-02-01-older.md", "2020-03-01-newest-real.md")):
     (_t_dir46 / _t_name46).write_text("# x\n\nbody\n", encoding="utf-8")
+    _t_at46 = time.time() - 300 + 60 * _t_i46
+    os.utime(_t_dir46 / _t_name46, (_t_at46, _t_at46))
 _t_typo46 = _t_dir46 / "2099-01-01-typo.md"
 _t_typo46.write_text("# x\n\nbody\n", encoding="utf-8")
 # Its mtime is aged as well, or the fixture proves nothing: a file created a second ago survives on
