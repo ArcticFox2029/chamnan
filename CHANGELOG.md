@@ -21,6 +21,8 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The measure page's small warning tag is readable.** Its orange text on the pale orange tag measured
+  4.33:1, under the 4.5:1 WCAG asks of text that size; the light theme's warning colour is a shade darker.
 - **A generated Python file full of f-strings no longer stalls the map for minutes.** On Python 3.12+
   parsing is quadratic in the number of f-strings: a 1.47 MB module took 134 s, inside both of chamnan's
   size limits, and the map runs from the git hook. A file with more than 5,000 f-strings is now listed
