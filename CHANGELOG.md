@@ -21,6 +21,7 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Token counts are no longer redacted, and a redacted JSON value keeps its comma.** A plain integer after a key ending in `tokens` (`output_tokens`, `max_tokens`) is a count and is left alone, and `"total_tokens": 88123, "model"` no longer loses the comma when a value beside it is redacted.
 - **On Windows, a failing chamnan command now fails through its `.cmd` shim.** The shim read the exit code before the script ran, so it always returned 0 on machines with the py launcher installed.
 - **Files with non-English or unusual names are named correctly in the hand-off line, dependency history and drift checks.** A committed file with a tab or a double quote in its name showed as git's quoted spelling in "Last edited", and a manifest path holding a quote could not be read back for the removed-package check.
 - **A lock left by a crashed process is recovered even after the clock moves back.** A lock file dated in

@@ -199,6 +199,10 @@ def _is_a_plain_word(value):
 
 
 _ONLY_STRUCTURE = _lazy(lambda: re.compile(r"[}\]\s,;]*"))
+# A comma that ends a JSON value: the last character of the run, or the one before the next quoted
+# key (`{"pin":123456,"next":1}`). A comma inside a value (`abcdef,Tr0ub4dor`) is not either, so
+# that whole run is still redacted.
+_JSON_COMMA_TAIL = _lazy(lambda: re.compile(r',(?:$|(?="[\w.-]+"\s*:))'))
 
 
 def _structure_the_value_did_not_open(match, value):
@@ -222,6 +226,13 @@ def _structure_the_value_did_not_open(match, value):
     from that point on is closers, commas, semicolons and space. `password=abc}def` still goes
     whole, because `}def` may be the rest of a credential rather than the rest of a line.
     """
+    # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) A JSON comma is structure, not part of the value:
+    # `"total_tokens": 88123, "model": "x"` came back as `<REDACTED> "model": "x"`. Every rule that
+    # reaches this helper takes a bare `\S` run, so the comma rides along; it is given back here,
+    # once, for all four of them (copula, spaced, flag, bare), before the bracket test below.
+    comma = _JSON_COMMA_TAIL.search(value)
+    if comma and comma.start() > 0:
+        return value[comma.start():]
     prefix = match.string[match.string.rfind("\n", 0, match.start()) + 1:match.start()]
     if not (prefix.count("{") > prefix.count("}") or prefix.count("[") > prefix.count("]")):
         return ""
@@ -236,6 +247,15 @@ def _structure_the_value_did_not_open(match, value):
             tail = value[i:]
             return tail if _ONLY_STRUCTURE.fullmatch(tail) else ""
     return ""
+
+
+_TOKENS_KEY = _lazy(lambda: re.compile(r"tokens['\"]?\s*(?::|=)\s*(?:[A-Za-z_][\w.]*\s*=\s*)?$", re.I))
+_PLAIN_COUNT = _lazy(lambda: re.compile(r"[0-9]{1,12}(?:,|[}\]]+,?)?"))
+
+
+def _is_a_token_count(key_part, value):
+    """True for `<name>tokens = <1-12 plain digits>`: a usage count, never a credential."""
+    return bool(_TOKENS_KEY.search(key_part.rstrip()) and _PLAIN_COUNT.fullmatch(value))
 
 
 def _is_a_type_annotation(match):
@@ -2114,7 +2134,11 @@ def _value_is_the_key_itself(key_part, value):
 # than `key:` -- an assignment is somebody else's rule and this one must not shadow it.
 DELIMITED_AFTER_SECRET_WORD = _lazy(lambda: re.compile(
     r"(?<![A-Za-z0-9])(?:" + SECRET_WORDS.replace("[_-]", "[\\s_-]") + r")"
-    r"(?![^\s`\"'=:]*[=:])"
+    # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) The closing quote of a JSON key stood between the
+    # word and its `:`, so this lookahead missed the assignment and took `":hunter2xyz,"` (the key's
+    # closing quote to the next key's opening quote) as a quoted value, eating the `:` and the comma.
+    # One optional quote is allowed before the separator so the assignment rules own that shape.
+    r"(?![^\s`\"'=:]*[`\"']?[=:])"
     r"(?P<gap>[^`\"'\r\n=]{0,40}?)"
     r"(?P<q>[`\"'])(?P<value>[^`\"'\r\n]{6,200})(?P=q)",
     re.I))
@@ -3198,6 +3222,11 @@ def scrub(text, windowed=True, *, _unmask=True):
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         or _names_where_it_lives(m.group(2))
         or _is_a_code_reference(m)
+        # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) A count is not a credential: `output_tokens:
+        # 1234567` reached the five-digit floor and was redacted. Narrow on purpose -- the key must
+        # END in the plural `tokens` and the value must be plain digits; `token`, `password` and
+        # `pin` keep their current behaviour.
+        or _is_a_token_count(m.group(1), m.group(2))
         # The tail is appended only when the whole value became a PLACEHOLDER. When
         # `_redact_literals_in` rewrites the value instead, what it returns already CONTAINS that
         # tail -- appending it again duplicated the bracket, which the same idempotence relation
