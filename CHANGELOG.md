@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Editing a manifest with a long history no longer stalls.** Before every edit of a
+  requirements.txt, package.json or similar, chamnan checks whether a removed package is coming
+  back, and it read each past revision with its own git process — twice. A 200-revision
+  requirements.txt held each edit for about 19 s; one batched read now takes 0.15 s, with the same
+  answer.
 - **A licence line no longer hides the description written under it.** When a copyright or SPDX
   line and the file's description shared one comment block, the file got no summary and was
   counted as undescribed. The lines after the licence are now used — only when no later comment

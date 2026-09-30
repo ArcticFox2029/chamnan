@@ -261,6 +261,36 @@ def _run(root, args):
     return r.stdout if r.returncode == 0 else ""
 
 
+def _blobs(root, specs):
+    """{spec: text} for "<rev>:<path>" specs, all read through ONE `git cat-file --batch` process."""
+    if not ws.git_can_speak_for(root):
+        return {}
+    specs = list(specs)
+    try:
+        argv = ["git", "-C", str(root), "-c", "core.quotePath=false", "cat-file", "--batch"]
+        r = subprocess.run(argv, input=("\n".join(specs) + "\n").encode("utf-8"),
+                           capture_output=True, timeout=20)
+    except ws.git_cannot_answer():
+        return {}
+    out = {spec: "" for spec in specs}
+    if r.returncode != 0:
+        return out
+    data, pos = r.stdout, 0
+    for spec in specs:
+        nl = data.find(b"\n", pos)
+        if nl < 0:
+            break
+        header = data[pos:nl].split()
+        pos = nl + 1
+        if len(header) == 3 and header[1] == b"blob" and header[2].isdigit():
+            size = int(header[2])
+            if pos + size > len(data):
+                break  # truncated stream: leave this and the remaining specs as ""
+            out[spec] = data[pos:pos + size].decode("utf-8", errors="replace")
+            pos += size + 1
+    return out
+
+
 def added_back(root, rel, current, new):
     """{package: (subject, date)} for packages `new` adds to manifest `rel` that it once listed and removed.
 
@@ -302,9 +332,14 @@ def removals(root, window=WINDOW, manifests=None):
                 revs.append(head.split("\t", 2) + [path])
         if len(revs) < 2:
             continue
+        # 🐛 [2026-09-30] (R192 acc4, 2026-09-30) It ran one `git show` per revision and read each
+        # revision twice (once as `newer`, once as `older`): 19.99 s before a manifest edit on a
+        # 200-revision fixture. One batch process reads them all. `GIT_NO_LAZY_FETCH` (set in
+        # workspace.py) still applies, so a blobless clone fetches nothing.
+        texts = _blobs(root, [f"{r[0]}:{r[3]}" for r in revs])
         for newer, older in zip(revs, revs[1:]):
-            after = names(_run(root, ["show", f"{newer[0]}:{newer[3]}"]), manifest)
-            before = names(_run(root, ["show", f"{older[0]}:{older[3]}"]), manifest)
+            after = names(texts.get(f"{newer[0]}:{newer[3]}", ""), manifest)
+            before = names(texts.get(f"{older[0]}:{older[3]}", ""), manifest)
             # Both sides must be readable. An empty `after` is what a deleted or renamed manifest
             # looks like, and calling every package in it removed on that commit is the same
             # mistake as reading `-` lines.
