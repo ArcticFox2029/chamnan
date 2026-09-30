@@ -8,11 +8,14 @@ rem same base name, is found through PATHEXT, and hands the script to the Python
 rem
 rem `py -3` first because that is what the python.org installer puts on PATH and it selects the
 rem newest 3.x; `python` second, for a Microsoft Store or conda install that ships no launcher.
+rem
+rem A goto and not an if-block: cmd expands %errorlevel% while parsing a whole parenthesised block,
+rem so inside one it would still hold the result of `where` and hide the script's exit code.
 setlocal
 where py >nul 2>nul
-if not errorlevel 1 (
-    py -3 "%~dp0chamnan_bulk_read_notice.py" %*
-    exit /b %errorlevel%
-)
+if errorlevel 1 goto :nopy
+py -3 "%~dp0chamnan_bulk_read_notice.py" %*
+exit /b %errorlevel%
+:nopy
 python "%~dp0chamnan_bulk_read_notice.py" %*
 exit /b %errorlevel%

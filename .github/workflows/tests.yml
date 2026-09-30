@@ -127,6 +127,9 @@ jobs:
           python install\make_windows_shims.py --check
           bin\chamnan-map.cmd --help
           bin\chamnan-context.cmd --detect .
+          rem R117: a failing exit code must survive the shim (no arguments -> argparse usage, exit 2)
+          call bin\chamnan-gotcha.cmd
+          if not errorlevel 2 exit /b 1
 
       - name: ...and the same entry points under the interpreter this matrix leg pinned
         if: runner.os == 'Windows'
