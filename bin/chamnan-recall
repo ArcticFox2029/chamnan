@@ -167,8 +167,15 @@ def main(argv):
     else:
         print(f"chamnan: {len(hits)} of {index.get('count', 0)} stored entr(ies) match "
               f"{mdblock.as_quoted(' '.join(words), 60)} — read before you rebuild.\n")
+        # 🐛 [2026-10-01] (R189 acc4, 2026-09-30) `query()` stopped scoring the index's derived
+        # stop words, but this line still named them: `recipe for banana bread` explained a hit on
+        # `bread` as "matched for, bread in the title". Named only when nothing else was asked.
+        _raw189 = index.get("ignored")
+        _common189 = {t for t in _raw189 if isinstance(t, str)} if isinstance(_raw189, list) else set()
+        _named189 = [w.lower() for w in words if w.lower() not in _common189] \
+            or [w.lower() for w in words]
         for _score, entry, why in hits:
-            line = recall.why_line(entry, why, [w.lower() for w in words], words)
+            line = recall.why_line(entry, why, _named189, words)
             print(f"  {KIND_LABEL.get(entry['kind'], entry['kind']):8} "
                   f"{mdblock.as_quoted(entry['path'], 70)}")
             if entry.get("blurb"):

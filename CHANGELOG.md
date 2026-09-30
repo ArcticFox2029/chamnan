@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Automatic recall stops offering notes that match only common words.** Words most of your notes
+  share (`for`, `the`, `file`) were dropped from note bodies but still scored in titles — and scored
+  highest of all. In one working session a fifth of the entries the pointer injected matched
+  nothing else. They are now left out of the query (a query of nothing but such words still
+  answers), and known-item search improved: MRR 0.631 → 0.656 on body words, 0.727 → 0.780 on
+  title words.
 - **A Python file chamnan cannot parse keeps its summary and its names.** A file over the f-string
   limit (quadratic to parse on Python 3.12+), a Python 2 file or newer syntax on an older Python
   used to reach the map with at most a `#` comment. Its module docstring and top-level functions,
