@@ -26352,6 +26352,7 @@ try:
             _pc.unlink(missing_ok=True)
         else:
             _pc.write_text(_body, encoding="utf-8")
+            _pc.chmod(0o755)   # a real install is executable (R136: a hook git will not run is stale)
         _want = _name == "current"
         if _ss.rebuild_hook_installed(_d_09) is not _want:
             _wrong.append(f"{_name}: said {_ss.rebuild_hook_installed(_d_09)}, wanted {_want}")
@@ -26360,6 +26361,7 @@ try:
 
     # The two answers must agree — that they did not is the whole defect.
     _pc.write_text(_tmpl, encoding="utf-8")
+    _pc.chmod(0o755)   # a real install is executable (R136: a hook git will not run is stale)
     check("...and rebuild_hook_installed agrees with git_hook_state on the same file",
           _ss.rebuild_hook_installed(_d_09) is (ws.git_hook_state(_d_09, _tmpl) == "installed"))
 finally:
@@ -41416,11 +41418,14 @@ elif _t_sh282:
 # on the dark panels and 2.40:1 on the light ones, and the light theme inherited the dark warm
 # (note text, 2.63:1) and accent (the active tab and a focused field, 2.48:1). WCAG AA asks 4.5:1
 # of text this size and 3:1 of an indicator a person needs to see.
+# 🐛 [2026-09-30] (R74 acc2, 2026-09-30) The token checks never paired a text colour with the tinted
+# background of its own rule, so .simtag (--warn on --warn-soft, 4.33:1) passed; rule pairs are now derived too.
 # The set is derived from the stylesheet: every token a `color:` uses, and every token an SVG
 # `fill:` uses in a rule that sets a font, checked against every panel colour of each theme.
 import re as _re283                                                                 # noqa: E402
 
 _t_css283 = (ROOT / "statistic" / "report" / "app.css").read_text(encoding="utf-8")
+_t_dashcss283 = _t_css283
 
 
 def _t_block283(selector):
@@ -41486,6 +41491,43 @@ _t_slow283 = ["%s --%s on --%s: %.2f" % (_t_th283, _t_fg283, _t_bg283, _t_ratio2
               if _t_ratio283(_t_tk283[_t_fg283], _t_tk283[_t_bg283]) < 4.5]
 check("THE MEASURE PAGE'S TEXT COLOURS REACH 4.5:1 IN BOTH THEMES — %d token(s)" % len(_t_stext283),
       len(_t_stext283) >= 3 and _t_slow283 == [], saw=(sorted(_t_stext283), _t_slow283[:6]))
+
+
+# Pairs derived per rule: every rule body that sets both a text colour and a background token.
+def _t_pairs283(css):
+    _out = set()
+    for _body in _re283.findall(r"\{([^}]*)\}", css):
+        _f = _re283.findall(r"(?<![-\w])color\s*:\s*var\(--([a-z0-9-]+)\)", _body)
+        _b = _re283.findall(r"background(?:-color)?\s*:\s*var\(--([a-z0-9-]+)\)", _body)
+        _out |= {(x, y) for x in _f for y in _b}
+    return _out
+
+
+def _t_hblock283(css, selector):
+    # Same as _t_block283 but token names may contain a hyphen (--warn-soft).
+    _m = _re283.search(_re283.escape(selector) + r"\s*\{([^}]*)\}", css)
+    return dict(_re283.findall(r"--([a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,6})\b", _m.group(1))) if _m else {}
+
+
+_t_dh283 = _t_hblock283(_t_dashcss283, ":root")
+_t_dlh283 = dict(_t_dh283, **_t_hblock283(_t_dashcss283, ':root[data-theme="light"]'))
+_t_slh283 = _t_hblock283(_t_site283, ":root")
+_t_sdh283 = dict(_t_slh283, **_t_hblock283(_t_site283, ':root[data-theme="dark"]'))
+_t_dpairs283 = _t_pairs283(_t_dashcss283)
+_t_spairs283 = _t_pairs283(_t_site283)
+_t_plow283 = []
+for _t_pg283, _t_pp283, _t_pt283 in (("dashboard", _t_dpairs283, (("dark", _t_dh283), ("light", _t_dlh283))),
+                                     ("site", _t_spairs283, (("light", _t_slh283), ("dark", _t_sdh283)))):
+    for _t_th283, _t_tk283 in _t_pt283:
+        for _t_x283, _t_y283 in sorted(_t_pp283):
+            if _t_x283 in _t_tk283 and _t_y283 in _t_tk283:
+                _t_r283 = _t_ratio283(_t_tk283[_t_x283], _t_tk283[_t_y283])
+                if _t_r283 < 4.5:
+                    _t_plow283.append("%s %s --%s on --%s: %.2f" % (_t_pg283, _t_th283, _t_x283, _t_y283, _t_r283))
+check("EVERY RULE'S TEXT COLOUR REACHES 4.5:1 ON ITS OWN BACKGROUND, IN BOTH THEMES ON BOTH PAGES",
+      _t_plow283 == [], saw=_t_plow283[:6])
+check("THE RULE-PAIR POPULATION IS NOT EMPTY FOR THE MEASURE PAGE AND HOLDS .simtag — %d pair(s)" % len(_t_spairs283),
+      ("warn", "warn-soft") in _t_spairs283, saw=sorted(_t_spairs283))
 # ---- 284_a_dashboard_chart_works_without_a_mouse.py
 # ------------------ a dashboard chart can be used without a mouse and read without eyes
 # 🐛 [2026-09-25] (R141, 2026-09-25) The accessibility audits in that round found interactive charts
@@ -46125,6 +46167,320 @@ _undeclared346 = sorted("%s (read in %s)" % (k, v) for k, v in _found346.items()
                         if k not in _ws346.DEFAULT_CONFIG)
 check("EVERY CONFIG KEY THE CODE READS IS DECLARED IN DEFAULT_CONFIG, SO SETTING IT TAKES EFFECT",
       not _undeclared346, saw=_undeclared346)
+# ---- 347_a_planted_symlink_at_the_staging_name_is_not_followed.py
+# ------------------ a planted symlink at the staging name is not followed
+# 🐛 [2026-09-29] (R36 acc4, 2026-09-29) `atomic_write_text` staged to
+# `dest.with_name(f"{dest.name}.{os.getpid()}.tmp")` and opened it with `tmp.open("w", ...)`,
+# which follows a symlink. With a symlink PRE-PLANTED at that exact staging name, pointing at a
+# file outside the destination directory, the write landed INSIDE the pointed-at file, and the
+# following `os.replace(tmp, dest)` then moved the symlink itself over `dest` -- so `dest` became
+# a symlink to the outside file and the outside file carried content nobody asked to put there.
+# Reproduced live before the fix; this pins the fix and the ordinary write path beside it.
+import importlib as _im347
+import os as _os347
+import shutil as _sh347
+import tempfile as _tf347
+from pathlib import Path as _P347
+
+_ws347 = _im347.import_module("workspace")
+
+_t_top347 = _P347(_tf347.mkdtemp(prefix="chamnan-symlinkstage-"))
+try:
+    _t_outside347 = _t_top347 / "outside"
+    _t_outside347.mkdir()
+    _t_victim347 = _t_outside347 / "victim.txt"
+    _t_original347 = "ORIGINAL VICTIM CONTENT\n"
+    _t_victim347.write_text(_t_original347, encoding="utf-8")
+
+    _t_destdir347 = _t_top347 / "workspace"
+    _t_destdir347.mkdir()
+    _t_dest347 = _t_destdir347 / "store.md"
+    # Same computation atomic_write_text uses internally -- the staging name is per-process, not
+    # per-call, so this is the exact path a planted attacker would have to guess (the PID, which
+    # is visible to anything already running as the same user).
+    _t_tmp347 = _t_dest347.with_name("%s.%d.tmp" % (_t_dest347.name, _os347.getpid()))
+
+    try:
+        _os347.symlink(_t_victim347, _t_tmp347)
+        _t_links347 = True
+    except (OSError, NotImplementedError):
+        _t_links347 = False
+        skip("  [SKIP] a planted symlink at the staging name — this platform will not create one")
+
+    if _t_links347:
+        _t_ok347 = _ws347.atomic_write_text(_t_dest347, "new")
+
+        check("atomic_write_text reports success against a planted symlink",
+              bool(_t_ok347), saw=_t_ok347)
+        check("THE VICTIM FILE OUTSIDE THE DESTINATION DIRECTORY IS UNTOUCHED",
+              _t_victim347.read_text(encoding="utf-8") == _t_original347,
+              saw=_t_victim347.read_text(encoding="utf-8") if _t_victim347.is_file() else "<GONE>")
+        check("DEST IS A REGULAR FILE HOLDING THE NEW CONTENT, NOT A SYMLINK TO THE VICTIM",
+              _t_dest347.is_file() and not _t_dest347.is_symlink()
+              and _t_dest347.read_text(encoding="utf-8") == "new",
+              saw="is_symlink=%s content=%r"
+                  % (_t_dest347.is_symlink(),
+                     _t_dest347.read_text(encoding="utf-8") if _t_dest347.is_file() else "<GONE>"))
+        check("no staging file survives a successful write",
+              not any(".tmp" in p.name for p in _t_destdir347.iterdir() if p != _t_dest347),
+              saw=[p.name for p in _t_destdir347.iterdir()])
+
+    # ---- the ordinary path (no plant) still works, and leaves no staging file behind ----
+    _t_dest2_347 = _t_destdir347 / "plain.md"
+    _t_ok2_347 = _ws347.atomic_write_text(_t_dest2_347, "ordinary\n")
+    check("an ordinary write with nothing planted still succeeds",
+          bool(_t_ok2_347) and _t_dest2_347.is_file()
+          and _t_dest2_347.read_text(encoding="utf-8") == "ordinary\n",
+          saw=_t_ok2_347)
+    check("...and leaves no .tmp staging file behind",
+          not any(".tmp" in p.name for p in _t_destdir347.iterdir()),
+          saw=[p.name for p in _t_destdir347.iterdir()])
+
+    # ---- the created file's mode matches what plain open("w") produces under this umask ----
+    _t_refdir347 = _t_top347 / "modecheck"
+    _t_refdir347.mkdir()
+    _t_ref347 = _t_refdir347 / "ref.txt"
+    with open(_t_ref347, "w", encoding="utf-8") as _fh347:
+        _fh347.write("x")
+    _t_wantmode347 = _os347.stat(_t_ref347).st_mode & 0o7777
+    _t_gotmode347 = _os347.stat(_t_dest2_347).st_mode & 0o7777
+    check("THE STAGED FILE'S MODE MATCHES WHAT open(\"w\") PRODUCES UNDER THE CURRENT UMASK",
+          _t_gotmode347 == _t_wantmode347,
+          saw="got %o want %o" % (_t_gotmode347, _t_wantmode347))
+finally:
+    _sh347.rmtree(_t_top347, ignore_errors=True)
+# ---- 348_a_deleted_working_directory_gets_a_sentence_not_a_traceback.py
+# ------------------ a deleted working directory gets a sentence, not a traceback
+# 🐛 [2026-09-29] (R47 acc5, 2026-09-29) Run from a working directory removed out from under it
+# (`cd` into a directory, `rmdir` it, then run a command) ten `bin/` commands died with a bare
+# `FileNotFoundError: [Errno 2]` -- nine of them at the `os.getcwd()` inside `find_root`,
+# `chamnan-setup` earlier still, building its `--root` default eagerly at `add_argument` time.
+# The fix: `workspace.current_dir()` turns that into `WorkingDirectoryGone`
+# (a `FileNotFoundError` subclass, so every existing `except OSError`/`except Exception` keeps
+# working unchanged), and `_quiet_broken_pipe` -- already the process excepthook for a reader
+# that stops early -- prints one line and exits 1 instead of letting the traceback through.
+#
+# The population is DERIVED, not listed: every extensionless `chamnan-*` file in `bin/` (the
+# `.cmd` files are Windows shims that delegate to these, same convention as check 161), and every
+# hook command `hooks/hooks.json` registers.
+import json as _js348
+import shlex as _sl348
+import shutil as _sh348
+import subprocess as _sp348
+import tempfile as _tf348
+from pathlib import Path as _P348
+
+_BIN348 = ROOT / "bin"
+_CMDS348 = sorted(p for p in _BIN348.iterdir()
+                  if p.is_file() and p.name.startswith("chamnan-")
+                  and not p.suffix and not p.name.startswith("."))
+check("the bin/ population this check runs over is not empty",
+      len(_CMDS348) > 0, saw=len(_CMDS348))
+
+
+def _run_from_a_gone_directory348(argv):
+    """Spawn `argv` after `cd`-ing into a directory and `rmdir`-ing it out from under the process.
+
+    Same shape `os.getcwd()` itself raises on (proven at the top of this investigation): the
+    process starts in a directory, and that directory stops existing before the process reads
+    its own cwd for the first time.
+    """
+    d = _P348(_tf348.mkdtemp(prefix="chamnan-gonecwd-"))
+    script = "cd %s && rmdir %s && exec %s" % (
+        _sl348.quote(str(d)), _sl348.quote(str(d)),
+        " ".join(_sl348.quote(a) for a in argv))
+    try:
+        r = _sp348.run(["bash", "-c", script], stdin=_sp348.DEVNULL, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", timeout=30)
+        return r.returncode, r.stdout, r.stderr
+    except _sp348.SubprocessError as exc:
+        return None, "", "%s: %s" % (type(exc).__name__, exc)
+
+
+_bin_traceback348 = []
+_bin_missing_sentence348 = []
+for _c348 in _CMDS348:
+    _rc348, _out348, _err348 = _run_from_a_gone_directory348([sys.executable, str(_c348)])
+    if "Traceback" in _err348:
+        _bin_traceback348.append("%s -> exit %s: %s"
+                                 % (_c348.name, _rc348, _err348.strip().splitlines()[-1][:140]))
+    # rc == 2 is this package's own convention for "you did not give me the argument I need" --
+    # every one of those commands returns 2 BEFORE ever touching the working directory, so it is
+    # not this defect. rc == 1 is the shape both the fix (current_dir -> the excepthook's one
+    # line) and the untouched bug (a raw traceback, which Python itself exits 1 on) produce --
+    # a command that reaches that branch must show the sentence, whichever of the two it is.
+    elif _rc348 == 1 and "no longer exists" not in _err348:
+        _bin_missing_sentence348.append("%s -> exit %s: %r" % (_c348.name, _rc348, _err348[-160:]))
+
+print("      DETAIL  %d bin/ command(s) probed from a deleted working directory" % len(_CMDS348))
+for _x348 in _bin_traceback348 + _bin_missing_sentence348:
+    print("      DETAIL  %s" % _x348)
+
+check("NO bin/ COMMAND PRINTS A BARE PYTHON TRACEBACK WHEN ITS WORKING DIRECTORY IS GONE",
+      not _bin_traceback348, saw="\n".join(_bin_traceback348) or None)
+check("...and every one that reaches the failing branch (exit 1) says so in one sentence",
+      not _bin_missing_sentence348, saw="\n".join(_bin_missing_sentence348) or None)
+
+# ---- hooks: NOT run from a deleted directory -- the host always gives a hook a real cwd, in the
+# JSON payload if not in the process's own. This half is a plain regression guard: the fix must
+# not have changed how an ordinary hook launch behaves. ----
+_HJ348 = ROOT / "hooks" / "hooks.json"
+check("hooks/hooks.json is where this check finds the hook population", _HJ348.is_file())
+
+
+def _hook_commands348(node):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "command" and isinstance(v, str):
+                yield v
+            else:
+                yield from _hook_commands348(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _hook_commands348(v)
+
+
+_reg348 = _js348.loads(_HJ348.read_text(encoding="utf-8"))
+_hook_argvs348 = []
+for _cmd348 in sorted(set(_hook_commands348(_reg348))):
+    _tok348 = _sl348.split(_cmd348.strip()) or [""]
+    _rel348 = _tok348[0].replace("${CLAUDE_PLUGIN_ROOT}/", "")
+    _p348 = ROOT / _rel348
+    if _p348.is_file():
+        _hook_argvs348.append([sys.executable, str(_p348)] + _tok348[1:])
+check("the hooks.json population this check runs over is not empty",
+      len(_hook_argvs348) > 0, saw=len(_hook_argvs348))
+
+_scratch348 = _P348(_tf348.mkdtemp(prefix="chamnan-hookprobe-"))
+try:
+    _sp348.run(["git", "init", "-q"], cwd=str(_scratch348), capture_output=True, timeout=60)
+    _payload348 = _js348.dumps({"cwd": str(_scratch348), "session_id": "r47-probe",
+                                "hook_event_name": "PreToolUse"})
+
+    _hook_broken348 = []
+    for _argv348 in _hook_argvs348:
+        try:
+            _r348 = _sp348.run(_argv348, cwd=str(_scratch348), input=_payload348,
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=60,
+                               env=dict(os.environ, CHAMNAN_READ_ONLY="1"))
+        except _sp348.SubprocessError as exc:
+            _hook_broken348.append("%s -> raised %r" % (_argv348[1], exc))
+            continue
+        if "Traceback" in _r348.stderr:
+            _hook_broken348.append("%s -> exit %d, Traceback: %s"
+                                   % (_argv348[1], _r348.returncode,
+                                      _r348.stderr.strip().splitlines()[-1][:140]))
+        elif _r348.returncode != 0:
+            _hook_broken348.append("%s -> exit %d: %s"
+                                   % (_argv348[1], _r348.returncode, _r348.stderr.strip()[:140]))
+
+    print("      DETAIL  %d hook command(s) probed with a real scratch repository"
+          % len(_hook_argvs348))
+    for _x348 in _hook_broken348:
+        print("      DETAIL  %s" % _x348)
+    check("EVERY REGISTERED HOOK STILL EXITS 0 WITH NO TRACEBACK ON AN ORDINARY LAUNCH",
+          not _hook_broken348, saw="\n".join(_hook_broken348) or None)
+finally:
+    _sh348.rmtree(_scratch348, ignore_errors=True)
+# ---- 349_the_history_audit_walks_every_branch.py
+# ------------------ the --history audit walks every branch, not only HEAD's ancestry
+# 🐛 [2026-09-29] (R82 acc4, 2026-09-29) `bin/chamnan-guard --history` is the "is anything ALREADY
+# committed" audit, and `_history_diff` ran `git log -p ... -n <limit>` with no ref argument — which
+# walks only HEAD's own ancestry. A credential committed on a branch other than the one checked out
+# was never examined, and the command still printed "nothing credential-shaped in the last 500
+# commit(s)" as if it had looked at everything, when the repository actually had one commit on the
+# current branch. The fix adds `--all` (every branch, tag and remote-tracking ref; git de-duplicates
+# commits reachable from more than one itself) and makes the success line name the number of commits
+# ACTUALLY examined instead of the static ceiling.
+import random as _rn349
+import shutil as _sh349
+import string as _st349
+import subprocess as _sp349
+import sys as _sy349
+import tempfile as _tf349
+from pathlib import Path as _P349
+
+_CMD349 = ROOT / "bin" / "chamnan-guard"
+check("the command exists", _CMD349.is_file(),
+      saw="bin/chamnan-guard is gone — nothing left to run this check over")
+
+if not _CMD349.is_file():
+    skip("  · nothing to exercise")
+else:
+    def _git349(repo, *args):
+        return _sp349.run(["git", "-C", str(repo)] + list(args),
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=60)
+
+    def _run_history349(repo):
+        return _sp349.run([_sy349.executable, str(_CMD349), "--history"], cwd=str(repo),
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", stdin=_sp349.DEVNULL, timeout=60)
+
+    # Built from the scheme at runtime, never written out as a literal — the same rule this
+    # repository already records for a removed phrase: a credential-shaped LITERAL committed in
+    # this tree would be a new hit for chamnan's own redactor self-scan.
+    _rng349 = _rn349.Random(20260929)
+    _alpha349 = _st349.ascii_letters + _st349.digits
+    _secret349 = "".join(_rng349.choice(_alpha349) for _ in range(40))
+    _line349 = "SERVICE_TOKEN=%s" % _secret349
+
+    # --- repo 1: the secret sits on a branch that is NOT checked out when the audit runs.
+    _repo1_349 = _P349(_tf349.mkdtemp(prefix="chamnan-hist349-multi-"))
+    try:
+        _git349(_repo1_349, "init", "-q", "-b", "main")
+        _git349(_repo1_349, "config", "user.email", "t@t")
+        _git349(_repo1_349, "config", "user.name", "t")
+        (_repo1_349 / "README.md").write_text("hello\n", encoding="utf-8")
+        _git349(_repo1_349, "add", "-A")
+        _git349(_repo1_349, "commit", "-qm", "init")
+
+        _git349(_repo1_349, "checkout", "-q", "-b", "side")
+        (_repo1_349 / "side.env").write_text(_line349 + "\n", encoding="utf-8")
+        _git349(_repo1_349, "add", "-A")
+        _git349(_repo1_349, "commit", "-qm", "add side secret")
+
+        _git349(_repo1_349, "checkout", "-q", "main")
+
+        _r1_349 = _run_history349(_repo1_349)
+        _said1_349 = _r1_349.stdout + _r1_349.stderr
+        check("NO TRACEBACK auditing a repository with an unmerged side branch",
+              "Traceback" not in _said1_349, saw=_said1_349[-300:])
+        check("A CREDENTIAL COMMITTED ON A BRANCH OTHER THAN THE ONE CHECKED OUT IS FOUND",
+              "side.env" in _said1_349,
+              saw="the finding named nothing on `side.env` — the audit still only walked HEAD's "
+                  "own ancestry: %r" % _said1_349[:300])
+        check("...and the secret VALUE itself is never printed",
+              _secret349 not in _said1_349, saw=repr(_said1_349[:200]))
+    finally:
+        _sh349.rmtree(_repo1_349, ignore_errors=True)
+
+    # --- repo 2: a clean, single-branch history — the success line must name what was actually
+    # examined (2 commits), not the static ceiling (HISTORY_DEFAULT_COMMITS, 500).
+    _repo2_349 = _P349(_tf349.mkdtemp(prefix="chamnan-hist349-clean-"))
+    try:
+        _git349(_repo2_349, "init", "-q", "-b", "main")
+        _git349(_repo2_349, "config", "user.email", "t@t")
+        _git349(_repo2_349, "config", "user.name", "t")
+        (_repo2_349 / "a.txt").write_text("one\n", encoding="utf-8")
+        _git349(_repo2_349, "add", "-A")
+        _git349(_repo2_349, "commit", "-qm", "one")
+        (_repo2_349 / "b.txt").write_text("two\n", encoding="utf-8")
+        _git349(_repo2_349, "add", "-A")
+        _git349(_repo2_349, "commit", "-qm", "two")
+
+        _r2_349 = _run_history349(_repo2_349)
+        _said2_349 = _r2_349.stdout + _r2_349.stderr
+        check("NO TRACEBACK auditing a clean two-commit repository", "Traceback" not in _said2_349,
+              saw=_said2_349[-300:])
+        check("THE SUCCESS LINE NAMES COMMITS ACTUALLY EXAMINED (2), NOT THE CEILING (500)",
+              "2 commit(s)" in _said2_349 and "500 commit(s)" not in _said2_349,
+              saw=repr(_said2_349[:200]))
+        check("...and exits 0 — the audit still warns rather than blocking a clean history",
+              _r2_349.returncode == 0, saw="exit %d" % _r2_349.returncode)
+    finally:
+        _sh349.rmtree(_repo2_349, ignore_errors=True)
 # ---- 34_one_lookalike_letter_does_not_defeat_every_rule.py
 # ------------------------------------------- one Cyrillic letter turns every rule off at once
 # 🐛 [2026-09-09] `SECRET_WORDS` is a plain ASCII alternation, so ONE non-Latin look-alike in a key
@@ -46185,6 +46541,574 @@ _t_ascii34 = [_k for _k in ("password", "secret", "api_key", "auth_token")
               if "S3cr3tRealValue123" in redact.scrub(_k + ' = "S3cr3tRealValue123"')]
 check("...and the ordinary ASCII spelling still redacts",
       not _t_ascii34, saw=", ".join(_t_ascii34) or None)
+# ---- 350_the_redactor_scans_one_text_for_secret_words_once.py
+# ------------------ the redactor scans one text for secret words once, not once per pass
+# 🎯 [2026-09-29] (R101 acc4, 2026-09-29) `scrub()` on a 543 KB file called `_secret_word_hits` 4
+# times on ONE distinct text (3.1 s, ~2.3 s of it repeated), and the invisible-codepoint pre-check
+# walked every character (1.0 s). A one-entry memo and a `set(text)` pre-check fix both; output must
+# not move. No key-shaped literal here: the credential value is built at runtime.
+import importlib as _im350
+import random as _rnd350
+
+_r350 = _im350.import_module("redact")
+_rng350 = _rnd350.Random(350)
+_words350 = ["alpha", "beta", "gamma", "delta", "signal", "harbor", "window", "table", "green"]
+_prose350 = " ".join(_rng350.choice(_words350) for _ in range(9000))
+
+_calls350 = []
+_orig350 = _r350._secret_word_hits_uncached
+def _counting350(t):
+    _calls350.append(len(t))
+    return _orig350(t)
+
+try:
+    _r350._secret_word_hits_uncached = _counting350
+    _r350._LAST_STEM_HITS = (None, None)
+    _r350.scrub(_prose350)
+    _n350 = len(_calls350)
+finally:
+    _r350._secret_word_hits_uncached = _orig350
+check("scrub() computes the secret-word hits ONCE for one distinct ~50 KB text",
+      len(_prose350) > 40000 and _n350 == 1, saw=(len(_prose350), _calls350))
+
+_t350 = "the password is here, api_key next, a token too, and secret plus client_secret. " * 5
+_ref350 = [(m.start(), m.end()) for m in _r350._SECRET_WORD_ANYWHERE.finditer(_t350)]
+_r350._LAST_STEM_HITS = (None, None)
+_a350 = [(h.start(), h.end()) for h in _r350._secret_word_hits(_t350)]
+_t350b = "".join(list(_t350))
+_b350 = [(h.start(), h.end()) for h in _r350._secret_word_hits(_t350b)]
+check("an equal-but-distinct string gets the same hits, equal to a plain finditer",
+      len(_ref350) >= 5 and _a350 == _b350 == _ref350, saw=(_ref350[:5], _a350[:5], _b350[:5]))
+
+_first350 = _r350._secret_word_hits(_t350)
+_first350.clear()
+_again350 = [(h.start(), h.end()) for h in _r350._secret_word_hits(_t350)]
+check("mutating the returned list does not poison the next call",
+      _again350 == _ref350, saw=(len(_again350), len(_ref350)))
+
+_val350 = "".join(_rng350.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(24))
+_out350 = _r350.scrub("pass" + chr(0x200B) + "word = " + _val350)
+check("a ZWSP-split credential word is still rewritten, the value is absent from the output",
+      _val350 not in _out350, saw=_out350)
+# ---- 351_an_env_shebang_with_options_keeps_its_language.py
+# ------------------ an `env` shebang that carries its own options keeps its language
+# 🐛 [2026-09-29] (R103 acc4, 2026-09-29) `mapper._lang_from_shebang` skipped only the words `env`
+# and `-S`, so an `env` with its own options read one of them as the interpreter and the file lost
+# its language in the map: `env -S PYTHONPATH=lib python3`, `env -iS python3`, `env -u HOME python3`
+# and `env PYTHONDONTWRITEBYTECODE=1 python3` all gave None. Nothing failed; the file was simply
+# absent from the per-language listing.
+#
+# One population: the four fixed shapes and the seven that already worked, every wrong one reported.
+import importlib as _im351
+import tempfile as _tf351
+from pathlib import Path as _P351
+
+_mapper351 = _im351.import_module("mapper")
+_CASES351 = [
+    ("#!/usr/bin/env -S PYTHONPATH=lib python3", "py"),
+    ("#!/usr/bin/env -iS python3", "py"),
+    ("#!/usr/bin/env -u HOME python3", "py"),
+    ("#!/usr/bin/env PYTHONDONTWRITEBYTECODE=1 python3", "py"),
+    ("#!/usr/bin/env python3", "py"),
+    ("#!/usr/bin/env -S python3 -u", "py"),
+    ("#!/usr/bin/env -S node --no-warnings", "js"),
+    ("#!/usr/bin/python3 -I", "py"),
+    ("#! /bin/bash", "sh"),
+    ("#!/usr/bin/env -S bash -euo pipefail", "sh"),
+    ("#!/bin/sh -e", "sh"),
+]
+_dir351 = _P351(_tf351.mkdtemp(dir=str(ROOT.parent.parent / ".chamnan" / "logs")))
+_wrong351 = []
+for _i351, (_line351, _want351) in enumerate(_CASES351):
+    _p351 = _dir351 / ("probe%d" % _i351)
+    _p351.write_text(_line351 + "\nprint(1)\n", encoding="utf-8")
+    _got351 = _mapper351._lang_from_shebang(_p351)
+    if _got351 != _want351:
+        _wrong351.append("%r -> %r (want %r)" % (_line351, _got351, _want351))
+check("AN ENV SHEBANG WITH OPTIONS OR ASSIGNMENTS KEEPS ITS LANGUAGE, AND THE PLAIN ONES STILL DO",
+      not _wrong351, saw=_wrong351)
+import shutil as _sh351
+_sh351.rmtree(_dir351, ignore_errors=True)
+# ---- 352_the_session_start_filters_the_tree_once.py
+# ------------------ the session-start hook filters the tree once per session, and only in one
+# 🎯 [2026-09-29] (R104 acc4, 2026-09-29) `index_is_behind` and `unindexed` each re-ran
+# `mapper.indexable`'s per-file filtering over the same cached listing (0.8 s + 0.5 s on 816 files).
+# `_indexable` is now memoised through `tree.session_memo`. The memo must not outlive a session: a
+# caller that lists, writes a file and lists again outside one has to see the file.
+import importlib.util as _ilu352
+import subprocess as _sp352
+import tempfile as _tf352
+import shutil as _sh352
+from pathlib import Path as _P352
+
+_spec352 = _ilu352.spec_from_file_location("_ss_hook_352", ROOT / "hooks" / "chamnan_session_start.py")
+_hook352 = _ilu352.module_from_spec(_spec352)
+_spec352.loader.exec_module(_hook352)
+import mapper as _mapper352
+import tree as _tree352
+
+_dir352 = _P352(_tf352.mkdtemp(prefix="chamnan-check352-"))
+_real352 = _mapper352.indexable
+_calls352 = [0]
+
+
+def _counting352(*a, **k):
+    _calls352[0] += 1
+    return _real352(*a, **k)
+
+
+try:
+    _sp352.run(["git", "init", "-q", str(_dir352)], check=True)
+    for _n352 in ("a.py", "b.py", "c.py"):
+        (_dir352 / _n352).write_text("x = 1\n", encoding="utf-8")
+    _mapper352.indexable = _counting352
+
+    _calls352[0] = 0
+    with _tree352.session():
+        _l1 = list(_hook352._indexable(_dir352))
+        _l2 = list(_hook352._indexable(_dir352))
+    check("INSIDE ONE SESSION THE FILTERING RUNS ONCE AND BOTH LISTS AGREE",
+          _calls352[0] == 1 and _l1 == _l2 and len(_l1) == 3,
+          saw=(_calls352[0], len(_l1), len(_l2)))
+
+    _calls352[0] = 0
+    _o1 = list(_hook352._indexable(_dir352))
+    (_dir352 / "d.py").write_text("x = 2\n", encoding="utf-8")
+    _o2 = list(_hook352._indexable(_dir352))
+    check("OUTSIDE A SESSION A FILE CREATED BETWEEN TWO CALLS IS SEEN BY THE SECOND",
+          len(_o2) == len(_o1) + 1 and _calls352[0] == 2 and any(str(p).endswith("d.py") for p in _o2),
+          saw=(len(_o1), len(_o2), _calls352[0]))
+
+    _calls352[0] = 0
+    with _tree352.session():
+        list(_hook352._indexable(_dir352))
+    with _tree352.session():
+        _s2 = list(_hook352._indexable(_dir352))
+    check("A NEW SESSION COMPUTES FRESH, THE MEMO DOES NOT SURVIVE THE ONE BEFORE",
+          _calls352[0] == 2 and len(_s2) == 4, saw=(_calls352[0], len(_s2)))
+finally:
+    _mapper352.indexable = _real352
+    _sh352.rmtree(_dir352, ignore_errors=True)
+# ---- 353_two_corrupt_copies_in_one_second_are_both_kept.py
+# ------------------ two corrupt copies kept in the same second are both kept
+# 🐛 [2026-09-29] (R109 acc2, 2026-09-29) `_quarantine` and `preserve_before_rewrite` named the kept
+# copy `<name>.corrupt.<YYYYmmddTHHMMSS>` and REPLACED an existing file, so two copies in one second
+# overwrote each other: `x.json` as `{bad 1`, loaded with quarantine=True, then `{bad 2`, loaded
+# again, left one `.corrupt.` file holding `{bad 2`. Asserted over both functions, not one.
+import importlib.util as _ilu353
+import subprocess as _sp353
+import tempfile as _tf353
+import shutil as _sh353
+import fnmatch as _fn353
+from pathlib import Path as _P353
+
+_spec353 = _ilu353.spec_from_file_location("_ws_353", ROOT / "lib" / "workspace.py")
+_ws353 = _ilu353.module_from_spec(_spec353)
+_spec353.loader.exec_module(_ws353)
+
+_dir353 = _P353(_tf353.mkdtemp(prefix="chamnan-check353-"))
+
+
+def _kept353(p):
+    return sorted(p.parent.glob(p.name + ".corrupt.*"))
+
+
+try:
+    _sp353.run(["git", "init", "-q", str(_dir353)], check=True)
+    (_dir353 / ".chamnan" / "state").mkdir(parents=True)
+    _st353 = _dir353 / ".chamnan" / "state"
+
+    _p = _st353 / "a.json"
+    for _t in ("{bad 1", "{bad 2", "{bad 3"):
+        _p.write_text(_t, encoding="utf-8")
+        _ws353.load_json(_p, quarantine=True)
+    _k = _kept353(_p)
+    _got = sorted(x.read_text(encoding="utf-8") for x in _k)
+    check("THREE CORRUPT LOADS IN A ROW KEEP THREE DISTINCT COPIES",
+          _got == ["{bad 1", "{bad 2", "{bad 3"], saw=_got)
+
+    _q = _st353 / "b.json"
+    for _t in ("keep 1", "keep 2", "keep 3"):
+        _ws353.preserve_before_rewrite(_q, _t, "test")
+    _got = sorted(x.read_text(encoding="utf-8") for x in _kept353(_q))
+    check("THREE preserve_before_rewrite CALLS IN A ROW KEEP THREE COPIES",
+          _got == ["keep 1", "keep 2", "keep 3"], saw=_got)
+
+    _r = _st353 / "c.json"
+    _r.write_text("{from quarantine", encoding="utf-8")
+    _ws353.load_json(_r, quarantine=True)
+    _ws353.preserve_before_rewrite(_r, "from preserve", "test")
+    _got = sorted(x.read_text(encoding="utf-8") for x in _kept353(_r))
+    check("A QUARANTINE AND A PRESERVE IN THE SAME SECOND KEEP BOTH",
+          _got == ["from preserve", "{from quarantine"], saw=_got)
+
+    _all = [x.name for x in _st353.iterdir() if ".corrupt." in x.name]
+    check("EVERY KEPT NAME STILL MATCHES THE *.corrupt.* GLOB THE DOCTOR USES",
+          len(_all) == 8 and all(_fn353.fnmatch(n, "*.corrupt.*") for n in _all), saw=_all)
+finally:
+    _sh353.rmtree(_dir353, ignore_errors=True)
+# ---- 354_generator_headers_are_recognised_as_generated.py
+# ------------------ real generator headers are recognised as generated
+# 🐛 [2026-09-29] (R113 acc2, 2026-09-29) `mapper.GENERATED_MARKER` missed 2 of 17 real generator
+# headers: the spaced `AUTO GENERATED` form and `machine-generated`. A generated file that slips
+# past the marker is indexed and described as if a person wrote it. Nothing failed; the file was
+# simply counted as source.
+#
+# One population: all 17 headers, every miss reported. A second check keeps ordinary lines out.
+import importlib as _im354
+
+_mapper354 = _im354.import_module("mapper")
+_HEADERS354 = [
+    "// Code generated by protoc-gen-go. DO NOT EDIT.",
+    "# Generated by the protocol buffer compiler.  DO NOT EDIT!",
+    "// This file was automatically generated by json-schema-to-typescript.",
+    "// <auto-generated />",
+    "// <autogenerated>",
+    "# This file is autogenerated by pip-compile with Python 3.12",
+    "// Code generated by OpenAPI Generator (https://openapi-generator.tech); DO NOT EDIT.",
+    "/* Generated by Cython 3.0.0 */",
+    "# Generated by Django 4.2 on 2024-01-01 10:00",
+    "// THIS FILE IS AUTO GENERATED, DO NOT MODIFY",
+    "// This file was generated by SWIG (https://www.swig.org).",
+    "# This file is automatically @generated by Poetry 1.8.2 and should not be changed by hand.",
+    "// This file is machine-generated - edits will be lost",
+    "/** @generated */",
+    "# WARNING: THIS FILE IS AUTOGENERATED. ANY CHANGES WILL BE LOST",
+    "// Automatically generated by Rust bindgen",
+    "-- This file was generated by sqlc. Do not edit.",
+]
+_missed354 = [h for h in _HEADERS354 if not _mapper354.GENERATED_MARKER.search(h)]
+check("EVERY REAL GENERATOR HEADER IS RECOGNISED AS GENERATED (354)", not _missed354, saw=_missed354)
+
+_ORDINARY354 = [
+    "def generate_report(rows):",
+    "# Build the machine learning pipeline.",
+    "x = auto_generate_id()",
+]
+_hit354 = [ln for ln in _ORDINARY354 if _mapper354.GENERATED_MARKER.search(ln)]
+check("ORDINARY LINES ARE NOT TAKEN FOR GENERATOR HEADERS (354)", not _hit354, saw=_hit354)
+# ---- 355_a_windows_replace_waits_out_a_scanner.py
+# ------------------ a Windows replace waits out a scanner holding the destination
+# 🎯 [2026-09-29] (R116 acc2, 2026-09-29) `_replace_with_retry` slept a flat 20 ms x 12, about 0.24 s,
+# then lost the write. It now backs off 20 ms doubling to a 200 ms cap over about one second.
+# Only PermissionError is retried; anything else is raised at once; success pays nothing.
+import importlib.util as _ilu355
+
+_spec355 = _ilu355.spec_from_file_location("_ws_355", ROOT / "lib" / "workspace.py")
+_ws355 = _ilu355.module_from_spec(_spec355)
+_spec355.loader.exec_module(_ws355)
+
+
+def _run355(fail_times, exc=PermissionError):
+    """Call the retry with a scripted os.replace; return (outcome, recorded sleeps)."""
+    sleeps = []
+    calls = [0]
+
+    def _replace(a, b):
+        calls[0] += 1
+        if fail_times is None or calls[0] <= fail_times:
+            raise exc(13, "scripted")
+
+    real_replace, real_sleep = _ws355.os.replace, _ws355.time.sleep
+    _ws355.os.replace = _replace
+    _ws355.time.sleep = lambda s: sleeps.append(s)
+    try:
+        try:
+            _ws355._replace_with_retry("a", "b")
+            out = "returned"
+        except BaseException as e:
+            out = type(e).__name__
+    finally:
+        _ws355.os.replace, _ws355.time.sleep = real_replace, real_sleep
+    return out, sleeps
+
+
+_o, _s = _run355(8)
+check("EIGHT REFUSALS THEN SUCCESS RETURNS NORMALLY", _o == "returned", saw=(_o, _s))
+
+_o, _s = _run355(None)
+check("A REPLACE THAT ALWAYS REFUSES STILL RAISES PermissionError", _o == "PermissionError", saw=_o)
+check("THE FIRST PAUSE IS 20 MS", bool(_s) and _s[0] == 0.02, saw=_s[:3])
+check("NO PAUSE EXCEEDS 200 MS", bool(_s) and max(_s) <= 0.2, saw=max(_s) if _s else None)
+check("THE TOTAL WAIT IS ABOUT A SECOND (0.95 <= sum < 1.25)", 0.95 <= sum(_s) < 1.25, saw=sum(_s))
+
+_o, _s = _run355(1, exc=FileNotFoundError)
+check("A FileNotFoundError IS RAISED AT ONCE WITH NO SLEEP",
+      _o == "FileNotFoundError" and _s == [], saw=(_o, _s))
+
+_o, _s = _run355(0)
+check("A FIRST-TRY SUCCESS RECORDS NO SLEEP", _o == "returned" and _s == [], saw=(_o, _s))
+# ---- 356_a_hook_git_will_not_run_is_not_reported_installed.py
+# ------------------ a hook git will not run is not reported as installed
+# 🎯 [2026-09-29] (R136 acc4, 2026-09-29) `git_hook_state` said "installed" for a chamnan hook whose
+# exec bit was gone, though git silently ignores such a hook. It now says "stale" (POSIX only), and the
+# `--install-git-hook` refresh restores the bit. A foreign hook is never judged: it stays "theirs".
+import importlib.util as _ilu356
+import os as _os356
+import shutil as _shutil356
+import subprocess as _sp356
+import sys as _sys356
+import tempfile as _tf356
+
+_spec356 = _ilu356.spec_from_file_location("_ws_356", ROOT / "lib" / "workspace.py")
+_ws356 = _ilu356.module_from_spec(_spec356)
+_spec356.loader.exec_module(_ws356)
+
+if _ws356._IS_WINDOWS:
+    check("SKIPPED ON WINDOWS: Git for Windows does not use the exec bit", True)
+else:
+    _fx356 = _tf356.mkdtemp(prefix="chamnan-check356-")
+    try:
+        def _sh356(*a):
+            return _sp356.run(list(a), cwd=_fx356, capture_output=True, text=True)
+
+        _sh356("git", "init", "-q")
+        with open(_os356.path.join(_fx356, "a.txt"), "w") as _f356:
+            _f356.write("a\n")
+        _sh356("git", "add", "a.txt")
+        _sh356("git", "-c", "user.name=x", "-c", "user.email=x@x", "commit", "-qm", "i")
+        _os356.makedirs(_os356.path.join(_fx356, ".chamnan"), exist_ok=True)
+        _map356 = str(ROOT / "bin" / "chamnan-map")
+        _hook356 = _os356.path.join(_fx356, ".git", "hooks", "pre-commit")
+        _r356 = _sh356(_sys356.executable, _map356, "--install-git-hook")
+        check("FRESH INSTALL: NO current_body -> installed",
+              _ws356.git_hook_state(_fx356) == "installed",
+              saw=(_ws356.git_hook_state(_fx356), _r356.stdout, _r356.stderr))
+        _os356.chmod(_hook356, 0o644)
+        check("NO EXEC BIT, NO current_body -> stale", _ws356.git_hook_state(_fx356) == "stale",
+              saw=_ws356.git_hook_state(_fx356))
+        check("NO EXEC BIT, WITH current_body -> stale",
+              _ws356.git_hook_state(_fx356, "anything") == "stale",
+              saw=_ws356.git_hook_state(_fx356, "anything"))
+        _r356 = _sh356(_sys356.executable, _map356, "--install-git-hook")
+        check("THE REFRESH RESTORES THE EXEC BIT", _os356.access(_hook356, _os356.X_OK),
+              saw=(_r356.stdout, _r356.stderr))
+        check("AFTER THE REFRESH THE STATE IS installed AGAIN",
+              _ws356.git_hook_state(_fx356) == "installed", saw=_ws356.git_hook_state(_fx356))
+        with open(_hook356, "w") as _f356:
+            _f356.write("#!/bin/sh\necho theirs\n")
+        _os356.chmod(_hook356, 0o644)
+        check("A FOREIGN HOOK WITHOUT EXEC BIT STAYS theirs",
+              _ws356.git_hook_state(_fx356) == "theirs" and
+              _ws356.git_hook_state(_fx356, "x") == "theirs",
+              saw=_ws356.git_hook_state(_fx356))
+    finally:
+        _shutil356.rmtree(_fx356, ignore_errors=True)
+# ---- 357_nothing_chamnan_ships_imports_a_network_library.py
+# ------------------ nothing chamnan ships imports a network library
+# 🎯 [2026-09-29] (R152 acc4, 2026-09-29) The README states "No network calls at runtime" (line 95).
+# Measured 2026-09-29: 0 network-library imports in lib/, bin/, hooks/, and with network denied under
+# macOS sandbox-exec the SessionStart hook and `chamnan-map --preview` both exit 0. Nothing guarded the
+# claim, so a future import would have shipped silently. The population is derived, never listed.
+import ast as _ast357
+
+_NET357 = {"socket", "ssl", "urllib", "http", "ftplib", "smtplib", "poplib", "imaplib", "telnetlib",
+           "xmlrpc", "requests", "httpx", "aiohttp", "urllib3", "websocket", "websockets",
+           "asyncio"}  # asyncio included: a grep found it imported nowhere in lib/ bin/ hooks/ today
+_DYN357 = {"__import__", "import_module"}
+
+
+def _population357():
+    files = []
+    for sub in ("lib", "hooks"):
+        base = ROOT / sub
+        if base.is_dir():
+            files += [p for p in base.rglob("*.py") if "__pycache__" not in p.parts]
+    binp = ROOT / "bin"
+    if binp.is_dir():
+        for p in sorted(binp.iterdir()):
+            if not p.is_file() or p.suffix == ".cmd":
+                continue
+            if p.suffix == ".py":
+                files.append(p)
+                continue
+            try:
+                with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                    first = fh.readline()
+            except OSError:
+                continue
+            if first.startswith("#!") and "python" in first:
+                files.append(p)
+    return sorted(set(files))
+
+
+_files357 = _population357()
+_offenders357 = []
+_unparsed357 = []
+for _p357 in _files357:
+    _rel357 = _p357.relative_to(ROOT).as_posix()
+    try:
+        _tree357 = _ast357.parse(_p357.read_text(encoding="utf-8"), filename=str(_p357))
+    except (SyntaxError, UnicodeDecodeError, ValueError) as _e357:
+        _unparsed357.append(f"{_rel357}: {type(_e357).__name__}")
+        continue
+    for _n357 in _ast357.walk(_tree357):
+        if isinstance(_n357, _ast357.Import):
+            for _a357 in _n357.names:
+                if _a357.name.split(".")[0] in _NET357:
+                    _offenders357.append(f"{_rel357}:{_n357.lineno} {_a357.name}")
+        elif isinstance(_n357, _ast357.ImportFrom):
+            if _n357.level == 0 and _n357.module and _n357.module.split(".")[0] in _NET357:
+                _offenders357.append(f"{_rel357}:{_n357.lineno} {_n357.module}")
+        elif isinstance(_n357, _ast357.Call):
+            _f357 = _n357.func
+            _fn357 = _f357.id if isinstance(_f357, _ast357.Name) else (
+                _f357.attr if isinstance(_f357, _ast357.Attribute) else None)
+            if _fn357 in _DYN357 and _n357.args and isinstance(_n357.args[0], _ast357.Constant) \
+                    and isinstance(_n357.args[0].value, str) \
+                    and _n357.args[0].value.split(".")[0] in _NET357:
+                _offenders357.append(f"{_rel357}:{_n357.lineno} {_n357.args[0].value}")
+
+check("THE SCAN FOUND A NON-TRIVIAL POPULATION INCLUDING lib/redact.py",
+      len(_files357) >= 40 and (ROOT / "lib" / "redact.py") in _files357,
+      saw=(len(_files357), "lib/redact.py" in [p.relative_to(ROOT).as_posix() for p in _files357]))
+check("EVERY SHIPPED PYTHON FILE PARSES",
+      not _unparsed357, saw=_unparsed357)
+check("NO SHIPPED FILE IMPORTS A NETWORK LIBRARY",
+      not _offenders357, saw=_offenders357)
+# ---- 358_generated_patterns_match_what_git_says.py
+# ------------------ generated-file patterns match what git says
+# 🐛 [2026-09-29] (R158 acc4, 2026-09-29) `mapper._is_generated` matched with fnmatch, whose `*`
+# crosses `/` and which has no zero-directory rule for `/**/`. Against `git check-attr
+# linguist-generated` it disagreed on four of 23 files: `docs/*.md` matched `docs/sub/a.md` (a real
+# file dropped from the index), and `a/**/b.py`, `src/**/*.gen.ts`, `\!bang.py` failed to match
+# `a/b.py`, `src/j.gen.ts`, `!bang.py`. The oracle is real git, not a model of it.
+import shutil as _shutil358
+import subprocess as _sp358
+import tempfile as _tmp358
+from pathlib import Path as _Path358
+
+_git358 = _shutil358.which("git")
+if not _git358:
+    skip("  · no git on this machine -- generated-pattern check skipped, not passed")
+else:
+    _PATS358 = ["gen.py", "*.pb.go", "dist/", "dist/**", "/root_only.js", "**/vendor/**", "*.min.*",
+                "build", "[Gg]en/*.py", "Out/", "docs/*.md", "a/**/b.py", "src/**/*.gen.ts",
+                "\\!bang.py",
+                "*.py[cod]", "lib/**", "**/*.snap", "x/?.txt", "deep/**/mid/**/z.js"]
+    _FILES358 = [
+        "gen.py", "a/gen.py", "a/b/c/gen.py", "x.pb.go", "api/x.pb.go", "api/v1/x.pb.go",
+        "dist/o.js", "dist/sub/o.js", "app/dist/o.js", "root_only.js", "sub/root_only.js",
+        "vendor/v.go", "a/vendor/v.go", "a/vendor/b/v.go", "vendor.go", "a.min.js", "s/a.min.css",
+        "s/build", "build/out.txt", "Gen/a.py", "gen/a.py", "gen/sub/a.py", "Out/o.txt",
+        "docs/a.md", "docs/sub/a.md", "docs/sub/deeper/a.md", "a/b.py", "a/x/b.py", "a/x/y/b.py",
+        "b.py", "src/j.gen.ts", "src/x/j.gen.ts", "src/x/y/j.gen.ts", "j.gen.ts", "!bang.py",
+        "s/!bang.py", "m.pyc", "s/m.pyo", "m.pyx", "lib/a.txt", "lib/s/a.txt", "x/lib/a.txt",
+        "t.snap", "s/t.snap", "s/u/t.snap", "x/1.txt", "x/12.txt", "x/y/1.txt", "z.js",
+        "deep/z.js", "deep/mid/z.js", "deep/a/mid/z.js", "deep/mid/b/z.js", "deep/a/b/mid/c/d/z.js",
+        "deep/mid/z.jsx",
+    ]
+    _fix358 = _Path358(_tmp358.mkdtemp(prefix="chamnan-check358-"))
+    try:
+        _sp358.run([_git358, "init", "-q", str(_fix358)], check=True, capture_output=True)
+        (_fix358 / ".gitattributes").write_text(
+            "".join(f"{_p} linguist-generated\n" for _p in _PATS358), encoding="utf-8")
+        for _f in _FILES358:
+            _t = _fix358 / _f
+            if _t.exists() and _t.is_dir():
+                continue
+            _t.parent.mkdir(parents=True, exist_ok=True)
+            _t.write_text("x\n", encoding="utf-8")
+        _o358 = _sp358.run([_git358, "-C", str(_fix358), "check-attr", "linguist-generated", "--",
+                            *_FILES358], capture_output=True, text=True)
+        _git_says358 = {}
+        for _line in _o358.stdout.splitlines():
+            _path, _, _val = _line.rpartition(": linguist-generated: ")
+            _git_says358[_path] = (_val == "set")
+        _globs358 = mapper._generated_globs(_fix358)
+        _bad358 = []
+        for _f in _FILES358:
+            if _f not in _git_says358:
+                _bad358.append(f"{_f}: git printed no answer")
+                continue
+            _ours = mapper._is_generated(_f, _globs358)
+            if _ours != _git_says358[_f]:
+                _bad358.append(f"{_f}: ours={_ours} git={_git_says358[_f]}")
+        check("THE ORACLE ANSWERED FOR EVERY FILE AND SOME ARE GENERATED",
+              len(_git_says358) == len(_FILES358) and any(_git_says358.values())
+              and not all(_git_says358.values()),
+              saw=(len(_git_says358), len(_FILES358), _o358.stderr[:200]))
+        check("FIXTURE COVERS AT LEAST 35 FILES", len(_FILES358) >= 35, saw=len(_FILES358))
+        check("_is_generated AGREES WITH git check-attr ON EVERY FILE", not _bad358, saw=_bad358)
+    finally:
+        _shutil358.rmtree(_fix358, ignore_errors=True)
+# ---- 359_the_2026_provider_key_formats_are_redacted.py
+# ------------------ the 2026 Cloudflare and Supabase key formats are redacted where they stand
+# 🎯 [2026-09-30] (R22 acc4, 2026-09-30) Measured against the live module with runtime-built values,
+# a Cloudflare `cfk_` / `cfut_` / `cfat_` token (40 alphanumeric characters + an 8-hex CRC32
+# checksum) and a Supabase `sb_secret_` key (22 base64url + "_" + 8 checksum characters) standing
+# alone in text, with no secret word nearby, passed clear. `sb_publishable_` is PUBLIC by design and
+# must stay untouched. Every value is built at runtime from `random.Random(359)` with the prefix
+# assembled from pieces: this repository keeps no key-shaped literal in any file.
+import importlib as _il359
+import random as _rnd359
+import string as _str359
+
+_r359 = _il359.import_module("redact")
+_rng359 = _rnd359.Random(359)
+_ALNUM359 = _str359.ascii_letters + _str359.digits
+_B64U359 = _ALNUM359 + "_-"
+_HEX359 = "0123456789abcdef"
+
+
+def _pick359(alpha, n):
+    return "".join(_rng359.choice(alpha) for _ in range(n))
+
+
+def _cf359(prefix):
+    return prefix + _pick359(_ALNUM359, 40) + _pick359(_HEX359, 8)
+
+
+def _sb359(name):
+    return name + _pick359(_B64U359, 22) + "_" + _pick359(_B64U359, 8)
+
+
+_TOKENS359 = {
+    "cf" + "k_": _cf359("cf" + "k_"),
+    "cf" + "ut_": _cf359("cf" + "ut_"),
+    "cf" + "at_": _cf359("cf" + "at_"),
+    "sb" + "_secret_": _sb359("sb" + "_secret_"),
+}
+_CONTEXTS359 = {
+    "alone in a sentence": "the value {t} was pasted here by mistake",
+    "in a URL query": "https://example.test/x?key={t}&a=1",
+    "in JSON": '{{"k": "{t}"}}',
+}
+_leaks359 = []
+for _pre359, _tok359 in _TOKENS359.items():
+    for _cn359, _tpl359 in _CONTEXTS359.items():
+        _text359 = _tpl359.format(t=_tok359)
+        if _tok359 in _r359.scrub(_text359):
+            _leaks359.append(f"{_pre359} survives {_cn359}")
+check("every 2026 provider prefix is removed alone, in a URL query and in JSON",
+      len(_TOKENS359) == 4 and not _leaks359, saw="; ".join(_leaks359) or None)
+
+_pub359 = _sb359("sb" + "_publishable_")
+_pubtext359 = f"the public value {_pub359} is shipped in the page"
+check("sb_publishable_ is public by design and is left unchanged",
+      _r359.scrub(_pubtext359) == _pubtext359, saw=_r359.scrub(_pubtext359)[:40])
+
+_near359 = {
+    "39 alnum + 8 hex": "cf" + "ut_" + _pick359(_ALNUM359, 39) + _pick359(_HEX359, 8),
+    "checksum with a non-hex letter": "cf" + "ut_" + _pick359(_ALNUM359, 40) + "abcdefg" + "g",
+    "cfk_config in prose": "cf" + "k_config",
+    "sb_secret_rotation_policy in prose": "sb" + "_secret_rotation_policy",
+}
+_moved359 = []
+for _nn359, _nv359 in _near359.items():
+    _nt359 = f"see {_nv359} for details"
+    if _r359.scrub(_nt359) != _nt359:
+        _moved359.append(_nn359)
+check("near-misses are left unchanged", len(_near359) == 4 and not _moved359,
+      saw="; ".join(_moved359) or None)
+
+_notidem359 = []
+for _pre359, _tok359 in _TOKENS359.items():
+    _once359 = _r359.scrub(f"the value {_tok359} here")
+    if _r359.scrub(_once359) != _once359:
+        _notidem359.append(_pre359)
+check("scrubbing the scrubbed text changes nothing", not _notidem359,
+      saw="; ".join(_notidem359) or None)
 # ---- 35_the_no_git_fallback_answers_as_git_would.py
 # ------------------------------------------- fnmatch is not git's gitignore glob
 # 🐛 [2026-09-10] `_ignored_by_files` is the fallback used where there is no git to ask, and it
@@ -46260,6 +47184,766 @@ _t_wrong35 = [f"{_p!r} vs {_r!r}: {_why}" for _p, _r, _want, _why in _t_rules35
               if tree.gitignore_matches(_r, _p) is not _want]
 check("...and each rule that differs from fnmatch is the one git actually applies",
       not _t_wrong35, saw="\n".join(_t_wrong35) or None)
+# ---- 360_the_session_end_hook_asks_for_enough_time.py
+# ------------------ the SessionEnd hook declares a timeout, because the host's default is 1.5 s
+# 🐛 [2026-09-30] (R36 acc2, 2026-09-30) Claude Code gives a SessionEnd hook
+# max(1500 ms, min(largest declared SessionEnd `timeout` x 1000, 60000 ms)) unless
+# CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS is set. chamnan's entry declared none, so it got 1.5 s,
+# while `chamnan_session_end.py` measured 0.83-1.17 s (median 0.94) on an idle machine and 6.3 s
+# median under load; past the limit the host kills it and the end-of-session digest is lost.
+# The population is every command entry under `SessionEnd`, read from hooks.json, so a second
+# SessionEnd hook added later cannot opt out by being new.
+import json as _js360
+import os as _os360
+import shutil as _sh360
+import subprocess as _sp360
+import sys as _sys360
+import tempfile as _tf360
+import time as _tm360
+
+_t_hj360 = ROOT / "hooks" / "hooks.json"
+_t_reg360 = _js360.loads(_t_hj360.read_text(encoding="utf-8"))["hooks"].get("SessionEnd", [])
+_t_cmds360 = [h for group in _t_reg360 for h in group.get("hooks", []) if h.get("type") == "command"]
+check("SessionEnd has at least one command entry for this check to read",
+      bool(_t_cmds360), saw="%d SessionEnd command entries" % len(_t_cmds360))
+
+_t_bad_num360 = [h.get("command") for h in _t_cmds360
+                 if not isinstance(h.get("timeout"), (int, float)) or isinstance(h.get("timeout"), bool)]
+check("EVERY SESSIONEND COMMAND ENTRY DECLARES A NUMERIC TIMEOUT (the host default is 1.5 s)",
+      not _t_bad_num360, saw="no numeric timeout on: %s" % (_t_bad_num360,))
+
+_t_bad_rng360 = [(h.get("command"), h.get("timeout")) for h in _t_cmds360
+                 if isinstance(h.get("timeout"), (int, float)) and not (5 <= h["timeout"] <= 60)]
+check("...and it is between 5 s and 60 s (the host caps SessionEnd at 60 s)",
+      not _t_bad_rng360, saw="out of range: %s" % (_t_bad_rng360,))
+
+_t_declared360 = max([h["timeout"] for h in _t_cmds360
+                      if isinstance(h.get("timeout"), (int, float))] or [1.5])
+
+# Run the real hook once against a small git repository that has a .chamnan/ directory.
+_t_fix360 = _tf360.mkdtemp(prefix="chamnan-check360-")
+try:
+    _sp360.run(["git", "init", "-q", _t_fix360], capture_output=True, timeout=30)
+    _os360.makedirs(_os360.path.join(_t_fix360, ".chamnan"), exist_ok=True)
+    _t_env360 = dict(_os360.environ, CLAUDE_PLUGIN_ROOT=str(ROOT))
+    _t_start360 = _tm360.monotonic()
+    _t_run360 = _sp360.run(
+        [_sys360.executable, str(ROOT / "hooks" / "chamnan_session_end.py")],
+        input=_js360.dumps({"hook_event_name": "SessionEnd", "session_id": "probe",
+                            "reason": "exit", "cwd": _t_fix360}),
+        capture_output=True, text=True, cwd=_t_fix360, env=_t_env360, timeout=60)
+    _t_secs360 = _tm360.monotonic() - _t_start360
+    check("the SessionEnd hook exits 0 when run once against a small fixture",
+          _t_run360.returncode == 0,
+          saw="exit %s, stderr: %s" % (_t_run360.returncode, _t_run360.stderr[-300:]))
+    check("...and finishes in under the timeout it declares",
+          _t_secs360 < _t_declared360,
+          saw="took %.2f s against a declared %s s" % (_t_secs360, _t_declared360))
+finally:
+    _sh360.rmtree(_t_fix360, ignore_errors=True)
+check("...and the fixture was removed", not _os360.path.exists(_t_fix360), saw=_t_fix360)
+# ---- 361_churn_keeps_awkward_file_names.py
+# ------------------ churn is keyed by the real file name, also for names git always C-quotes
+# 🐛 [2026-09-30] (R56 acc2, 2026-09-30) `rollup._churn` reads `git log --name-status` and split each
+# line on tab. `-c core.quotePath=false` stops the quoting of non-ASCII names, but git ALWAYS
+# C-quotes a path holding a double quote, a backslash or a control character. In a fixture,
+# `with"quote.py` came back as `"with\"quote.py"` and `tab<TAB>here.py` as `"tab\there.py"`, so
+# their churn was keyed under a spelling that matches no real file. Thai names were fine.
+# The fix is `workspace.unquote_git_path` applied to every path field, old and new of a rename too.
+import rollup as _ru361                                                                # noqa: E402
+import workspace as _ws361                                                             # noqa: E402
+
+_t_dir361 = tempfile.mkdtemp(prefix="chamnan-check361-")
+try:
+    def _t_git361(*args):
+        return subprocess.run(["git", "-C", _t_dir361, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
+                              capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+    _t_init361 = subprocess.run(["git", "init", "-q", _t_dir361], capture_output=True, text=True, timeout=30)
+    check("the fixture repository was initialised", _t_init361.returncode == 0, saw=_t_init361.stderr)
+
+    _t_names361 = ["plain.py", 'with"quote.py', "back\\slash.py", "tab\there.py", "ไทย.py"]
+    for _t_round361 in range(3):
+        for _t_n361 in _t_names361:
+            with open(os.path.join(_t_dir361, _t_n361), "a", encoding="utf-8") as _t_fh361:
+                _t_fh361.write("round %d\n" % _t_round361)
+            _t_git361("add", "--", _t_n361)
+            _t_git361("commit", "-q", "-m", "touch %d" % _t_round361)
+    # Enough history that the ranking is not withheld for being too short.
+    for _t_i361 in range(_ru361.MIN_COMMITS_TO_RANK + 10):
+        with open(os.path.join(_t_dir361, "pad.txt"), "a", encoding="utf-8") as _t_fh361:
+            _t_fh361.write("%d\n" % _t_i361)
+        _t_git361("add", "--", "pad.txt")
+        _t_git361("commit", "-q", "-m", "pad %d" % _t_i361)
+    _t_mv361 = _t_git361("mv", 'with"quote.py', 're"named.py')
+    _t_cm361 = _t_git361("commit", "-q", "-m", "rename")
+    check("the rename committed", _t_mv361.returncode == 0 and _t_cm361.returncode == 0,
+          saw=_t_mv361.stderr + _t_cm361.stderr)
+
+    _ru361.forget_churn()
+    _t_churn361 = _ru361._churn(_t_dir361)
+    check("the fixture history produced a churn map at all", bool(_t_churn361),
+          saw="empty: %r" % (_t_churn361,))
+
+    _t_bad361 = [k for k in _t_churn361 if not os.path.exists(os.path.join(_t_dir361, k))]
+    check("EVERY CHURN KEY NAMES A FILE THAT EXISTS IN THE WORKING TREE",
+          not _t_bad361, saw="keys with no file: %r" % (_t_bad361,))
+    check("...and none starts with a double quote",
+          not [k for k in _t_churn361 if k.startswith('"')],
+          saw="%r" % ([k for k in _t_churn361 if k.startswith('"')],))
+    _t_plain361 = _t_churn361.get("plain.py")
+    for _t_n361 in ("back\\slash.py", "tab\there.py", "ไทย.py"):
+        check("...%r has the same count as plain.py (3 commits each)" % _t_n361,
+              _t_churn361.get(_t_n361) == _t_plain361 == 3,
+              saw="plain=%r this=%r" % (_t_plain361, _t_churn361.get(_t_n361)))
+    check("...the renamed file carries its whole history (3 + the rename = 4) under the new name",
+          _t_churn361.get('re"named.py') == 4, saw="%r" % (_t_churn361,))
+
+    # ws.unquote_git_path must reverse git's own quoting of these names.
+    _t_raw361 = subprocess.run(["git", "-C", _t_dir361, "ls-files"], capture_output=True, text=True,
+                               encoding="utf-8", timeout=30).stdout.splitlines()
+    # The truth is the `-z` listing, which git never quotes.
+    _t_true361 = sorted(subprocess.run(["git", "-C", _t_dir361, "ls-files", "-z"], capture_output=True,
+                                       text=True, encoding="utf-8", timeout=30).stdout.split("\0")[:-1])
+    _t_qp361 = _t_git361("ls-files").stdout.splitlines()
+    check("git really quotes at least the awkward names when core.quotePath is left alone (or the fixture is void)",
+          any(r.startswith('"') for r in _t_raw361), saw="%r" % (_t_raw361,))
+    check("ws.unquote_git_path turns git's default-quoted ls-files output into the real names",
+          sorted(_ws361.unquote_git_path(r) for r in _t_raw361) == _t_true361,
+          saw="%r vs %r" % (sorted(_ws361.unquote_git_path(r) for r in _t_raw361), _t_true361))
+    check("...and the quotePath=false output (still quoted for the awkward names) decodes to the same",
+          sorted(_ws361.unquote_git_path(r) for r in _t_qp361) == _t_true361,
+          saw="%r vs %r" % (sorted(_ws361.unquote_git_path(r) for r in _t_qp361), _t_true361))
+    check("...and leaves an unquoted name alone", _ws361.unquote_git_path("plain.py") == "plain.py")
+finally:
+    shutil.rmtree(_t_dir361, ignore_errors=True)
+check("...and the fixture was removed", not os.path.exists(_t_dir361), saw=_t_dir361)
+# ---- 362_many_fstrings_do_not_stall_the_map.py
+# ------------------ a module with thousands of f-strings is skipped, not parsed for minutes
+# 🐛 [2026-09-30] (R68 acc2, 2026-09-30) `ast.parse` on Python 3.12+ is quadratic in the number of
+# f-strings in one module (CPython issue 155525). On 3.14.7 a 1.47 MB module of `xI = f"{a}..{h}"`
+# lines took 134 s, and both MAX_FILE_BYTES and MAX_FILE_LINES let it through, so one generated file
+# stalled `chamnan-map` (run from the git hook) for minutes. `mapper._parse_py` now counts f-string
+# openings first and returns a reason instead of parsing past `MAX_FSTRINGS`.
+#
+# Derived, not listed: every .py under the plugin's lib/, hooks/ and bin/ must sit below the cap,
+# so the cap is proven not to skip chamnan's own code.
+import importlib as _im362
+import time as _tm362
+
+_mp362 = _im362.import_module("mapper")
+
+
+def _src362(n):
+    return "".join("x%d = f\"{a}{b}\"\n" % i for i in range(n))
+
+
+_t0362 = _tm362.time()
+_tree362, _warn362, _why362 = _mp362._parse_py(_src362(6000), "gen.py")
+_dt362 = _tm362.time() - _t0362
+check("a module with 6,000 f-strings is not parsed", _tree362 is None, saw="tree=%r" % (_tree362,))
+check("...the reason names f-strings", "f-string" in _why362, saw="%r" % (_why362,))
+check("...and the reason fits one short line", 0 < len(_why362) < 160 and "\n" not in _why362,
+      saw="%d chars" % len(_why362))
+check("...and the call took under 1 s", _dt362 < 1.0, saw="%.2f s" % _dt362)
+
+_tree362, _warn362, _why362 = _mp362._parse_py(_src362(200), "gen.py")
+check("a module with 200 f-strings still parses", _tree362 is not None and _why362 == "",
+      saw="tree=%r reason=%r" % (_tree362, _why362))
+
+_pop362 = []
+for _dir362 in ("lib", "hooks", "bin"):
+    for _f362 in sorted((ROOT / _dir362).rglob("*")):
+        if not _f362.is_file() or "__pycache__" in _f362.parts or _f362.suffix not in ("", ".py"):
+            continue
+        try:
+            _t362 = _f362.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _f362.suffix == "" and "python" not in _t362.split("\n", 1)[0]:
+            continue
+        _pop362.append((_f362.name, len(_mp362._FSTRING_OPEN.findall(_t362))))
+check("the population of plugin Python files is not empty", len(_pop362) >= 20,
+      saw="%d files" % len(_pop362))
+_over362 = [(n, c) for n, c in _pop362 if c >= _mp362.MAX_FSTRINGS]
+check("EVERY PLUGIN PYTHON FILE HAS FEWER F-STRING OPENINGS THAN THE CAP", not _over362,
+      saw="over the cap: %r" % (_over362,))
+
+# The same cap guards `chamnan-where`: refs.in_source reads user files up to 4 MB.
+_rf362 = _im362.import_module("refs")
+_t0362 = _tm362.time()
+_hits362 = _rf362.in_source(_src362(6000) + "gen_symbol()\n", "gen_symbol")
+_dt362 = _tm362.time() - _t0362
+check("refs.in_source leaves a 6,000 f-string module unjudged (None)", _hits362 is None,
+      saw="%r" % (_hits362,))
+check("...and returns in under 1 s", _dt362 < 1.0, saw="%.2f s" % _dt362)
+_hits362 = _rf362.in_source(_src362(200) + "gen_symbol()\n", "gen_symbol")
+check("refs.in_source still judges a 200 f-string module", isinstance(_hits362, list) and len(_hits362) == 1,
+      saw="%r" % (_hits362,))
+check("mapper and refs read one cap (tree.MAX_FSTRINGS)",
+      _mp362.MAX_FSTRINGS == _im362.import_module("tree").MAX_FSTRINGS
+      and _mp362._FSTRING_OPEN is _im362.import_module("tree").FSTRING_OPEN)
+# ---- 363_nuget_api_keys_are_redacted.py
+# ------------------ a NuGet API key is redacted where it stands
+# 🐛 [2026-09-30] (R71 acc2, 2026-09-30) A NuGet API key is `oy2` plus 43 lowercase letters or
+# digits (46 characters). Built at runtime and scrubbed while standing alone, with no secret word
+# nearby, it passed clear; only an assignment caught it. Every value is built from
+# `random.Random(363)` with the prefix assembled from pieces: this repository keeps no key-shaped
+# literal in any file.
+import importlib as _il363
+import random as _rnd363
+import re as _re363
+import string as _str363
+
+_r363 = _il363.import_module("redact")
+_rng363 = _rnd363.Random(363)
+_LOWNUM363 = _str363.ascii_lowercase + _str363.digits
+_PRE363 = "oy" + "2"
+
+
+def _pick363(alpha, n):
+    return "".join(_rng363.choice(alpha) for _ in range(n))
+
+
+def _key363(tail=43):
+    return _PRE363 + _pick363(_LOWNUM363, tail)
+
+
+_KEY363 = _key363()
+_CONTEXTS363 = {
+    "alone in a sentence": "the value {t} was pasted here by mistake",
+    "in a command line": "push -k {t} x",
+    "in JSON": '{{"k": "{t}"}}',
+    "at the start of a line": "{t} was the first thing on the line",
+    "at the end of a line": "the last thing on the line was {t}",
+}
+_leaks363 = []
+for _cn363, _tpl363 in _CONTEXTS363.items():
+    if _KEY363 in _r363.scrub(_tpl363.format(t=_KEY363)):
+        _leaks363.append(_cn363)
+check("a NuGet API key is removed in a sentence, a command line, JSON and at both line edges",
+      len(_KEY363) == 46 and not _leaks363, saw="; ".join(_leaks363) or None)
+
+_near363 = {
+    "42 tail chars": _key363(42),
+    "44 tail chars": _key363(44),
+    "oy2 followed by uppercase": _PRE363 + _pick363(_str363.ascii_uppercase, 43),
+    "oy2 inside ordinary words": "b" + _PRE363 + " t" + _PRE363,
+}
+_moved363 = []
+for _nn363, _nv363 in _near363.items():
+    _nt363 = f"see {_nv363} for details"
+    if _r363.scrub(_nt363) != _nt363:
+        _moved363.append(_nn363)
+check("near-misses and ordinary text holding oy2 are left unchanged",
+      len(_near363) == 4 and not _moved363, saw="; ".join(_moved363) or None)
+
+_once363 = _r363.scrub(f"the value {_KEY363} here")
+check("scrubbing the scrubbed text changes nothing", _r363.scrub(_once363) == _once363,
+      saw=_once363[:60])
+
+_pat363 = _re363.compile(r"(?<![A-Za-z0-9])" + _PRE363 + r"[a-z0-9]{43}(?![A-Za-z0-9])")
+# ROOT is the plugin checkout; the workspace map sits two levels up. A checkout without it skips.
+_map363 = ROOT.parent.parent / ".chamnan" / "MAP.md"
+_hits363 = (len(_pat363.findall(_map363.read_text(encoding="utf-8", errors="replace")))
+            if _map363.is_file() else 0)
+check("the NuGet key shape finds 0 matches in .chamnan/MAP.md (false-positive population)",
+      _hits363 == 0, saw=f"{_hits363} matches in {_map363}")
+# ---- 364_a_future_dated_dead_lock_is_recovered.py
+# ------------------ a lock left by a dead process is recovered even when its mtime is in the future
+# 🐛 [2026-09-30] (R91 acc5, 2026-09-30) `exclusive()` decided a lock was abandoned from the signed
+# age `now - st_mtime`. When the clock stepped back after the lock was made the age was negative, the
+# holder was never read, and a lock held by a DEAD PID made every locked write wait out LOCK_TIMEOUT
+# (measured: held False, 2.00 s, lock left). The age is now the distance from now.
+import importlib.util as _ilu364
+import subprocess as _sp364
+import tempfile as _tf364
+import shutil as _sh364
+import time as _tm364
+from pathlib import Path as _P364
+
+_spec364 = _ilu364.spec_from_file_location("_ws_364", ROOT / "lib" / "workspace.py")
+_ws364 = _ilu364.module_from_spec(_spec364)
+_spec364.loader.exec_module(_ws364)
+
+_dir364 = _P364(_tf364.mkdtemp(prefix="chamnan-check364-"))
+
+
+def _try364(target, pid, offset):
+    lock = _P364(str(target) + ".lock")
+    lock.write_text(str(pid))
+    t = _tm364.time() + offset
+    os.utime(lock, (t, t))
+    t0 = _tm364.perf_counter()
+    with _ws364.exclusive(target) as held:
+        pass
+    took = _tm364.perf_counter() - t0
+    left = lock.exists()
+    if left:
+        lock.unlink()
+    return held, took, left
+
+
+try:
+    _sp364.run(["git", "init", "-q", str(_dir364)], check=True)
+    _child364 = _sp364.Popen(["true"])
+    _child364.wait()
+    _dead364 = _child364.pid
+
+    _h, _s, _l = _try364(_dir364 / "future.json", _dead364, 3600)
+    check("A DEAD HOLDER'S LOCK DATED AN HOUR IN THE FUTURE IS TAKEN OVER",
+          _h is True, saw="held=%r" % (_h,))
+    check("...in under a second", _s < 1.0, saw="%.2fs" % _s)
+    check("...and the lock is gone afterwards", _l is False, saw="left=%r" % (_l,))
+
+    _h, _s, _l = _try364(_dir364 / "past.json", _dead364, -5)
+    check("a dead holder's lock dated 5 s in the past is still taken over (regression guard)",
+          _h is True and _l is False, saw="held=%r left=%r" % (_h, _l))
+
+    _h, _s, _l = _try364(_dir364 / "alive.json", os.getpid(), 3600)
+    check("A LIVE HOLDER'S FUTURE-DATED LOCK IS NOT TAKEN OVER WITHIN LOCK_TIMEOUT",
+          _h is False, saw="held=%r after %.2fs" % (_h, _s))
+    check("...and the lock file was still there", _l is True, saw="left=%r" % (_l,))
+finally:
+    _sh364.rmtree(_dir364, ignore_errors=True)
+check("...and the fixture was removed", not os.path.exists(_dir364), saw=str(_dir364))
+# ---- 365_every_git_path_reader_unquotes.py
+# ------------------ every reader of a git path list names the real file, also when git C-quotes it
+# 🐛 [2026-09-30] (R97 acc4, 2026-09-30) Commit 6085a79 (R56) added `workspace.unquote_git_path` and
+# applied it in `rollup._churn` and `timeline.historical_names`, and three readers of the same kind
+# were left. Measured: a committed `tab<TAB>X.py` showed in the session block's "Last edited" line as
+# `"tab\tX.py"` (coedit); a quote-bearing manifest path was handed to `git show rev:path` in git's
+# quoted spelling, which cannot find it (deps); `ls-tree --name-only` ran without quotePath=false
+# and its output was compared as a set against real paths (drift).
+# (a) behaviour on a fixture repo; (b) the population: every git call that LISTS paths unquotes.
+import ast as _ast365
+import time as _tm365
+import coedit as _co365                                                                # noqa: E402
+import deps as _dp365                                                                  # noqa: E402
+
+_t_dir365 = tempfile.mkdtemp(prefix="chamnan-check365-")
+try:
+    def _t_git365(*args):
+        return subprocess.run(["git", "-C", _t_dir365, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
+                              capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+    _t_init365 = subprocess.run(["git", "init", "-q", _t_dir365], capture_output=True, text=True, timeout=30)
+    check("the fixture repository was initialised", _t_init365.returncode == 0, saw=_t_init365.stderr)
+
+    # The Thai name is built from code points so this file stays free of literal Thai.
+    _t_thai365 = "".join(chr(c) for c in (0x0e44, 0x0e1f, 0x0e25, 0x0e4c)) + ".py"
+    _t_names365 = ["plain.py", 'with"quote.py', "tab\tX.py", _t_thai365]
+    for _t_n365 in _t_names365:
+        with open(os.path.join(_t_dir365, _t_n365), "w", encoding="utf-8") as _t_fh365:
+            _t_fh365.write("x\n")
+        _t_git365("add", "--", _t_n365)
+    _t_cm365 = _t_git365("commit", "-q", "-m", "files")
+    check("the fixture commit landed", _t_cm365.returncode == 0, saw=_t_cm365.stderr)
+
+    # (a1) coedit: the reader behind the "Last edited" line.
+    _t_now365 = _tm365.time()
+    _t_rows365 = _co365._git_edits(_t_dir365, _t_now365 + 5, _t_now365 - 3600)
+    _t_got365 = sorted({p for _a, p in _t_rows365})
+    check("coedit read the sitting's files at all", len(_t_got365) == len(_t_names365),
+          saw="%r" % (_t_got365,))
+    check("EVERY 'LAST EDITED' PATH NAMES A FILE THAT EXISTS IN THE WORKING TREE",
+          not [p for p in _t_got365 if not os.path.exists(os.path.join(_t_dir365, p))],
+          saw="no file for: %r" % ([p for p in _t_got365 if not os.path.exists(os.path.join(_t_dir365, p))],))
+    check("...and none starts with a double quote", not [p for p in _t_got365 if p.startswith('"')],
+          saw="%r" % ([p for p in _t_got365 if p.startswith('"')],))
+
+    # (a2) deps: a manifest whose directory holds a double quote, read back through `git show`.
+    _t_man365 = 'q"dir/requirements.txt'
+    os.makedirs(os.path.join(_t_dir365, 'q"dir'))
+    for _t_body365 in ("alpha\nbeta\n", "alpha\n"):
+        with open(os.path.join(_t_dir365, _t_man365), "w", encoding="utf-8") as _t_fh365:
+            _t_fh365.write(_t_body365)
+        _t_git365("add", "--", _t_man365)
+        _t_git365("commit", "-q", "-m", "manifest %d" % len(_t_body365))
+    _t_rem365 = _dp365.removals(_t_dir365, manifests=(_t_man365,))
+    check("deps finds the package removed from a manifest whose path git C-quotes",
+          "beta" in _t_rem365, saw="%r" % (_t_rem365,))
+    # drift: `PATH` there only admits [A-Za-z0-9_./-], a spelling git never quotes, so a fixture that
+    # reaches the unquote through gone_since() cannot be built; the population check below covers it.
+finally:
+    shutil.rmtree(_t_dir365, ignore_errors=True)
+check("...and the fixture was removed", not os.path.exists(_t_dir365), saw=_t_dir365)
+
+# (b) population. Every list literal handed to git that names a path-listing form must carry `-z` or
+# live in a module that references `unquote_git_path`. AST-based, so comments and docstrings cannot
+# match, and the forbidden literals are the ones a call actually passes.
+_t_forms365 = {"--name-only", "--name-status", "ls-tree", "ls-files", "--porcelain", "--porcelain=v1"}
+# Sites that legitimately do not decode a path, as "relative file:function".
+_t_allow365 = {
+    "lib/workspace.py:workspace_is_tracked": "emptiness test on ls-files output, no path used",
+    "bin/chamnan-map:main": "emptiness test on ls-files output, no path used",
+    "hooks/chamnan_session_start.py:_map_is_current_by_git": "emptiness test on status --porcelain",
+}
+
+
+def _t_sites365():
+    found, offenders = [], []
+    for _t_sub365 in ("lib", "hooks", "bin"):
+        for _t_p365 in sorted((ROOT / _t_sub365).iterdir()):
+            if not _t_p365.is_file() or _t_p365.suffix in (".md", ".json", ".txt", ".pyc"):
+                continue
+            try:
+                _t_tree365 = _ast365.parse(_t_p365.read_text(encoding="utf-8"))
+            except (SyntaxError, ValueError, UnicodeDecodeError):
+                continue
+            _t_unq365 = any((isinstance(n, _ast365.Attribute) and n.attr == "unquote_git_path") or
+                            (isinstance(n, _ast365.Name) and n.id.endswith("unquote_git_path"))
+                            for n in _ast365.walk(_t_tree365))
+            _t_enc365 = {}
+
+            def _t_mark365(node, name):
+                for ch in _ast365.iter_child_nodes(node):
+                    if isinstance(ch, (_ast365.FunctionDef, _ast365.AsyncFunctionDef)):
+                        _t_mark365(ch, ch.name)
+                    else:
+                        _t_enc365[id(ch)] = name
+                        _t_mark365(ch, name)
+            _t_mark365(_t_tree365, "<module>")
+            for node in _ast365.walk(_t_tree365):
+                if not isinstance(node, (_ast365.List, _ast365.Tuple)):
+                    continue
+                strs = [e.value for e in node.elts if isinstance(e, _ast365.Constant) and isinstance(e.value, str)]
+                if not (_t_forms365 & set(strs)):
+                    continue
+                # A tuple of option names elsewhere (not an argv) has no git verb in it.
+                if not ({"log", "status", "diff", "ls-tree", "ls-files", "git"} & set(strs)):
+                    continue
+                key = "%s/%s:%s" % (_t_sub365, _t_p365.name, _t_enc365.get(id(node), "<module>"))
+                found.append(key)
+                if "-z" in strs or _t_unq365 or key in _t_allow365:
+                    continue
+                offenders.append("%s:%d" % (key, node.lineno))
+    return found, offenders
+
+
+_t_found365, _t_off365 = _t_sites365()
+check("the scan derived a population of path-listing git calls (at least 4)", len(_t_found365) >= 4,
+      saw="%d sites: %r" % (len(_t_found365), _t_found365))
+check("EVERY PATH-LISTING GIT CALL PASSES -z, OR ITS MODULE UNQUOTES, OR IS ALLOWLISTED",
+      not _t_off365, saw="offenders: %r" % (_t_off365,))
+# ---- 366_windows_shims_keep_the_exit_code.py
+# ------------------ a Windows .cmd shim returns the exit code of the script it ran
+# 🐛 [2026-09-30] (R117 acc4, 2026-09-30) Every generated shim ran `py -3 ...` and then
+# `exit /b %errorlevel%` inside a parenthesised `if (...)` block. cmd.exe expands %errorlevel% when it
+# PARSES the whole block, before `py` runs, so the shim always exited with the value `where` left (0):
+# a failing `chamnan-guard --strict` reported success on every machine with the py launcher. Windows CI
+# only ran success paths, so it never showed. The template is now a goto form.
+# (a) population; (b) no %errorlevel% read inside an open block; (c) each generated shim ends on
+# `exit /b %errorlevel%` at depth 0 after invoking python; (d) the generator reports no drift.
+import importlib.util as _ilu366
+import re as _re366
+import subprocess as _sp366
+import sys as _sys366
+
+_spec366 = _ilu366.spec_from_file_location("_mws_366", ROOT / "install" / "make_windows_shims.py")
+_mws366 = _ilu366.module_from_spec(_spec366)
+_spec366.loader.exec_module(_mws366)
+
+_gen366 = sorted(shim for _src, shim in _mws366.targets())
+_other366 = sorted(set(p for sub in ("bin", "hooks", "install") for p in (ROOT / sub).glob("*.cmd")) - set(_gen366))
+_pop366 = _gen366 + _other366
+
+# The variable is spelled from pieces so this file never contains the literal it forbids.
+_var366 = _re366.compile("%" + "error" + "level" + "%", _re366.I)
+
+
+def _rel366(p):
+    return str(p.relative_to(ROOT))
+
+
+def _scan366(path):
+    """Return (offending line numbers, final-line info) using a simple paren depth counter."""
+    depth, bad = 0, []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    last_py, exit_after, exit_depth = None, None, None
+    for n, raw in enumerate(lines, 1):
+        s = raw.strip()
+        if not s or s.lower().startswith("rem ") or s.lower() == "rem" or s.startswith("::"):
+            continue
+        if s.startswith(")"):
+            depth = max(0, depth - 1)
+        if depth > 0 and _var366.search(s):
+            bad.append(n)
+        if _re366.match(r'(py -3|python)\s+"', s):
+            last_py, exit_after = n, None
+        elif last_py is not None and exit_after is None and s.lower() == "exit /b " + "%" + "error" + "level" + "%":
+            exit_after, exit_depth = n, depth
+        if s.endswith("("):
+            depth += 1
+    return bad, last_py, exit_after, exit_depth
+
+
+check("the generator produces a population of shims (at least 10)", len(_gen366) >= 10,
+      saw="%d generated: %r" % (len(_gen366), [_rel366(p) for p in _gen366]))
+check("...and every one of them exists on disk", not [p for p in _gen366 if not p.is_file()],
+      saw="%r" % ([_rel366(p) for p in _gen366 if not p.is_file()],))
+
+_off366, _noexit366 = [], []
+for _p366 in _pop366:
+    if not _p366.is_file():
+        continue
+    _bad366, _lp366, _ea366, _ed366 = _scan366(_p366)
+    _off366 += ["%s:%d" % (_rel366(_p366), n) for n in _bad366]
+    if _p366 in _gen366 and not (_lp366 is not None and _ea366 is not None and _ed366 == 0):
+        _noexit366.append(_rel366(_p366))
+
+check("NO SHIM READS THE EXIT CODE INSIDE AN OPEN PARENTHESISED BLOCK", not _off366,
+      saw="offenders: %r" % (_off366,))
+check("EVERY GENERATED SHIM EXITS WITH THE EXIT CODE AT DEPTH 0 RIGHT AFTER INVOKING PYTHON",
+      not _noexit366, saw="offenders: %r" % (_noexit366,))
+
+_run366 = _sp366.run([_sys366.executable, str(ROOT / "install" / "make_windows_shims.py"), "--check"],
+                     capture_output=True, text=True, timeout=60)
+check("the generator's --check reports no drift", _run366.returncode == 0,
+      saw="rc=%d %s%s" % (_run366.returncode, _run366.stdout, _run366.stderr))
+# ---- 367_tree_walk_order_is_unchanged_by_the_faster_sort.py
+# ------------------ the walk's faster sort orders paths exactly as Path comparison does
+# 🐛 [2026-09-30] (R142 acc2, 2026-09-30) `tree._walk` ended in `files.sort()` on Path objects, which
+# recomputed each comparison key per comparison: 55,128 `Path.__lt__` calls, 0.378 s of a 1.68 s walk over
+# 7,331 files. It now sorts on a key computed once per path. The key must give the identical order.
+# (a) a fixture tree with ordering-hostile names; (b) the real repository; (c) seeded populations for both
+# path flavours, compared against the flavour's own Path ordering.
+import pathlib as _pl367
+import random as _rnd367
+import shutil as _sh367
+import importlib as _il367
+
+_tree367 = _il367.import_module("tree")
+
+_dir367 = tempfile.mkdtemp(prefix="chamnan-check367-")
+try:
+    _i367 = subprocess.run(["git", "init", "-q", _dir367], capture_output=True, text=True, timeout=30)
+    check("the fixture repository was initialised", _i367.returncode == 0, saw=_i367.stderr)
+    _names367 = ["a-b.py", "a/b.py", "a.b/c.py", "A.py", "a.py", "_x.py", "ä.py", "z/9.py", "z/10.py", "z0.py"]
+    for _n367 in _names367:
+        _f367 = os.path.join(_dir367, *_n367.split("/"))
+        os.makedirs(os.path.dirname(_f367), exist_ok=True)
+        with open(_f367, "w", encoding="utf-8") as _fh367:
+            _fh367.write("x\n")
+    _got367, _gits367 = _tree367._walk(_dir367)
+    # A.py and a.py are ONE file on a case-insensitive filesystem (the default on macOS).
+    _ci367 = os.path.exists(os.path.join(_dir367, "a.PY"))
+    _want367 = len({n.lower() for n in _names367}) if _ci367 else len(_names367)
+    check("the fixture walk returned every file", len(_got367) == _want367,
+          saw="%d of %d: %r" % (len(_got367), _want367, _got367))
+    check("FIXTURE: THE WALK ORDER EQUALS PLAIN PATH ORDERING", _got367 == sorted(list(_got367)),
+          saw="%r vs %r" % (_got367, sorted(list(_got367))))
+finally:
+    _sh367.rmtree(_dir367, ignore_errors=True)
+
+_real367 = _pl367.Path(ROOT).resolve().parent.parent
+if (_real367 / ".git").exists() and (_real367 / "Work-Mode").is_dir():
+    _rf367, _rg367 = _tree367._walk(_real367)
+    check("REAL REPOSITORY: THE WALK ORDER EQUALS PLAIN PATH ORDERING (%d files)" % len(_rf367),
+          len(_rf367) > 100 and _rf367 == sorted(list(_rf367)))
+else:
+    check("real repository not available here, part (b) skipped", True)
+
+_rng367 = _rnd367.Random(367)
+_alpha367 = "aAbBzZ_-.09äÄΣσ"
+
+
+def _gen367():
+    out = set()
+    while len(out) < 200:
+        segs = ["".join(_rng367.choice(_alpha367) for _ in range(_rng367.randint(1, 4)))
+                for _ in range(_rng367.randint(1, 3))]
+        segs = [s for s in segs if s not in (".", "..")]
+        if segs:
+            out.add("/".join(segs))
+    return sorted(out)
+
+
+_pop367 = _gen367()
+for _cls367, _key367, _lbl367 in ((_pl367.PurePosixPath, _tree367._SORT_KEY_POSIX, "posix"),
+                                  (_pl367.PureWindowsPath, _tree367._SORT_KEY_WINDOWS, "windows")):
+    _paths367 = [_cls367(s) for s in _pop367]
+    _rng367.shuffle(_paths367)
+    _ref367 = sorted(list(_paths367))
+    _new367 = sorted(_paths367, key=_key367)
+    check("%s: THE KEYED ORDER EQUALS PATH ORDERING over %d generated paths" % (_lbl367, len(_paths367)),
+          _new367 == _ref367,
+          saw="first difference: %r" % (next(((a, b) for a, b in zip(_new367, _ref367) if a != b), None),))
+# ---- 368_token_counts_are_not_secrets_and_commas_survive.py
+# ------------------ a token COUNT is not a secret, and a redacted JSON value keeps its comma
+# 🐛 [2026-09-30] (R165 acc2, 2026-09-30) `redact.scrub` over this workspace flagged token-usage JSON:
+# `"output_tokens": 1234567` was redacted at the five-digit floor, and `"total_tokens": 88123,
+# "model": "x"` came back as `<REDACTED> "model": "x"` with the comma swallowed. The exemption is
+# narrow (key ends in the plural `tokens`, value is 1-12 plain digits); the comma is given back by
+# the one helper the four bare-run rules share. Secret-shaped values are built at runtime from
+# `random.Random(368)`; this repository keeps no key-shaped literal in any file.
+import importlib as _il368
+import importlib.util as _ilu368
+import json as _js368
+import random as _rnd368
+import string as _str368
+
+_r368 = _il368.import_module("redact")
+_rng368 = _rnd368.Random(368)
+_ALNUM368 = _str368.ascii_letters + _str368.digits
+
+
+def _pick368(alpha, n):
+    return "".join(_rng368.choice(alpha) for _ in range(n))
+
+
+_KEYS368 = ("input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens",
+            "cache_creation_input_tokens", "max_tokens", "n_tokens", "num_tokens")
+_VALS368 = ("6", "9655", "88123", "1234567", "123456789012")
+_FORMS368 = {
+    "json": '{{"{k}": {v}, "model": "x"}}',
+    "yaml": "{k}: {v}",
+    "assign": "{k} = {v}",
+}
+_moved368 = []
+_cases368 = 0
+for _k368 in _KEYS368:
+    for _v368 in _VALS368:
+        for _fn368, _tpl368 in _FORMS368.items():
+            _t368 = _tpl368.format(k=_k368, v=_v368)
+            _cases368 += 1
+            if _r368.scrub(_t368) != _t368:
+                _moved368.append(f"{_fn368}:{_k368}={_v368}")
+check(f"token counts are left unchanged across {_cases368} key/value/form cases",
+      _cases368 == 120 and not _moved368, saw="; ".join(_moved368[:5]) or None)
+
+# (b) what must still be redacted
+_pw368 = _pick368("0123456789", 8)
+_tok32_368 = _pick368(_ALNUM368, 32)
+_tok40_368 = _pick368(_ALNUM368, 40)
+_prov368 = "gh" + "p_" + _pick368(_ALNUM368, 36)
+_still368 = {
+    "numeric password": (f"password = {_pw368}", _pw368),
+    "quoted access_token": (f'"access_token": "{_tok32_368}"', _tok32_368),
+    "api_token assignment": (f"api_token = {_tok40_368}", _tok40_368),
+    "provider key after total_tokens": (f'"total_tokens": 88123, "k": "{_prov368}"', _prov368),
+}
+_leak368 = [_n368 for _n368, (_t368, _s368) in _still368.items() if _s368 in _r368.scrub(_t368)]
+check("a numeric password, a quoted access_token, an api_token and a provider key beside a count stay redacted",
+      len(_still368) == 4 and not _leak368, saw="; ".join(_leak368) or None)
+_cnt368 = _r368.scrub(f'"total_tokens": 88123, "k": "{_prov368}"')
+check("the count beside that provider key survives while the key does not",
+      '"total_tokens": 88123,' in _cnt368 and _r368.PLACEHOLDER in _cnt368, saw=_cnt368[:60])
+
+# (c) comma preservation for every rule that shares the bare-run value shape
+_bad368 = []
+_words368 = ("password", "secret", "api_token", "db_password")
+for _w368 in _words368:
+    _val368 = "Hx7" + _pick368("0123456789", 6) + _pick368(_ALNUM368, 6)
+    _line368 = '{"' + _w368 + '": ' + _val368 + ', "next": 1}'
+    _out368 = _r368.scrub(_line368)
+    _load368 = _out368.replace(_r368.PLACEHOLDER, "null")
+    try:
+        _js368.loads(_load368)
+        _ok368 = True
+    except ValueError:
+        _ok368 = False
+    if ', "next": 1}' not in _out368 or _val368 in _out368 or not _ok368:
+        _bad368.append(f"{_w368}: {_out368}")
+check("a redacted unquoted JSON value keeps `, \"next\": 1}` and the result still parses",
+      not _bad368, saw="; ".join(_bad368[:2]) or None)
+
+# The no-space form: `DELIMITED_AFTER_SECRET_WORD` used to take the key's closing quote as the
+# opening quote of a value, eating the `:` and the comma.
+_bad2368 = []
+for _w368 in _words368 + ("passwd", "api_key"):
+    _val368 = "Hx7" + _pick368("0123456789", 6) + _pick368(_ALNUM368, 6)
+    _line368 = '{"' + _w368 + '":' + _val368 + ',"next":1}'
+    _out368 = _r368.scrub(_line368)
+    try:
+        _js368.loads(_out368.replace(_r368.PLACEHOLDER, "null"))
+        _ok368 = True
+    except ValueError:
+        _ok368 = False
+    if '{"' + _w368 + '":' + _r368.PLACEHOLDER + ',"next":1}' != _out368 or not _ok368:
+        _bad2368.append(f"{_w368}: {_out368}")
+check("the no-space form `{\"w\":value,\"next\":1}` keeps its colon and comma for six secret words",
+      not _bad2368, saw="; ".join(_bad2368[:2]) or None)
+
+# The four rules that take a bare `\S` run all give the comma back through one helper.
+_val2368 = "Hx7" + _pick368("0123456789", 6) + _pick368(_ALNUM368, 6)
+_rules368 = {
+    "ASSIGNED_SECRET_BARE": f"db_password: {_val2368},\n",
+    "COPULA_SECRET": f"the password is {_val2368}, ok",
+    "SPACED_SECRET": f"x password {_val2368},",
+    "FLAG_SECRET": f"tool --password {_val2368}, x",
+}
+_lost368 = []
+for _rn368, _t368 in _rules368.items():
+    _o368 = _r368.scrub(_t368)
+    if _val2368 in _o368 or "," not in _o368:
+        _lost368.append(_rn368)
+check("each of the four bare-run rules leaves the value's trailing comma in place",
+      len(_rules368) == 4 and not _lost368, saw="; ".join(_lost368) or None)
+_inner368 = _r368.scrub("API_TOKEN=" + "abcdef,Tr0ub" + "4dorENV88")
+check("a comma INSIDE a value does not split it", "Tr0ub" not in _inner368, saw=_inner368)
+
+# (d) the redactor's own precision fixture, measured by chamnan-corpus/redaction/recall.py
+_rc368 = ROOT.parent / "chamnan-corpus" / "redaction" / "recall.py"
+if _rc368.is_file():
+    _spec368 = _ilu368.spec_from_file_location("_recall368", _rc368)
+    _mod368 = _ilu368.module_from_spec(_spec368)
+    _spec368.loader.exec_module(_mod368)
+    _eaten368 = [_l for _l, _t in _mod368.NEGATIVES if _r368.PLACEHOLDER in _r368.scrub(_t)]
+    _caught368 = sum(1 for _l, _t, _s in _mod368.POSITIVES + _mod368.COLUMNS + _mod368.PERSONAL
+                     if _s not in _r368.scrub(_t))
+    _benign368 = [_i for _i, _t, _s, _src in _mod368.corpus_cases()
+                  if not _s and _r368.PLACEHOLDER in _r368.scrub(_t)]
+    check(f"the precision fixture damages 0 of {len(_mod368.NEGATIVES)} ordinary strings and 0 benign corpus cases",
+          not _eaten368 and not _benign368 and len(_mod368.NEGATIVES) >= 48,
+          saw=f"{_eaten368} {_benign368}")
+    check(f"the recall fixture still catches at least 98 of its 99 shapes (caught {_caught368})",
+          _caught368 >= 98, saw=str(_caught368))
+# ---- 369_no_check_or_plugin_file_names_this_machines_home.py
+# ------------------ no pool check or shipped plugin file names this machine's home directory
+# 🐛 [2026-09-30] (R68 acc4, 2026-09-29, found while clearing it on 2026-09-30) Nine pool checks written
+# that day (352, 353, 356, 358, 360, 361, 364, 365, 367) created their fixtures with
+# `mkdtemp(dir=<this machine's home>/.../.chamnan/logs)`. The pool is folded into the plugin's suite,
+# which runs in CI and on anyone's machine: there that directory does not exist, every one of those
+# checks fails, and the owner's user name ships in a public file. They now use `mkdtemp(prefix=...)`
+# like their siblings.
+#
+# Derived, not listed: every pool check and every tracked plugin file is read, and the home path is
+# taken from `Path.home()` at run time, so this file never contains the string it forbids.
+import subprocess as _sp369
+from pathlib import Path as _P369
+
+_home369 = str(_P369.home())
+import re as _re369
+# From ROOT, not __file__: under suite_slice this file runs as a generated script elsewhere.
+_checks369 = sorted(p for p in (ROOT.parent.parent / ".chamnan" / "tools" / "checks").glob("*.py")
+                    if _re369.match(r"\d+_", p.name))
+_ls369 = _sp369.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True)
+_plugin369 = [ROOT / p.decode("utf-8", "replace") for p in _ls369.stdout.split(b"\0") if p]
+
+check("the populations are real: pool checks and tracked plugin files were both found",
+      len(_checks369) >= 100 and len(_plugin369) >= 100 and len(_home369) > 3,
+      saw=(len(_checks369), len(_plugin369)))
+
+
+def _offenders369(paths):
+    out = []
+    for _p in paths:
+        try:
+            if _p.is_file() and _home369 in _p.read_text(encoding="utf-8", errors="ignore"):
+                out.append(_p.name)
+        except OSError:
+            continue
+    return out
+
+
+_bad_checks369 = _offenders369(_checks369)
+check("NO POOL CHECK NAMES THIS MACHINE'S HOME DIRECTORY", not _bad_checks369, saw=_bad_checks369)
+_bad_plugin369 = _offenders369(_plugin369)
+check("NO TRACKED PLUGIN FILE NAMES THIS MACHINE'S HOME DIRECTORY", not _bad_plugin369,
+      saw=_bad_plugin369[:20])
 # ---- 36_the_guard_knows_whether_this_tree_can_ship.py
 # ------------------------------------------- a wall of matches from a tree that cannot ship
 # 🐛 [2026-09-10] The publication guard asks "is something about to SHIP that names the owner's real
@@ -46353,6 +48037,109 @@ if _t_ws36b is not None:
     else:
         check("the guard has a high-water mark for its own denylist",
               False, saw="check_the_list_has_not_shrunk is not defined in the guard")
+# ---- 370_the_stem_prefilter_folds_exactly_like_re_i.py
+# ------------------ the stem prefilter scans a folded copy and finds what the re.I scan found
+# 🐛 [2026-09-30] (R128 acc2, 2026-09-29; proof 2026-09-30) The secret-word stem alternation now
+# runs case-sensitively over `text.translate(_STEM_FOLD).lower()` instead of under `re.I`. That is
+# only sound if the fold agrees with `re.I` for every stem letter at every code point and never
+# changes the length of the text (indices are taken from the folded copy). Both are enumerated
+# here rather than sampled, and the behaviour is compared against HEAD's module on real text.
+import importlib as _il370
+import importlib.util as _ilu370
+import re as _re370
+import statistics as _st370
+import subprocess as _sp370
+import sys as _sys370
+import tempfile as _tf370
+import time as _tm370
+from pathlib import Path as _P370
+
+_r370 = _il370.import_module("redact")
+_stems370 = _r370.secret_word_stems()
+_letters370 = sorted({c for s in (_stems370 or []) for c in s})
+_fold370 = _r370._STEM_FOLD
+_bad370 = []
+_bad_len370 = []
+# A code point with no case mapping (lower, upper and casefold all leave it unchanged) and outside
+# `_STEM_FOLD` can only match itself under re.I, and the fold leaves it alone too, so skipping it
+# loses nothing; every code point re.I could equate with a stem letter has a mapping or is folded.
+_keys370 = set(_fold370)
+_pats370 = {_ch370: _re370.compile(_re370.escape(_ch370), _re370.I) for _ch370 in _letters370}
+_seen370 = 0
+for _cp370 in range(0x110000):
+    if 0xD800 <= _cp370 <= 0xDFFF:
+        continue
+    _c370 = chr(_cp370)
+    if not (_c370.lower() != _c370 or _c370.upper() != _c370 or _c370.casefold() != _c370
+            or _cp370 in _keys370):
+        continue
+    _seen370 += 1
+    _f370 = _c370.translate(_fold370).lower()
+    if len(_f370) != 1:
+        _bad_len370.append(hex(_cp370))
+    for _ch370, _pat370 in _pats370.items():
+        if (_pat370.fullmatch(_c370) is not None) != (_f370 == _ch370.lower()):
+            _bad370.append(f"U+{_cp370:04X}~{_ch370!r}")
+check(f"the fold agrees with re.I for all {len(_letters370)} stem letters over every cased or folded code point",
+      bool(_stems370) and len(_letters370) >= 10 and not _bad370, saw="; ".join(_bad370[:6]) or None)
+check("the fold keeps the length of every single code point, so indices never shift",
+      not _bad_len370, saw="; ".join(_bad_len370[:6]) or None)
+
+# (c) behaviour against a copy of HEAD's module, loaded under another name
+_head370 = _sp370.run(["git", "-C", str(ROOT), "show", "HEAD:lib/redact.py"],
+                      capture_output=True, text=True)
+_old370 = None
+if _head370.returncode == 0 and _head370.stdout:
+    with _tf370.TemporaryDirectory() as _d370:
+        _fp370 = _P370(_d370) / "redact_head370.py"
+        _fp370.write_text(_head370.stdout, encoding="utf-8")
+        _had370 = "redact_head370" in _sys370.modules
+        _spec370 = _ilu370.spec_from_file_location("redact_head370", _fp370)
+        _old370 = _ilu370.module_from_spec(_spec370)
+        _sys370.modules["redact_head370"] = _old370
+        try:
+            _spec370.loader.exec_module(_old370)
+        finally:
+            if not _had370:
+                _sys370.modules.pop("redact_head370", None)
+
+_map370 = ROOT.parent.parent / ".chamnan" / "MAP.md"
+_texts370 = {
+    "turkish": "ŞİFRE = " + "Hx7" + "4815162",
+    "long s": "paſsword = " + "Hx7" + "4815162",
+    "cyrillic": "ТОКЕН: " + "Hx7" + "4815162",
+    "dotless": "PASSWORD = " + "Hx7" + "4815162" + " and passwırd = " + "Zq9" + "8123",
+    "old cyrillic": "тᲂкен: " + "Hx7" + "4815162",
+    "mixed case": "ApI_KeY = " + "Hx7" + "4815162" + " and SECRET: " + "Zq9" + "8123",
+}
+if _map370.is_file():
+    _texts370["MAP.md"] = _map370.read_text(encoding="utf-8", errors="replace")
+_diff370 = []
+if _old370 is not None:
+    for _n370, _t370 in _texts370.items():
+        _a370 = [(m.start(), m.end()) for m in _r370._secret_word_hits_uncached(_t370)]
+        _b370 = [(m.start(), m.end()) for m in _old370._secret_word_hits_uncached(_t370)]
+        if _a370 != _b370 or _r370.scrub(_t370) != _old370.scrub(_t370):
+            _diff370.append(_n370)
+check(f"the new prefilter and HEAD's re.I one agree on hits and scrub output over {len(_texts370)} texts",
+      _old370 is not None and not _diff370,
+      saw="; ".join(_diff370) or ("no HEAD copy" if _old370 is None else None))
+
+# (d) timing over MAP.md, median of 3 (skipped when the file is absent)
+if _old370 is not None and _map370.is_file():
+    _big370 = _texts370["MAP.md"]
+
+    def _time370(mod):
+        mod._secret_word_hits_uncached(_big370)
+        runs = []
+        for _ in range(3):
+            t0 = _tm370.perf_counter()
+            mod._secret_word_hits_uncached(_big370)
+            runs.append(_tm370.perf_counter() - t0)
+        return _st370.median(runs)
+    _tn370, _to370 = _time370(_r370), _time370(_old370)
+    check("scanning MAP.md with the folded prefilter is not slower than the re.I one",
+          _tn370 <= _to370 * 1.1, saw=f"new={_tn370 * 1000:.1f}ms old={_to370 * 1000:.1f}ms")
 # ---- 37_two_different_sequences_get_two_candidate_files.py
 # ------------------------------------------- the second habit overwrote the first, silently
 # 🐛 [2026-09-10] `candidates.slug` truncated at 60 characters with no collision check, so two
