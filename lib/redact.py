@@ -2234,11 +2234,22 @@ def secret_word_stems():
     return sorted(s for s in stems if not any(other != s and other in s for other in stems))
 
 
+# 🐛 [2026-09-30] (R128 acc2, 2026-09-29; proof 2026-09-30) The stem alternation under `re.I` took
+# 172.6 ms on 545 KB; lowering the text and scanning case-sensitively took 35.7 ms with identical
+# spans. `re.I` and `str.lower()` disagree for the stem letters ONLY at U+0130, U+0131 (to `i`),
+# U+017F (to `s`) and U+1C82-U+1C85 (old Cyrillic forms of o, s, t, t); mapping those first makes
+# `c.translate(_STEM_FOLD).lower()` agree with `re.fullmatch(ch, c, re.I)` for every code point.
+_STEM_FOLD = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s",
+                            "\u1c82": "\u043e", "\u1c83": "\u0441",
+                            "\u1c84": "\u0442", "\u1c85": "\u0442"})
+
+
 def _make_stem_filter():
     stems = secret_word_stems()
     if not stems:
         return None
-    return re.compile("|".join(sorted(map(re.escape, stems), key=len, reverse=True)), re.I)
+    folded = {s.translate(_STEM_FOLD).lower() for s in stems}
+    return re.compile("|".join(sorted(map(re.escape, folded), key=len, reverse=True)))
 
 
 # Deliberately NOT `_lazy`: that helper caches in `_real` and treats `None` as "not built yet", so
@@ -2291,7 +2302,11 @@ def _secret_word_hits_uncached(text):
     # same run: its span merges with the previous one whatever `lo` is, so only `hi` moves on, from
     # where the last walk stopped. Output identical; each character is walked at most once.
     run_hi = -1
-    for m in lit.finditer(text):
+    # Every index below is into the original `text`. The fold keeps the length (U+0130 is the only
+    # code point whose lower() changes it, and it is translated to `i` first), so a hit position in
+    # `folded` is the same position in `text`.
+    folded = text.translate(_STEM_FOLD).lower()
+    for m in lit.finditer(folded):
         lo, hi = m.start(), max(m.end(), run_hi)
         if lo >= run_hi:
             while lo > 0 and (text[lo - 1].isalnum() or text[lo - 1] in "_-"):
