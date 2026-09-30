@@ -355,7 +355,9 @@ def _git_edits(root, now, cutoff):
             at = int(line[1:])
             continue
         if at is not None and cutoff <= at <= now:
-            rows.append((at, line))
+            # 🐛 [2026-09-30] (R97 acc4, 2026-09-30) A committed `tab<TAB>X.py` showed in the
+            # "Last edited" line as git's quoted spelling `"tab\tX.py"`, not the file's name.
+            rows.append((at, ws.unquote_git_path(line)))
     return rows
 
 

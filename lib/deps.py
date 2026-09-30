@@ -294,6 +294,10 @@ def removals(root, window=WINDOW, manifests=None):
         for rec in log.split("\x00")[1:]:
             head, _, rest = rec.partition("\n")
             path = next((l.strip() for l in rest.splitlines() if l.strip()), "")
+            # 🐛 [2026-09-30] (R97 acc4, 2026-09-30) A quote-bearing manifest path arrived in git's
+            # C-quoted spelling, which `git show rev:path` below cannot find. (`_run` already sets
+            # core.quotePath=false, so Thai names were fine.)
+            path = ws.unquote_git_path(path)
             if head.count("\t") >= 2 and path:
                 revs.append(head.split("\t", 2) + [path])
         if len(revs) < 2:

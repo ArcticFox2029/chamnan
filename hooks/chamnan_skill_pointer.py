@@ -365,7 +365,12 @@ def _about_to_discard(command, root):
         return ""
     if out.returncode != 0:
         return ""
-    dirty = [ln[3:] for ln in out.stdout.splitlines() if ln.strip()]
+    # 🐛 [2026-09-30] (R97 acc4, 2026-09-30) quotePath=false still leaves a quote, backslash or
+    # tab in a name C-quoted, so the advisory printed `"tab\tX.py"` instead of the file's name.
+    # A rename or copy line reads `old -> new`, each side quoted on its own, so each is unquoted apart.
+    dirty = [" -> ".join(ws.unquote_git_path(p) for p in
+                         (ln[3:].split(" -> ", 1) if ln[:1] in ("R", "C") else [ln[3:]]))
+             for ln in out.stdout.splitlines() if ln.strip()]
     if not dirty:
         return ""
     return ("chamnan: %s. %d file(s) in this repository currently carry uncommitted work.\n"

@@ -97,10 +97,12 @@ def gone_since(root, rel):
     #
     # `ls-tree` rather than `cat-file -e`: a directory is not a blob, and instruction files name
     # directories as often as files. One call answers for both shapes.
-    code, out = _git(root, ["ls-tree", "--name-only", last, "--", *named])
+    # 🐛 [2026-09-30] (R97 acc4, 2026-09-30) Without quotePath=false a Thai or accented path came
+    # back octal-escaped and quote-bearing ones C-quoted, so `n in existed` never matched them.
+    code, out = _git(root, ["-c", "core.quotePath=false", "ls-tree", "--name-only", last, "--", *named])
     if code != 0:
         return [], len(named)
-    existed = {ln.strip() for ln in out.split("\n") if ln.strip()}
+    existed = {ws.unquote_git_path(ln.strip()) for ln in out.split("\n") if ln.strip()}
     for n in named:
         if n in existed and not os.path.exists(os.path.join(str(root), n)):
             gone.append(n)
