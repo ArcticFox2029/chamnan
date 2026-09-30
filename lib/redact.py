@@ -405,6 +405,11 @@ PATTERNS = [
     # The right edge refuses more of the alphabet, so a longer run is not half-matched.
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])cf(?:k|ut|at)_[A-Za-z0-9]{40}[0-9a-f]{8}(?![A-Za-z0-9])")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])sb_secret_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{8}(?![A-Za-z0-9_-])")),
+    # 🐛 [2026-09-30] (R71 acc2, 2026-09-30) A NuGet API key is `oy2` plus 43 lowercase letters or
+    # digits (46 characters; the shape TruffleHog's NuGet detector and GitHub's `nuget_api_key`
+    # pattern use). Standing alone, with no secret word nearby, it passed clear. Hard edges on both
+    # sides, so a longer run or an ordinary word ending in `oy2` is not touched.
+    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])oy2[a-z0-9]{43}(?![A-Za-z0-9])")),
     # An Authorization header names its scheme and then hands over the credential. Matching this
     # explicitly is not a nicety: the bare-assignment rule below sees "Authorization:" as a secret
     # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
@@ -2431,7 +2436,7 @@ _TEMPLATED = _lazy(lambda: re.compile(r"\{[^{}]*\}"))
 # disqualifies the exemption.
 _CREDENTIAL_PREFIX = _lazy(lambda: re.compile(
     r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprse]-|"
-    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_|cfk_|cfut_|cfat_|sb_secret_)", re.I))
+    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_|cfk_|cfut_|cfat_|sb_secret_|oy2)", re.I))
 _WEAK_SECRET_WORD = _lazy(lambda: re.compile(r"(?:^|[^A-Za-z])keys?\s*$", re.I))
 
 
