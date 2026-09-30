@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Files whose names hold a double quote, a backslash or a tab now get their churn counted.** git
+  quotes such names even with `core.quotePath=false`, so the most-edited ranking and a thread's
+  historical names keyed them under a quoted spelling that matched no real file. Both now undo git's
+  quoting, with the same reader the commit guard already used.
 - **The end-of-session digest is no longer cut off by Claude Code.** A SessionEnd hook that declares no
   timeout gets 1.5 s, and chamnan's took about a second on a large workspace and 6 s on a busy machine, so
   the host could kill it before the digest was written. It now asks for 10 s.

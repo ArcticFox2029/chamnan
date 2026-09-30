@@ -355,7 +355,12 @@ def _churn(root, window=CHURN_WINDOW):
             continue
         # --name-status emits "<status>\t<path>", and for a rename or copy
         # "R100\t<old>\t<new>". Credit the whole history to the name that survives.
-        parts = line.split("\t")
+        # 🐛 [2026-09-30] (R56 acc2, 2026-09-30) `core.quotePath=false` does not stop git from
+        # C-quoting a path that holds a double quote, a backslash or a control character. In a
+        # fixture, `with"quote.py` came back as `"with\"quote.py"` and `tab<TAB>here.py` as
+        # `"tab\there.py"`, so their churn was keyed under a spelling that matches no real file.
+        # Every path field goes through `ws.unquote_git_path`, which is a no-op on an unquoted name.
+        parts = [line.split("\t")[0]] + [ws.unquote_git_path(p) for p in line.split("\t")[1:]]
         if len(parts) >= 3 and parts[0][:1] in ("R", "C"):
             old, new = parts[1], parts[2]
             renamed_from[old] = renamed_from.get(new, new)

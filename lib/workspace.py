@@ -4446,3 +4446,43 @@ def git_cannot_answer():
     timeout is one. Named through `_subprocess()` so this file keeps the property above.
     """
     return (OSError, ValueError, NotImplementedError, _subprocess().SubprocessError)
+
+
+# 🐛 [2026-09-28] (R185 acc4, 2026-09-28) `-c core.quotePath=false` above turns off quoting for
+# non-ASCII bytes, but a double quote, a backslash or a control character in a path is ALWAYS
+# C-quoted by git — `core.quotePath` cannot suppress that half. So a `+++` header can still arrive
+# as `"b/weird\"name.txt"`, and reading it as plain text would leave the surrounding quotes and the
+# backslash escapes in the reported path. This reverses git's own quoting: C escapes (`\t`, `\"`,
+# `\\`) and `\NNN` octal-byte escapes decode back to the real UTF-8 name.
+# Since 2026-09-30 it serves both `bin/chamnan-guard` and `rollup._churn` (R56 acc2).
+def unquote_git_path(raw):
+    """Reverse git's C-quoting of `raw`, or return it unchanged when it was never quoted."""
+    if len(raw) < 2 or raw[0] != '"' or raw[-1] != '"':
+        return raw
+    body = raw[1:-1]
+    _SIMPLE = {"a": 0x07, "b": 0x08, "f": 0x0c, "n": 0x0a, "r": 0x0d, "t": 0x09, "v": 0x0b,
+               '"': 0x22, "\\": 0x5c}
+    out, i, n = bytearray(), 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "\\" and i + 1 < n:
+            nxt = body[i + 1]
+            if nxt in _SIMPLE:
+                out.append(_SIMPLE[nxt])
+                i += 2
+                continue
+            if nxt in "01234567":
+                j = i + 1
+                while j < n and j < i + 4 and body[j] in "01234567":
+                    j += 1
+                digits = body[i + 1:j]
+                out.append(int(digits, 8) & 0xFF)
+                i = j
+                continue
+            # An escape this reader does not recognise: keep it literal rather than guess.
+            out.extend(c.encode("utf-8"))
+            i += 1
+            continue
+        out.extend(c.encode("utf-8"))
+        i += 1
+    return out.decode("utf-8", "replace")

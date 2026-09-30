@@ -340,7 +340,9 @@ def historical_names(root, target):
             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=10)
         if out.returncode == 0:
-            names = {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+            # 🐛 [2026-09-30] (R56 acc2, 2026-09-30) quotePath=false leaves a path with a double quote,
+            # a backslash or a control character C-quoted, and the quoted spelling matches no thread.
+            names = {ws.unquote_git_path(ln.strip()) for ln in out.stdout.splitlines() if ln.strip()}
     except ws.git_cannot_answer():
         names = set()
     return _NAMES_CACHE.setdefault(key, names)
