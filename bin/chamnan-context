@@ -318,8 +318,11 @@ def main():
     # untouched, only the unspecified default routes through ws.current_dir()'s readable sentence.
     # 🐛 [2026-09-30] Windows CI (Python 3.8) -- resolve() of a path with control characters raised
     # OSError instead of the refusal below. `_err` filters the text, so they do not reach the terminal.
+    # `ws.current_dir()` stays OUTSIDE the try: WorkingDirectoryGone is an OSError and must reach
+    # the excepthook, which says the directory no longer exists.
+    base = Path(args.root if args.root != "." else ws.current_dir())
     try:
-        root = Path(args.root if args.root != "." else ws.current_dir()).resolve()
+        root = base.resolve()
     except OSError:
         _err(f"chamnan: no such directory: {args.root}\n")
         return 1

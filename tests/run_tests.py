@@ -44677,7 +44677,7 @@ try:
           saw=repr([(r.get("id"), r.get("when")) for r in _t_lost334]))
     _t_out334 = _sp334.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                            input=_json334.dumps({"session_id": "c334", "cwd": str(_t_root334)}),
-                           cwd=str(_t_root334), capture_output=True, text=True).stdout
+                           cwd=str(_t_root334), capture_output=True, text=True, encoding="utf-8").stdout
     check("...and no planted text reaches the session block, while the real one is named",
           _t_marker334 not in _t_out334 and "`4e5f6a7b`" in _t_out334,
           saw=_t_out334[:400])
@@ -46317,7 +46317,12 @@ def _run_from_a_gone_directory348(argv):
 
 _bin_traceback348 = []
 _bin_missing_sentence348 = []
-for _c348 in _CMDS348:
+# Windows cannot remove a directory that is a process's working directory, so the state this
+# probes cannot occur there (first CI run: `rmdir` failed and every command read as exit 1).
+import os as _os348
+if _os348.name == "nt":
+    print("      · on Windows a working directory cannot be removed, so the bin/ probe was skipped")
+for _c348 in (_CMDS348 if _os348.name != "nt" else []):
     _rc348, _out348, _err348 = _run_from_a_gone_directory348([sys.executable, str(_c348)])
     if "Traceback" in _err348:
         _bin_traceback348.append("%s -> exit %s: %s"
@@ -47028,7 +47033,7 @@ else:
             _t.parent.mkdir(parents=True, exist_ok=True)
             _t.write_text("x\n", encoding="utf-8")
         _o358 = _sp358.run([_git358, "-C", str(_fix358), "check-attr", "linguist-generated", "--",
-                            *_FILES358], capture_output=True, text=True)
+                            *_FILES358], capture_output=True, text=True, encoding="utf-8")
         _git_says358 = {}
         for _line in _o358.stdout.splitlines():
             _path, _, _val = _line.rpartition(": linguist-generated: ")
@@ -47258,7 +47263,13 @@ try:
           _t_secs360 < _t_declared360,
           saw="took %.2f s against a declared %s s" % (_t_secs360, _t_declared360))
 finally:
-    _sh360.rmtree(_t_fix360, ignore_errors=True)
+    # Windows CI: a process the hook started can still hold a file for a moment, and rmtree
+    # there leaves the fixture behind; retry briefly before judging.
+    for _t_try360 in range(20):
+        _sh360.rmtree(_t_fix360, ignore_errors=True)
+        if not _os360.path.exists(_t_fix360):
+            break
+        _tm360.sleep(0.5)
 check("...and the fixture was removed", not _os360.path.exists(_t_fix360), saw=_t_fix360)
 # ---- 361_churn_keeps_awkward_file_names.py
 # ------------------ churn is keyed by the real file name, also for names git always C-quotes
@@ -47941,8 +47952,13 @@ _checks369 = sorted(p for p in (ROOT.parent.parent / ".chamnan" / "tools" / "che
 _ls369 = _sp369.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True)
 _plugin369 = [ROOT / p.decode("utf-8", "replace") for p in _ls369.stdout.split(b"\0") if p]
 
-check("the populations are real: pool checks and tracked plugin files were both found",
-      len(_checks369) >= 100 and len(_plugin369) >= 100 and len(_home369) > 3,
+# In CI the plugin is checked out alone, with no workspace beside it: the pool half is skipped
+# there (first CI run: 0 pool checks found), and the plugin half still runs.
+_pool_here369 = (ROOT.parent.parent / ".chamnan" / "tools" / "checks").is_dir()
+if not _pool_here369:
+    print("      · no .chamnan workspace beside this checkout, so the pool half was skipped")
+check("the populations are real: pool checks (where present) and tracked plugin files were found",
+      (len(_checks369) >= 100 or not _pool_here369) and len(_plugin369) >= 100 and len(_home369) > 3,
       saw=(len(_checks369), len(_plugin369)))
 
 
@@ -48096,9 +48112,14 @@ for _cp370 in range(0x110000):
     if len(_f370) != 1:
         _bad_len370.append(hex(_cp370))
     for _ch370, _pat370 in _pats370.items():
-        if (_pat370.fullmatch(_c370) is not None) != (_f370 == _ch370.lower()):
+        _re_hit370 = _pat370.fullmatch(_c370) is not None
+        _fold_hit370 = _f370 == _ch370.lower()
+        # A miss is unsafe (a secret word the scan would skip). An extra hit only widens a window,
+        # and is allowed at a `_STEM_FOLD` key: on Python 3.8, re.I does not equate U+1C82-U+1C85
+        # with Cyrillic o/s/t (first CI run of this check, ubuntu 3.8), while 3.13 does.
+        if _re_hit370 != _fold_hit370 and (_re_hit370 or _cp370 not in _keys370):
             _bad370.append(f"U+{_cp370:04X}~{_ch370!r}")
-check(f"the fold agrees with re.I for all {len(_letters370)} stem letters over every cased or folded code point",
+check(f"the fold never misses what re.I finds for all {len(_letters370)} stem letters, and adds only at its own keys",
       bool(_stems370) and len(_letters370) >= 10 and not _bad370, saw="; ".join(_bad370[:6]) or None)
 check("the fold keeps the length of every single code point, so indices never shift",
       not _bad_len370, saw="; ".join(_bad_len370[:6]) or None)
