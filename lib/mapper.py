@@ -1262,6 +1262,14 @@ def extract_python(source, path, lang='py'):
 # Each entry is (kind, pattern). Patterns are anchored at line start so a match is a top-level
 # declaration rather than something nested inside a function body.
 REGEX_RULES = {
+    # Used only when `ast` cannot be used on a Python file (the f-string cap or a parse error), so
+    # the map still lists its top-level names. A regex cannot see decorators' effects or nested
+    # scopes, which is why it is a fallback and never the first choice.
+    "py": [
+        ("func", r"^(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)"),
+        ("class", r"^class\s+(\w+)"),
+        ("const", r"^([A-Z][A-Z0-9_]{2,})\s*(?::[^=\n]*)?=(?!=)"),
+    ],
     "js": [
         # 🐛 `export default function Foo()` was invisible while `export default class Foo`
         # was not: the class rule three lines down already carried `default` and the func rule
@@ -1623,13 +1631,33 @@ def _sfc_extraction_source(source, path):
     return source
 
 
+# First line of a module docstring, linear in the file size: skip leading blank and `#` lines
+# (shebang, encoding, licence), then take the first line of the opening triple-quoted string.
+_PY_MODULE_DOCSTRING = re.compile(
+    r'\A(?:[ \t]*(?:#[^\n]*)?\n)*[ \t]*[rRuU]?("""|\'\'\')[ \t]*\n?[ \t]*([^\n]*)')
+
+
 def _extract_one(source, path, lang):
     """Dispatch to the right extractor. Separated from scan() so the caller can wrap exactly this
     in one try and keep a bad file from taking the run down with it."""
     if lang == "py":
         parsed = extract_python(source, path)
         if parsed[0] is None and not parsed[1]:
-            return leading_comment(source, lang), [], [], []
+            # 🐛 [2026-10-01] (owner) The owner asked (2026-09-30) whether skipping the over-cap
+            # file was hiding the problem. It was: the file lost its docstring and every top-level
+            # name, for the f-string cap and for any file `ast` rejects. The linear regex extractor
+            # other languages use now recovers them, and the file is still recorded as unparsed.
+            m = _PY_MODULE_DOCSTRING.match(source)
+            doc = ""
+            if m and m.group(2) and not m.group(2).startswith(m.group(1)):
+                first = m.group(2).strip()
+                if first.endswith(m.group(1)):
+                    first = first[:-3].strip()
+                doc = _first_sentence(_clip(first))
+            if not doc:
+                doc = leading_comment(source, lang)
+            _, funcs, classes, consts = extract_regex(source, "py")
+            return doc, funcs, classes, consts
         return parsed
     return extract_regex(_sfc_extraction_source(source, path), lang)
 

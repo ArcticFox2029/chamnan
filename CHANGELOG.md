@@ -21,6 +21,15 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A Python file chamnan cannot parse keeps its summary and its names.** A file over the f-string
+  limit (quadratic to parse on Python 3.12+), a Python 2 file or newer syntax on an older Python
+  used to reach the map with at most a `#` comment. Its module docstring and top-level functions,
+  classes and constants are now read line by line — a 593 KB file with 30,000 f-strings maps in
+  about a second — and the file is still reported as unparsed.
+- **A commit message quoted to the agent is marked as repository text.** The note about a package
+  being added back quoted the removing commit's subject in chamnan's own words; it is now fenced,
+  one line and capped, like every other piece of repository text chamnan passes on.
+
 ## What's new in 1.34.0
 
 _The unusual setup — Windows, a generated file, a clock that jumped, a key in an odd place — now
