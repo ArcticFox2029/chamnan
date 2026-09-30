@@ -93,6 +93,12 @@ def in_source(text, symbol):
     `kind` is "call", "attribute" or "def". A name inside a string, a comment or a docstring is
     none of those, and a call inside a function that binds the same name is not this symbol.
     """
+    # 🐛 [2026-09-30] (R68 acc2, 2026-09-30) `ast.parse` is quadratic in the f-string count on
+    # Python 3.12+, and this reads user files up to MAX_BYTES; over `tree.MAX_FSTRINGS` the file is
+    # reported as unjudged (None) rather than stalling `chamnan-where` for minutes.
+    import tree as tree_mod        # local alias: `tree` below is the parsed AST
+    if len(tree_mod.FSTRING_OPEN.findall(text)) > tree_mod.MAX_FSTRINGS:
+        return None
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError, RecursionError):

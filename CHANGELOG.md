@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A generated Python file full of f-strings no longer stalls the map for minutes.** On Python 3.12+
+  parsing is quadratic in the number of f-strings: a 1.47 MB module took 134 s, inside both of chamnan's
+  size limits, and the map runs from the git hook. A file with more than 5,000 f-strings is now listed
+  without being parsed, and `chamnan-where` reports it as unjudged.
 - **Files whose names hold a double quote, a backslash or a tab now get their churn counted.** git
   quotes such names even with `core.quotePath=false`, so the most-edited ranking and a thread's
   historical names keyed them under a quoted spelling that matched no real file. Both now undo git's

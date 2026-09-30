@@ -107,6 +107,10 @@ MAX_FILE_BYTES = tree.MAX_FILE_BYTES
 # any decode, for the same reason the size check happens before the read.
 MAX_FILE_LINES = 200_000
 
+# The f-string cap and its regex live in tree.py so refs.in_source shares one source of truth.
+MAX_FSTRINGS = tree.MAX_FSTRINGS
+_FSTRING_OPEN = tree.FSTRING_OPEN
+
 # What the last scan left out and why. Populated by indexable(), read by the caller that
 # reports coverage, so a skipped file is a number someone can see rather than an absence.
 SKIPPED_TOO_LARGE = []
@@ -1147,6 +1151,11 @@ def _parse_py(source, path):
     key, cached = _PARSE_MEMO
     if key is source:
         return cached
+    n_fstrings = len(_FSTRING_OPEN.findall(source))
+    if n_fstrings > MAX_FSTRINGS:
+        result = (None, [], f"{n_fstrings} f-strings exceeds the limit of {MAX_FSTRINGS}: f-strings parse in quadratic time on Python 3.12+")
+        _PARSE_MEMO = (source, result)
+        return result
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
