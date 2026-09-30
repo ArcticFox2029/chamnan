@@ -62,9 +62,65 @@ _SPLITTABLE = re.compile(r"[_.\-]|[a-z][0-9]|[0-9][a-zA-Z]|[a-z][A-Z]")
 _WORD_ANY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _ASCII_ONLY = re.compile(r"\A[\x00-\x7f]*\Z")
 
+# The shape of the stored terms. Bump it when `terms()` changes what it emits, so `build()` does
+# not half-reuse entries whose terms were computed the old way.
+TERMS_VERSION = 2
+
 
 def _ascii(text):
     return bool(_ASCII_ONLY.match(text))
+
+
+# The only characters a droppable mark can involve: Latin/Greek/Cyrillic letters outside ASCII
+# (which may precompose with a mark) and the combining-mark blocks. Text with none of these (ASCII,
+# Thai-only) cannot change, so it skips the per-character loop. Measured: that loop cost ~10x.
+_MARK_CANDIDATE = re.compile("[\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u024f\u0300-\u036f\u0370-\u03ff\u0400-\u04ff"
+                             "\u1ab0-\u1aff\u1dc0-\u1dff\u1e00-\u1fff\u20d0-\u20ff\ufe20-\ufe2f]")
+
+
+# Per-character verdict cache for the loop below: 0 = combining mark, 1 = Latin/Greek/Cyrillic
+# letter (a base whose marks are dropped), 2 = anything else. Bounded by the distinct characters seen.
+_CHAR_KIND = {}
+
+
+def _drop_marks(text):
+    """Remove combining marks that follow a Latin, Greek or Cyrillic letter; keep all others."""
+    if not _MARK_CANDIDATE.search(text):
+        return text
+    out = []
+    base_ok = False
+    kind = _CHAR_KIND
+    for ch in unicodedata.normalize("NFD", text):
+        k = kind.get(ch)
+        if k is None:
+            if unicodedata.category(ch).startswith("M"):
+                k = 0
+            elif unicodedata.name(ch, "").startswith(("LATIN", "GREEK", "CYRILLIC")):
+                k = 1
+            else:
+                k = 2
+            kind[ch] = k
+        if k == 0:
+            if not base_ok:
+                out.append(ch)
+            continue
+        base_ok = k == 1
+        out.append(ch)
+    return unicodedata.normalize("NFC", "".join(out))
+
+
+# 🐛 [2026-10-01] (R185 acc4, 2026-09-30) Measured on a store with notes titled Café, Straße,
+# İstanbul, Σοφός and Résumé: `cafe`, `CAFÉ`, `strasse`, even `straße` itself, `istanbul`,
+# `ΣΟΦΟΣ`, `σοφος`, `resume` and `RÉSUMÉ` all found nothing. `terms()` kept only ASCII runs, so
+# `Café` indexed as `caf`, and the substring path compared case-sensitively with marks. One
+# folding function now runs on BOTH the stored and the query side. Marks are dropped only after
+# a Latin, Greek or Cyrillic letter; after any other script they are kept, because in Thai a tone
+# mark changes the word (ทำ / ท้า, คำ / ค้า) and stripping it would merge different words.
+def fold(text):
+    """NFKC, casefold, then drop accents on Latin/Greek/Cyrillic letters only."""
+    if _ASCII_ONLY.match(text):
+        return text.lower()
+    return _drop_marks(unicodedata.normalize("NFKC", text).casefold())
 
 
 # An identifier's parts. `_` and `.` split on the word pattern's own boundaries; a camelCase hump
@@ -91,10 +147,12 @@ def terms(text):
     A hand-written English list would be the enumerated-set mistake this package keeps paying for,
     and it is the one thing the spec for this direction got wrong.
     """
-    norm = unicodedata.normalize("NFKC", text)
+    # ASCII is the hot case (every title and blurb per query); NFKC and mark-dropping are identities
+    # on it, so skip both. `fold(text)` below takes its own ASCII fast path.
+    norm = text if _ASCII_ONLY.match(text) else _drop_marks(unicodedata.normalize("NFKC", text))
     # The whole tokens, exactly as before this change: every existing caller and every stored index
     # depends on this list, and the parts are ADDED to it rather than replacing anything.
-    out = _WORD.findall(norm.lower())
+    out = _WORD.findall(fold(text))
     # 🐛 [2026-09-23] (self-measured) The first version split the already-lowercased words, so
     # `utf8Decode` stayed one term — by then the hump it needed was gone. A camelCase boundary only
     # exists while the case does, so this pass reads the ORIGINAL and lowercases the parts after.
@@ -442,6 +500,8 @@ def build(ws, previous=None):
     the closing loop below ever puts it on); a tool or symbol entry carries no `ig` key at all.
     """
     prev_by_path = {}
+    if isinstance(previous, dict) and previous.get("terms") != TERMS_VERSION:
+        previous = None
     if isinstance(previous, dict):
         for e in previous.get("entries", []) or []:
             if (isinstance(e, dict) and e.get("kind") in _STORE_KINDS
@@ -488,7 +548,7 @@ def build(ws, previous=None):
         if e.get("kind") in _STORE_KINDS:
             e["ig"] = {t: c for t, c in full.items() if t in common}
     return {"entries": entries, "newest": newest, "count": len(entries),
-            "ignored": sorted(common)}
+            "ignored": sorted(common), "terms": TERMS_VERSION}
 
 
 def stale_by(ws, index):
@@ -560,14 +620,14 @@ def _hits(entry, wanted, phrases, idf=None, pidf=None):
     score, why = 0.0, []
     fields = (("title", entry.get("title", "")), ("blurb", entry.get("blurb", "")))
     for name, value in fields:
-        norm_lower = unicodedata.normalize("NFKC", value.lower())
+        norm_lower = fold(value)
         if any(w in norm_lower for w in wanted):
             field_terms = terms(value.lower())
             for w in wanted:
                 if w in field_terms:
                     score += FIELD_WEIGHT[name] * (idf.get(w, 1.0) if idf else 1.0)
                     why.append(name)
-        norm_value = unicodedata.normalize("NFKC", value)
+        norm_value = fold(value)
         for p in phrases:
             if p in norm_value:
                 score += FIELD_WEIGHT[name] * (pidf.get(p, 1.0) if pidf else 1.0)
@@ -581,7 +641,8 @@ def _hits(entry, wanted, phrases, idf=None, pidf=None):
             score += FIELD_WEIGHT["body"] * (1 + min(n, 20) ** 0.5) * (idf.get(w, 1.0) if idf else 1.0)
             why.append("body")
     text = entry.get("text", "")
-    norm_text = unicodedata.normalize("NFKC", text)
+    # Only phrases read it, and folding a long body is the costliest step here.
+    norm_text = fold(text) if phrases else ""
     for p in phrases:
         if p in norm_text:
             score += FIELD_WEIGHT["body"] * 2 * (pidf.get(p, 1.0) if pidf else 1.0)
@@ -598,10 +659,11 @@ def query(index, words, limit=6):
     raw = [w for w in (words or []) if w.strip()]
     wanted, phrases = [], []
     for w in raw:
-        if _ascii(w):
-            wanted += [t for t in terms(w) if len(t) > 1]
+        fw = fold(w)
+        if _ascii(fw):
+            wanted += [t for t in terms(fw) if len(t) > 1]
         else:
-            phrases.append(unicodedata.normalize("NFKC", w))
+            phrases.append(fw)
     if not wanted and not phrases:
         return []
 
@@ -654,9 +716,9 @@ def query(index, words, limit=6):
     pidf = {}
     if phrases:
         norm_fields = [
-            (unicodedata.normalize("NFKC", e.get("text", "")),
-             unicodedata.normalize("NFKC", e.get("title", "")),
-             unicodedata.normalize("NFKC", e.get("blurb", "")))
+            (fold(e.get("text", "")),
+             fold(e.get("title", "")),
+             fold(e.get("blurb", "")))
             for e in all_entries
         ]
         for p in phrases:
@@ -709,7 +771,7 @@ def why_line(entry, why, wanted, phrases):
                                                entry.get("blurb", ""))] or wanted
     # 🐛 [2026-09-27] (R53, 2026-09-27) same NFKC mismatch as `_hits` -- normalise the stored text
     # before comparing it against a phrase that `query()` already normalised.
-    found = [p for p in phrases if p in unicodedata.normalize("NFKC", entry.get("text", ""))]
+    found = [p for p in phrases if p in fold(entry.get("text", ""))]
     # De-duplicated in order: a term that matched the title AND the body was being named twice,
     # which reads as two separate reasons to open the file when it is one.
     seen, named_terms = set(), []

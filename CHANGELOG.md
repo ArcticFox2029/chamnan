@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-recall` finds a note whatever the case or accents.** Case-insensitive search held for
+  English letters only: `CAFÉ` missed a note about the café, `ISTANBUL` missed İstanbul, a Greek
+  word in capitals missed its lowercase form, and `straße` did not even find the note titled
+  Straße. Queries and notes are now folded the same way — case, and accents on Latin, Greek and
+  Cyrillic letters. Thai is untouched, because its marks distinguish words; Thai results are
+  identical and English queries run slightly faster. An index built before this is rebuilt on
+  the next `chamnan-recall --reindex`.
 - **Editing a manifest with a long history no longer stalls.** Before every edit of a
   requirements.txt, package.json or similar, chamnan checks whether a removed package is coming
   back, and it read each past revision with its own git process — twice. A 200-revision
