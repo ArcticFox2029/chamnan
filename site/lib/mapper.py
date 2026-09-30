@@ -908,6 +908,47 @@ def _skip_continuation(lines, i):
     return i
 
 
+def _block_lines(lines, start, end, prefix):
+    """The comment block in `lines[start:end]` as stripped, non-empty lines (markers removed)."""
+    out = []
+    opener = BLOCK_OPEN.match(lines[start])
+    for n in range(start, end):
+        line = lines[n]
+        if n == start and opener:
+            line = line[opener.end():]
+        elif opener:
+            line = prefix.sub("", line)
+        else:
+            line = prefix.sub("", line)
+        if opener:
+            line = line.split(BLOCK_CLOSE)[0]
+        if line.strip():
+            out.append(line.strip())
+    return out
+
+
+def _after_licence_lines(parts):
+    """The description left in a comment block once its leading licence lines are dropped, or ""."""
+    # 🐛 [2026-09-30] (R201 acc4, 2026-09-30) A licence/copyright/SPDX line and the real description
+    # often share ONE comment block with no blank line between them. The whole block matched
+    # BOILERPLATE and was rejected, the next block was code, and the file got no summary at all.
+    # Leading boilerplate lines are dropped here and the rest is accepted -- but only when the WHOLE
+    # remainder is free of boilerplate, not just its first window: a multi-line Apache or MIT notice
+    # would otherwise yield a clause of its own body ("Unless required by applicable law ...") whose
+    # first line looks clean and whose following line ("... under the License ...") does not.
+    k = 0
+    while k < len(parts) and BOILERPLATE.search(parts[k]):
+        k += 1
+    if k == 0 or k >= len(parts):
+        return ""
+    rest = " ".join(parts[k:]).strip()
+    bare = ANY_DOC_TAG_TAIL.sub("", rest).strip()
+    if not rest or BOILERPLATE.search(rest) or IMPORT_LABEL.match(bare) \
+            or XCODE_ATTRIBUTION.search(rest):
+        return ""
+    return rest
+
+
 def leading_comment(source, lang=None):
     """The file's opening comment, used as its one-line summary.
 
@@ -937,6 +978,7 @@ def leading_comment(source, lang=None):
             return _clip(MAGIC_COMMENT.sub("", joined, count=1).strip())
 
     i = 0
+    fallback = ""
     for _ in range(6):          # at most six boilerplate blocks before giving up on the file
         while i < len(lines):
             line = lines[i]
@@ -951,10 +993,11 @@ def leading_comment(source, lang=None):
                 continue
             break
         if i >= len(lines):
-            return ""
+            return _clip(fallback) if fallback else ""
+        start = i
         text, i = _one_comment(lines, i, prefix)
         if not text:
-            return ""
+            return _clip(fallback) if fallback else ""
         parts = [x for x in text.split("  ") if x.strip()]
         text = " ".join(parts).strip()
         # Strip an opening "SomeFile.swift" line before judging: a header that names the file and
@@ -991,7 +1034,10 @@ def leading_comment(source, lang=None):
                 and not IMPORT_LABEL.match(bare) \
                 and not XCODE_ATTRIBUTION.search(text[:BOILERPLATE_WINDOW]):
             return _clip(text)
-    return ""
+        if text and not fallback:
+            # Only a fallback: a later block's accepted description always wins over it.
+            fallback = _after_licence_lines(_block_lines(lines, start, i, prefix))
+    return _clip(fallback) if fallback else ""
 
 
 # A Homebrew formula states its own one-line summary in `desc "..."`. That is not a comment, so the

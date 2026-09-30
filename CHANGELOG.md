@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A licence line no longer hides the description written under it.** When a copyright or SPDX
+  line and the file's description shared one comment block, the file got no summary and was
+  counted as undescribed. The lines after the licence are now used — only when no later comment
+  describes the file, so a real description further down still wins. On a 609-file corpus: one
+  summary gained, none changed.
 - **Automatic recall stops offering notes that match only common words.** Words most of your notes
   share (`for`, `the`, `file`) were dropped from note bodies but still scored in titles — and scored
   highest of all. In one working session a fifth of the entries the pointer injected matched
