@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1330), and every one of these is on the
+[README](README.md#whats-new-in-1340), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -21,159 +21,84 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
-- **Token counts are no longer redacted, and a redacted JSON value keeps its comma.** A plain integer after a key ending in `tokens` (`output_tokens`, `max_tokens`) is a count and is left alone, and `"total_tokens": 88123, "model"` no longer loses the comma when a value beside it is redacted.
-- **On Windows, a failing chamnan command now fails through its `.cmd` shim.** The shim read the exit code before the script ran, so it always returned 0 on machines with the py launcher installed.
-- **Files with non-English or unusual names are named correctly in the hand-off line, dependency history and drift checks.** A committed file with a tab or a double quote in its name showed as git's quoted spelling in "Last edited", and a manifest path holding a quote could not be read back for the removed-package check.
-- **A lock left by a crashed process is recovered even after the clock moves back.** A lock file dated in
-  the future (an NTP step back, a VM restore, a skewed volume) read as negative age, so its dead holder was
-  never checked and every locked write gave up after two seconds. The age is now the distance from the
-  present, so a dead holder is recovered at once and a live one is still left alone.
-- **The measure page's small warning tag is readable.** Its orange text on the pale orange tag measured
-  4.33:1, under the 4.5:1 WCAG asks of text that size; the light theme's warning colour is a shade darker.
-- **A generated Python file full of f-strings no longer stalls the map for minutes.** On Python 3.12+
-  parsing is quadratic in the number of f-strings: a 1.47 MB module took 134 s, inside both of chamnan's
-  size limits, and the map runs from the git hook. A file with more than 5,000 f-strings is now listed
-  without being parsed, and `chamnan-where` reports it as unjudged.
-- **NuGet API keys are redacted on sight.** An `oy2` key (46 characters) was caught only after a word
-  like `key =`; standing alone in a command line such as `push -k ...`, a log line or JSON it passed through.
-- **Files whose names hold a double quote, a backslash or a tab now get their churn counted.** git
-  quotes such names even with `core.quotePath=false`, so the most-edited ranking and a thread's
-  historical names keyed them under a quoted spelling that matched no real file. Both now undo git's
-  quoting, with the same reader the commit guard already used.
-- **The end-of-session digest is no longer cut off by Claude Code.** A SessionEnd hook that declares no
-  timeout gets 1.5 s, and chamnan's took about a second on a large workspace and 6 s on a busy machine, so
-  the host could kill it before the digest was written. It now asks for 10 s.
-- **Cloudflare's 2026 API tokens and Supabase's secret keys are redacted on sight.** `cfk_`, `cfut_`,
-  `cfat_` and `sb_secret_` values were caught only after a word like `key =`; standing alone in a log
-  line, a URL or JSON they passed through. Supabase's public `sb_publishable_` key is left alone on purpose.
-- **`linguist-generated` patterns now match exactly what git matches.** chamnan read them with shell-glob
-  rules, so `docs/*.md` also matched `docs/sub/a.md` and dropped a real file from the index, while
-  `a/**/b.py` missed `a/b.py` and an escaped `\!name` never matched. Checked against `git check-attr`
-  on 56 files, which now agree on every one.
-- **A commit-guard hook that git will not run is no longer reported as installed.** If chamnan's
-  pre-commit hook lost its executable bit, git skipped it in silence while every chamnan report said it
-  was installed. It now reads as out of date, and `chamnan-map` restores the bit when it refreshes it.
-- **On Windows, a save waits about a second for a scanner to let go instead of a quarter.** When
-  antivirus, an indexer or another reader holds a store open, Windows refuses the replace; chamnan
-  retried for about 0.24 s and then gave up, the shortest wait of five tools compared. It now backs
-  off from 20 ms to 200 ms per try, about 1 s in all. macOS and Linux never wait.
-- **Two more generator headers are recognised.** `THIS FILE IS AUTO GENERATED` (with a space) and
-  `machine-generated` were not treated as generated-file markers, so such files were counted as
-  missing a summary and offered for commenting. 17 real generator headers are now checked.
-- **A corrupt store kept twice in one second keeps both copies.** chamnan moves an unreadable
-  store aside as `<name>.corrupt.<time>` rather than deleting it, but the time had one-second
-  resolution and the move replaced, so a second copy made within the same second overwrote the
-  first. The name now gets a `.1`, `.2` suffix when it is taken.
-- **A session starts about half a second sooner while the index is behind.** The session-start
-  check filtered the whole tree twice, once to find how far the index is behind and once to name
-  the files it is missing. It now filters once per session start. Measured on an 816-file repository:
-  1.69 s to 1.16 s for that step, identical answers.
-- **`chamnan-map` recognises a script whose `env` shebang carries options.** A first line such as
-  `#!/usr/bin/env -S PYTHONPATH=lib python3`, `env -iS python3`, `env -u HOME python3` or
-  `env NAME=1 python3` read the option as the interpreter, and the file was indexed with no language.
-- **Redaction is about a third faster on large files.** The scan for credential words ran four
-  times over the same text in one pass, and the check for invisible characters looked at every
-  character instead of every distinct one. Measured on a 543 KB file: 9.1 s to 6.3 s, identical output.
-- **`chamnan-guard` names files with Thai, Chinese or accented names correctly.** git quotes such
-  names by default, and the guard reported them as escaped octal strings with the diff prefix still
-  attached; a personal `diff.mnemonicPrefix` or custom prefix setting mislabelled every file. Because
-  the MCP and dependency checks match on the file name, a quoted `.mcp.json` or lockfile could also
-  slip past them. The guard now pins git's output format and unquotes any name git still quotes.
-- **`chamnan-guard` now scans the whole of every added line.** A line containing a form feed, a
-  vertical tab, U+2028 or one of five other characters Python treats as a line break had everything
-  after that character dropped before scanning, so a credential placed after it was never checked.
-- **A repository whose path carries an accented letter is no longer treated as outside itself.**
-  macOS opens a folder named in either Unicode form, but chamnan compared the spellings, so when the
-  host and the disk spelled `café` differently every file in the repository failed the containment
-  check. The same folder is now confirmed by identity, which stays exact on Linux, where the two
-  spellings are two different folders.
-- **`chamnan-recall --reindex` reuses every note that has not changed.** It re-scrubbed all of
-  them to pick up the one that had. Measured on this repository: 4.4 s for a fresh build, 0.14 s
-  when nothing changed, 0.17 s after one edit, and the result is identical to a fresh build.
-- **A log record carrying a Unicode line or paragraph separator is no longer lost.** JSON leaves
-  U+2028, U+2029 and U+0085 unescaped inside a string, and every chamnan reader of its own `.jsonl`
-  logs split on them, so such a record became two unreadable fragments and was deleted at the next
-  trim. The session handoff read Claude Code transcripts the same way and could drop the person's
-  last message. All of them now split on the newline alone.
-- **`chamnan-recall` scores about twice as fast.** Every query re-split every note's title and
-  summary into words; it now does so only for a field that contains one of the searched words at
-  all. Measured on this repository's 1,329 entries: 88 ms of scoring for 297 queries down to 49 ms,
-  results identical over all 297, and the index file does not grow.
-- **A dependency declared as its own table is now read.** `[dependencies.serde_json]`, and its
-  `dev-`, `target.…`, `workspace.` and Poetry variants, were invisible to the dependency reader, so
-  re-adding a package your repository had removed went unnoticed when it was written that way.
-- **`chamnan-context` no longer echoes terminal control characters in its error messages.** Its
-  refusals wrote straight to stderr, skipping the filter every other line of output goes through,
-  so a path containing an escape sequence reached the terminal unfiltered.
-- **A scheduled resume that can no longer fire is announced at session start.** A reboot or logout
-  ends the process waiting for a `chamnan-schedule` appointment, and until now only
-  `chamnan-schedule list` said so. The session block and `chamnan-report --full` now name it and
-  the command that clears it. Nothing is re-run on its own.
-- **A note edited while `chamnan-recall` builds its index is no longer kept stale forever.** The
-  index recorded a note's time after reading it, so an edit landing in between was stored with the
-  old text and the new time, and the index never saw it as behind. The time is now taken first.
-- **`chamnan-context` given a folder that does not exist says so instead of crashing.** Inside a
-  repository it found the repository's own workspace above the missing folder, passed its check,
-  and then died with a Python traceback. It now refuses with `chamnan: no such directory: <path>`,
-  like the other commands that take a path.
-- **A rule check can no longer hang session start with a slow pattern.** A `**Check:**` regex with two
-  repeated parts that can match the same text side by side — `\w+\w+$`, `\s*\s*x`, `.*=.*=.*;` — was
-  admitted, and took 22 seconds on one 2,000-character line. Such a pattern is now refused as a
-  backtracking hazard, like the nested shapes before it; ordinary patterns such as `foo\s*=\s*bar`
-  still run.
-- **No command-log record is lost when several sessions write while the log is trimmed.** The
-  append took the lock on Windows only; on macOS and Linux an append landing between the trim's
-  re-read and its rename went into the file being replaced. Six writers x 300 records kept 843 of
-  900 of chamnan's own entries; all 900 now. The lock costs about 1 ms per call.
-- **Two file names macOS treats as one are now warned about as one.** The name key folded case
-  before normalising, so a Greek letter with accents and its capital spelled with combining marks
-  got different keys while APFS stores a single file for both — 19 characters in all.
+## What's new in 1.34.0
 
-- **A secret named in one field and held in a sibling field is now redacted.** An XML element
-  whose `name` or `key` attribute names a credential and whose `value` attribute holds it, and the
-  JSON pair `{"name": ..., "value": ...}` — the shape ECS task definitions, Kubernetes env arrays,
-  GitHub Actions and .NET/Java XML configs all write — used to pass through untouched, because the
-  credential's name and its value sit in two different attributes or JSON members rather than one.
-- **Japanese and Korean file names no longer read as mixed-script.** The look-alike-letter check
-  named each character's script separately, so ordinary Japanese (`住所ファイル`, kanji with katakana)
-  and Korean with Han characters were flagged like a Latin word hiding a Cyrillic letter. Han,
-  Hiragana, Katakana and Hangul now count as one writing system; a Cyrillic letter inside a Latin
-  word is still caught.
+_The unusual setup — Windows, a generated file, a clock that jumped, a key in an odd place — now
+behaves like the ordinary one._
 
-- **A full Claude model id now gets its family's window.** `chamnan-context --model` read only
-  the first word of the name, which for `claude-haiku-4-5` (and the dated, Bedrock and gateway
-  spellings) is `claude`, so Haiku was sized for a million tokens instead of 200K. The family word
-  is now found wherever it sits in the id.
+### Fixed and improved
 
-- **Claude Code no longer gets chamnan's block twice from `AGENTS.md`.** Claude Code 2.1.277
-  and later read the root `AGENTS.md` when a project has no `CLAUDE.md`, and `chamnan-context
-  --write generic` puts a snapshot of the session block there, so the same sections arrived from
-  the file and from the hook. The hook now leaves out every section the file already delivered
-  word for word and says which, while a section that changed since the snapshot is still sent.
-  It only does this when it can tell Claude Code really read the file: version, the
-  `instructionFiles` setting, the built-in plugin, and no `CLAUDE.md` or `CLAUDE.local.md` in the
-  folder or above it. When anything is unclear, it sends everything as before.
+- **On Windows, a failing chamnan command fails.** Every `.cmd` shim read the exit code before the
+  script ran, so on machines with the `py` launcher it always returned 0 and `chamnan-guard
+  --strict` could never stop anything.
+- **On Windows, scripts keep their language in the map.** A CRLF first line kept its `\r`, so
+  every `#!` script in a Windows checkout was indexed with no language.
+- **`chamnan-map` recognises an `env` shebang that carries options** — `env -S PYTHONPATH=lib
+  python3`, `env -iS python3`, `env -u HOME python3`, `env NAME=1 python3`.
+- **A generated Python file full of f-strings no longer stalls the map for minutes.** Parsing is
+  quadratic in f-strings on Python 3.12+: a 1.47 MB module took 134 s. A file with more than 5,000
+  is now listed without being parsed, and `chamnan-where` reports it as unjudged.
+- **More secret shapes are redacted on sight**: NuGet `oy2…` keys, Cloudflare's 2026 `cfk_`,
+  `cfut_` and `cfat_` tokens, and Supabase `sb_secret_` keys (the public `sb_publishable_` key is
+  left alone on purpose).
+- **A secret named in one field and held in a sibling field is redacted** — an XML `name`/`value`
+  pair and the JSON `{"name": …, "value": …}` shape that ECS, Kubernetes, GitHub Actions and
+  .NET/Java configs write.
+- **Token counts are no longer redacted, and a redacted JSON value keeps its comma and its closing
+  bracket**, so the text still parses.
+- **Redaction is about a third faster on large files**: 9.1 s to 6.3 s on a 543 KB file,
+  identical output.
+- **`chamnan-guard` scans the whole of every added line** — text after a form feed, U+2028 or
+  another Python line break was dropped before scanning — **and `--history` checks every branch
+  and tag**, reporting how many commits it actually read.
+- **Files with Thai, accented or unusual names are named correctly everywhere chamnan reads git**:
+  the guard, churn, the hand-off line, dependency history and drift. git quotes a name holding a
+  double quote, a backslash or a tab even with `core.quotePath=false`; every reader now undoes it.
+- **`linguist-generated` patterns match exactly what git matches** — checked against `git
+  check-attr` on 56 files.
+- **A lock left by a crashed process is recovered even after the clock moves back.** A lock dated
+  in the future read as negative age, so its dead holder was never checked.
+- **No command-log record is lost when several sessions write while the log is trimmed.** Six
+  writers × 300 records kept 843 of 900 on macOS and Linux; all 900 now.
+- **A log record carrying U+2028, U+2029 or U+0085 is no longer lost**, and the session handoff no
+  longer drops a last message that contains one.
+- **A corrupt store moved aside twice in one second keeps both copies.**
+- **On Windows, a save waits about a second for a scanner to let go** instead of a quarter.
+- **A symlink waiting at a staging file's name is no longer followed.**
+- **A repository whose path carries an accented letter is no longer treated as outside itself**
+  when the host and the disk spell it in different Unicode forms.
+- **Two file names macOS stores as one are warned about as one.**
+- **The end-of-session digest is no longer cut off.** chamnan's SessionEnd hook now asks Claude
+  Code for 10 s instead of the 1.5 s default.
+- **Claude Code no longer gets chamnan's block twice from `AGENTS.md`.** When Claude Code 2.1.277+
+  has read a generated `AGENTS.md`, the hook leaves out the sections the file already delivered
+  word for word; when anything is unclear it sends everything as before.
+- **`chamnan-recall` scores about twice as fast** (88 ms to 49 ms for 297 queries), and
+  **`--reindex` reuses unchanged notes** (4.4 s to 0.14 s when nothing changed). A note edited
+  while the index is being built is no longer kept stale forever.
+- **A session starts about half a second sooner while the index is behind** (1.69 s to 1.16 s for
+  that step on an 816-file repository).
+- **A full Claude model id gets its family's window** — `claude-haiku-4-5` was sized for a million
+  tokens instead of 200K.
+- **`"subagent_pointer": false` turns the subagent pointer off**; the setting had been dropped as
+  unknown when the config was loaded.
+- **A dependency declared as its own table is read** (`[dependencies.serde_json]` and its variants).
+- **Two more generator headers are recognised**, and 17 real ones are now checked.
+- **A commit-guard hook that git will not run is no longer reported as installed.**
+- **A scheduled resume that can no longer fire is announced at session start.**
+- **A rule check with a backtracking pattern is refused** instead of hanging session start.
+- **`chamnan-context` refuses instead of crashing** on a folder that does not exist or a path
+  Windows cannot represent, and its messages pass the terminal filter.
+- **Running a command from a deleted folder prints a sentence, not a traceback.**
+- **The measure page's warning tag is readable** in the light theme; it measured 4.33:1, under the
+  4.5:1 WCAG asks of text that size.
 
-- **`"subagent_pointer": false` now turns the subagent pointer off.** The SubagentStart hook
-  read this switch, but it was missing from the list of known settings, and unknown settings are
-  dropped when the config is loaded — so the pointer kept running for anyone who had switched it
-  off. It is declared and documented now, and a check derives every setting the code reads and
-  fails if one is undeclared.
+### Verification
 
-- **A symlink waiting at a staging file's name is no longer followed.** Every store is written to
-  a temporary file and renamed into place; that temporary file was opened in a way that followed a
-  symlink already sitting at its name, so the write could land in a file outside the workspace and
-  leave the store itself as a link to it. The staging file is now created fresh and refuses to
-  follow a link.
-
-- **Running a command from a folder that has been deleted prints a sentence, not a traceback.**
-  Ten commands crashed with a Python error when the directory they were started in no longer
-  existed; they now say so in one line and exit. Hooks were never affected.
-
-- **`chamnan-guard --history` checks every branch and tag, and says how much it checked.** It
-  walked only the branch you had checked out, so a credential committed on another branch was
-  never seen, and a clean result named its 500-commit ceiling rather than the commits it actually
-  examined. It now walks every branch and tag and reports the real count.
+**6536/6536** checks on the release gate, and CI green on all five legs — macOS · Linux ·
+Windows on Python 3.8 and 3.13. The count went from 5,150 to 5,401 `check(` calls in the source:
+53 sections added, one resized, and one removed — the section for a mixed-script function deleted
+because nothing called it. Recorded lessons: **+115 since v1.33.0 / 2,243 total**.
 
 ## What's new in 1.33.0
 
