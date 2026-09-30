@@ -230,12 +230,14 @@ def _structure_the_value_did_not_open(match, value):
     # `"total_tokens": 88123, "model": "x"` came back as `<REDACTED> "model": "x"`. Every rule that
     # reaches this helper takes a bare `\S` run, so the comma rides along; it is given back here,
     # once, for all four of them (copula, spaced, flag, bare), before the bracket test below.
+    # 🐛 [2026-09-30] Found by the release 1.34.0 CI run -- the comma rule returned before the
+    # bracket rule and dropped the `}` of `{password: x},`; the bracket tail now wins and the comma
+    # is the fallback.
     comma = _JSON_COMMA_TAIL.search(value)
-    if comma and comma.start() > 0:
-        return value[comma.start():]
+    comma_tail = value[comma.start():] if comma and comma.start() > 0 else ""
     prefix = match.string[match.string.rfind("\n", 0, match.start()) + 1:match.start()]
     if not (prefix.count("{") > prefix.count("}") or prefix.count("[") > prefix.count("]")):
-        return ""
+        return comma_tail
     depth = 0
     for i, ch in enumerate(value):
         if ch in "{[":
@@ -245,8 +247,8 @@ def _structure_the_value_did_not_open(match, value):
                 depth -= 1
                 continue
             tail = value[i:]
-            return tail if _ONLY_STRUCTURE.fullmatch(tail) else ""
-    return ""
+            return tail if _ONLY_STRUCTURE.fullmatch(tail) else comma_tail
+    return comma_tail
 
 
 _TOKENS_KEY = _lazy(lambda: re.compile(r"tokens['\"]?\s*(?::|=)\s*(?:[A-Za-z_][\w.]*\s*=\s*)?$", re.I))

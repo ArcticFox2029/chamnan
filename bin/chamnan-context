@@ -316,7 +316,13 @@ def main():
     # 🐛 [2026-09-29] (R47 acc5, 2026-09-29) `Path(".").resolve()` needs the OS cwd to build an
     # absolute path, and raised a bare FileNotFoundError when it was gone; an explicit root is
     # untouched, only the unspecified default routes through ws.current_dir()'s readable sentence.
-    root = Path(args.root if args.root != "." else ws.current_dir()).resolve()
+    # 🐛 [2026-09-30] Windows CI (Python 3.8) -- resolve() of a path with control characters raised
+    # OSError instead of the refusal below. `_err` filters the text, so they do not reach the terminal.
+    try:
+        root = Path(args.root if args.root != "." else ws.current_dir()).resolve()
+    except OSError:
+        _err(f"chamnan: no such directory: {args.root}\n")
+        return 1
     # 🐛 [2026-09-28] (R69 acc2, 2026-09-28) `ws.workspace(root)` is `find_root(root) / ".chamnan"`,
     # and `find_root` walks UP from `root` looking for an ancestor workspace -- so a nonexistent
     # `root` under a real repository (`chamnan-context zzq` inside this checkout) still found this

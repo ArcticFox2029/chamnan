@@ -44241,6 +44241,7 @@ for _name328, _argv328 in _t_cmds328.items():
 # Reproduced here the way it was measured: patch `pathlib.Path.read_text` so that reading the one
 # note rewrites it right after returning the OLD text -- the same race, deterministic -- then build
 # the index and assert `stale_by` still counts the file as behind.
+import os
 import pathlib
 import shutil
 import subprocess
@@ -44273,6 +44274,10 @@ try:
             # The edit lands strictly AFTER the read returns -- the exact ordering the bug needed.
             _orig_write329 = pathlib.Path.write_text
             _orig_write329(_note329, _new329, encoding="utf-8")
+            # Windows CI stamped both writes with the same mtime (coarse timestamp update), so
+            # the edit is dated 2 s later explicitly: the race needs "after", not a clock tick.
+            _t329 = _note329.stat().st_mtime_ns + 2_000_000_000
+            os.utime(_note329, ns=(_t329, _t329))
         return text
 
     pathlib.Path.read_text = _racy_read_text329
@@ -44457,7 +44462,7 @@ try:
     _t_esc331 = chr(27)
     _t_arg331 = "d" + _t_esc331 + "[2Jx" + chr(7) + "/nope"
     _t_run331 = _sp331.run([sys.executable, str(ROOT / "bin" / "chamnan-context"), _t_arg331],
-                           cwd=str(ROOT), stdin=_sp331.DEVNULL, capture_output=True, text=True)
+                           cwd=str(ROOT), stdin=_sp331.DEVNULL, capture_output=True, text=True, encoding="utf-8")
     _t_err331 = _t_run331.stderr
     check("A PATH ARGUMENT'S ESCAPE SEQUENCE DOES NOT REACH THE TERMINAL IN A REFUSAL",
           _t_run331.returncode != 0 and _t_esc331 not in _t_err331 and chr(7) not in _t_err331
@@ -44598,7 +44603,8 @@ try:
     # (d) The prefilter finding a substring is necessary, not sufficient -- confirm the entry that
     # DOES match scores from title AND blurb (both are in `why`), which is exactly what a
     # mutation that turns the prefilter into an unconditional skip would remove.
-    _alpha_hit332 = next((s, e, w) for s, e, w in _res_clean332 if e["path"] == "memory/rules/alpha.md")
+    _alpha_hit332 = next(((s, e, w) for s, e, w in _res_clean332 if e["path"] == "memory/rules/alpha.md"),
+                         (None, {}, ""))
     check("(d) THE MATCHING ENTRY'S 'why' NAMES BOTH title AND blurb (not just body)",
           "title" in _alpha_hit332[2] and "blurb" in _alpha_hit332[2],
           saw=_alpha_hit332[2])
@@ -45033,7 +45039,8 @@ try:
 
     # ---------------------------------------------------------- (c) mtime pinned, size differs
     _beta_path336 = _rules336 / "beta.md"
-    _beta_prev336 = next(e for e in _idx_fresh336["entries"] if e["path"] == "memory/rules/beta.md")
+    _beta_prev336 = next((e for e in _idx_fresh336["entries"] if e["path"] == "memory/rules/beta.md"),
+                         {"mtime": 0, "size": None})
     _pinned_mtime336 = _beta_prev336["mtime"]
     _beta_path336.write_text(
         "# Beta redaction lesson EXPANDED\n\nRedact before writing, beta corpus notes, with extra "
@@ -45047,7 +45054,8 @@ try:
           _beta_st336.st_size != _beta_prev336["size"], saw=(_beta_st336.st_size, _beta_prev336["size"]))
 
     _idx_pinned336 = _rc336.build(_ws336, _idx_fresh336)
-    _beta_after336 = next(e for e in _idx_pinned336["entries"] if e["path"] == "memory/rules/beta.md")
+    _beta_after336 = next((e for e in _idx_pinned336["entries"] if e["path"] == "memory/rules/beta.md"),
+                          {"title": None})
     check("(c) A NOTE WITH mtime UNCHANGED BUT SIZE DIFFERENT IS STILL REBUILT, NOT REUSED",
           _beta_after336["title"] == "Beta redaction lesson EXPANDED", saw=_beta_after336["title"])
 
@@ -45187,10 +45195,17 @@ try:
         (_t_file_nfc337, _t_root337),      # NFC path,  NFD root
         (_t_file_nfc337, _t_root_nfc337),  # NFC path,  NFC root
     ]
+    # On a byte-sensitive filesystem (Linux ext4) the other spelling is a different, absent
+    # directory, so a mismatched pair is correctly OUTSIDE; the first CI run of this check on
+    # Linux failed combos 1 and 2 by expecting APFS behaviour everywhere.
+    _t_insensitive337 = _t_root_nfc337.exists()
     for _i337, (_p337, _r337) in enumerate(_t_combos337):
-        check("INSIDE: NFC/NFD COMBO %d OF THE SAME ACCENTED DIRECTORY IS INSIDE" % _i337,
-              ws337.inside(_p337, _r337) is True,
-              saw=(str(_p337), str(_r337)))
+        _want337 = _t_insensitive337 or _i337 in (0, 3)
+        check("INSIDE: NFC/NFD COMBO %d OF THE SAME ACCENTED DIRECTORY IS %s ON THIS FILESYSTEM"
+              % (_i337, "INSIDE" if _want337 else "OUTSIDE"),
+              ws337.inside(_p337, _r337) is _want337,
+              saw=(str(_p337), str(_r337), "normalisation-insensitive" if _t_insensitive337
+                   else "byte-sensitive"))
 
     # --- (b) a sibling directory (different, not the same one under another spelling) --------
     _sib337 = "café-repo2"
@@ -45690,6 +45705,7 @@ finally:
 # pathspecs with come from `PATH` there, a regex restricted to `[A-Za-z0-9_.-]*/[A-Za-z0-9_./-]+` —
 # no quote, backslash, control character or non-ASCII byte can reach it, so git never quotes what
 # it is asked to match and there is nothing for this defect to land on.
+import os
 import shutil as _sh342
 import subprocess as _sp342
 import tempfile as _tmp342
@@ -45713,7 +45729,9 @@ else:
     _THAI342 = "ไฟล์-ทดสอบ.txt"
     # A space, a double quote and a backslash — all three of the ALWAYS-quoted characters, on one
     # name, alongside Thai — for part (f)'s round trip below.
-    _WEIRD342 = 'weird "quote\\slash ไฟล์.txt'
+    # Windows forbids `"` and `\\` in a name (CI: OSError 22), so there the name keeps the space
+    # and the Thai, which still force git's quoting under the default core.quotePath.
+    _WEIRD342 = ('weird space ไฟล์.txt' if os.name == "nt" else 'weird "quote\\slash ไฟล์.txt')
 
     def _run342(*args, cwd):
         return _sp342.run(list(args), cwd=str(cwd), capture_output=True, text=True,
@@ -45904,7 +45922,7 @@ check("343: NO TWO FUNCTIONS UNDER lib/, hooks/ OR bin/ SHARE AN IDENTICAL BODY 
       not _DUPES_343, saw=_MSG_343 or "none")
 # ---- 344_a_full_claude_id_reaches_its_family_window.py
 # ---- 344_a_full_claude_id_reaches_its_family_window.py
-# 🐛 [2026-09-29] `by_model()` derives its lookup key from the FIRST hyphen-separated token of the
+# 🐛 [2026-09-29] (self-measured) `by_model()` derives its lookup key from the FIRST hyphen-separated token of the
 # (publisher/region-stripped) name. For a bare family word that token IS the family ("haiku" ->
 # "haiku"), but for any full Anthropic model id it is always the publisher word "claude" --
 # "claude-haiku-4-5", the dated "claude-haiku-4-5-20251001" and the Bedrock
@@ -46617,7 +46635,7 @@ _CASES351 = [
     ("#!/usr/bin/env -S bash -euo pipefail", "sh"),
     ("#!/bin/sh -e", "sh"),
 ]
-_dir351 = _P351(_tf351.mkdtemp(dir=str(ROOT.parent.parent / ".chamnan" / "logs")))
+_dir351 = _P351(_tf351.mkdtemp(prefix="chamnan-check351-"))
 _wrong351 = []
 for _i351, (_line351, _want351) in enumerate(_CASES351):
     _p351 = _dir351 / ("probe%d" % _i351)
@@ -46860,10 +46878,10 @@ else:
     _fx356 = _tf356.mkdtemp(prefix="chamnan-check356-")
     try:
         def _sh356(*a):
-            return _sp356.run(list(a), cwd=_fx356, capture_output=True, text=True)
+            return _sp356.run(list(a), cwd=_fx356, capture_output=True, text=True, encoding="utf-8")
 
         _sh356("git", "init", "-q")
-        with open(_os356.path.join(_fx356, "a.txt"), "w") as _f356:
+        with open(_os356.path.join(_fx356, "a.txt"), "w", encoding="utf-8") as _f356:
             _f356.write("a\n")
         _sh356("git", "add", "a.txt")
         _sh356("git", "-c", "user.name=x", "-c", "user.email=x@x", "commit", "-qm", "i")
@@ -46885,7 +46903,7 @@ else:
               saw=(_r356.stdout, _r356.stderr))
         check("AFTER THE REFRESH THE STATE IS installed AGAIN",
               _ws356.git_hook_state(_fx356) == "installed", saw=_ws356.git_hook_state(_fx356))
-        with open(_hook356, "w") as _f356:
+        with open(_hook356, "w", encoding="utf-8") as _f356:
             _f356.write("#!/bin/sh\necho theirs\n")
         _os356.chmod(_hook356, 0o644)
         check("A FOREIGN HOOK WITHOUT EXEC BIT STAYS theirs",
@@ -47231,7 +47249,7 @@ try:
         [_sys360.executable, str(ROOT / "hooks" / "chamnan_session_end.py")],
         input=_js360.dumps({"hook_event_name": "SessionEnd", "session_id": "probe",
                             "reason": "exit", "cwd": _t_fix360}),
-        capture_output=True, text=True, cwd=_t_fix360, env=_t_env360, timeout=60)
+        capture_output=True, text=True, encoding="utf-8", cwd=_t_fix360, env=_t_env360, timeout=60)
     _t_secs360 = _tm360.monotonic() - _t_start360
     check("the SessionEnd hook exits 0 when run once against a small fixture",
           _t_run360.returncode == 0,
@@ -47260,7 +47278,7 @@ try:
                                "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
-    _t_init361 = subprocess.run(["git", "init", "-q", _t_dir361], capture_output=True, text=True, timeout=30)
+    _t_init361 = subprocess.run(["git", "init", "-q", _t_dir361], capture_output=True, text=True, encoding="utf-8", timeout=30)
     check("the fixture repository was initialised", _t_init361.returncode == 0, saw=_t_init361.stderr)
 
     _t_names361 = ["plain.py", 'with"quote.py', "back\\slash.py", "tab\there.py", "ไทย.py"]
@@ -47472,7 +47490,7 @@ _dir364 = _P364(_tf364.mkdtemp(prefix="chamnan-check364-"))
 
 def _try364(target, pid, offset):
     lock = _P364(str(target) + ".lock")
-    lock.write_text(str(pid))
+    lock.write_text(str(pid), encoding="utf-8")
     t = _tm364.time() + offset
     os.utime(lock, (t, t))
     t0 = _tm364.perf_counter()
@@ -47529,7 +47547,7 @@ try:
                                "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
-    _t_init365 = subprocess.run(["git", "init", "-q", _t_dir365], capture_output=True, text=True, timeout=30)
+    _t_init365 = subprocess.run(["git", "init", "-q", _t_dir365], capture_output=True, text=True, encoding="utf-8", timeout=30)
     check("the fixture repository was initialised", _t_init365.returncode == 0, saw=_t_init365.stderr)
 
     # The Thai name is built from code points so this file stays free of literal Thai.
@@ -47700,7 +47718,7 @@ check("EVERY GENERATED SHIM EXITS WITH THE EXIT CODE AT DEPTH 0 RIGHT AFTER INVO
       not _noexit366, saw="offenders: %r" % (_noexit366,))
 
 _run366 = _sp366.run([_sys366.executable, str(ROOT / "install" / "make_windows_shims.py"), "--check"],
-                     capture_output=True, text=True, timeout=60)
+                     capture_output=True, text=True, encoding="utf-8", timeout=60)
 check("the generator's --check reports no drift", _run366.returncode == 0,
       saw="rc=%d %s%s" % (_run366.returncode, _run366.stdout, _run366.stderr))
 # ---- 367_tree_walk_order_is_unchanged_by_the_faster_sort.py
@@ -47719,7 +47737,7 @@ _tree367 = _il367.import_module("tree")
 
 _dir367 = tempfile.mkdtemp(prefix="chamnan-check367-")
 try:
-    _i367 = subprocess.run(["git", "init", "-q", _dir367], capture_output=True, text=True, timeout=30)
+    _i367 = subprocess.run(["git", "init", "-q", _dir367], capture_output=True, text=True, encoding="utf-8", timeout=30)
     check("the fixture repository was initialised", _i367.returncode == 0, saw=_i367.stderr)
     _names367 = ["a-b.py", "a/b.py", "a.b/c.py", "A.py", "a.py", "_x.py", "ä.py", "z/9.py", "z/10.py", "z0.py"]
     for _n367 in _names367:
@@ -47762,8 +47780,8 @@ def _gen367():
 
 
 _pop367 = _gen367()
-for _cls367, _key367, _lbl367 in ((_pl367.PurePosixPath, _tree367._SORT_KEY_POSIX, "posix"),
-                                  (_pl367.PureWindowsPath, _tree367._SORT_KEY_WINDOWS, "windows")):
+for _cls367, _key367, _lbl367 in ((_pl367.PurePosixPath, _tree367._SORT_PARTS_POSIX, "posix"),
+                                  (_pl367.PureWindowsPath, _tree367._SORT_PARTS_WINDOWS, "windows")):
     _paths367 = [_cls367(s) for s in _pop367]
     _rng367.shuffle(_paths367)
     _ref367 = sorted(list(_paths367))
@@ -48087,7 +48105,7 @@ check("the fold keeps the length of every single code point, so indices never sh
 
 # (c) behaviour against a copy of HEAD's module, loaded under another name
 _head370 = _sp370.run(["git", "-C", str(ROOT), "show", "HEAD:lib/redact.py"],
-                      capture_output=True, text=True)
+                      capture_output=True, text=True, encoding="utf-8")
 _old370 = None
 if _head370.returncode == 0 and _head370.stdout:
     with _tf370.TemporaryDirectory() as _d370:

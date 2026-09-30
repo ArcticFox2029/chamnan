@@ -54,9 +54,9 @@ _CACHE = {}
 # `Path.__lt__` running 55,128 times for 0.378 s of a 1.68 s walk, against 0.25 s for a bare
 # os.walk with the same pruning. The key is computed once per path here and is exactly what
 # `Path.__lt__` compares: the string split on the separator, lower-cased first on Windows.
-_SORT_KEY_POSIX = lambda p: str(p).split("/")                    # noqa: E731
-_SORT_KEY_WINDOWS = lambda p: str(p).lower().split("\\")         # noqa: E731
-_SORT_KEY = _SORT_KEY_WINDOWS if os.name == "nt" else _SORT_KEY_POSIX
+_SORT_PARTS_POSIX = lambda p: str(p).split("/")                    # noqa: E731
+_SORT_PARTS_WINDOWS = lambda p: str(p).lower().split("\\")         # noqa: E731
+_SORT_PARTS = _SORT_PARTS_WINDOWS if os.name == "nt" else _SORT_PARTS_POSIX
 
 
 def _walk(root):
@@ -185,7 +185,7 @@ def _walk(root):
                 UNREADABLE.add(str((rel_dir / name).as_posix()))
                 continue          # a broken, looping or unresolvable link is not indexable either
             files.append(rel_dir / name)
-    files.sort(key=_SORT_KEY)
+    files.sort(key=_SORT_PARTS)
     return files, gits
 
 
