@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A lock left by a crashed process is recovered even after the clock moves back.** A lock file dated in
+  the future (an NTP step back, a VM restore, a skewed volume) read as negative age, so its dead holder was
+  never checked and every locked write gave up after two seconds. The age is now the distance from the
+  present, so a dead holder is recovered at once and a live one is still left alone.
 - **The measure page's small warning tag is readable.** Its orange text on the pale orange tag measured
   4.33:1, under the 4.5:1 WCAG asks of text that size; the light theme's warning colour is a shade darker.
 - **A generated Python file full of f-strings no longer stalls the map for minutes.** On Python 3.12+

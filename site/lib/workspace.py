@@ -3462,7 +3462,12 @@ def exclusive(path):
             try:
                 st = lock.stat()
                 here = (st.st_mtime_ns, st.st_size, getattr(st, "st_ino", 0))
-                age = now - st.st_mtime
+                # 🐛 [2026-09-30] (R91 acc5, 2026-09-30) A lock whose mtime is in the FUTURE (the clock
+                # stepped back after it was made, a VM restore, a skewed volume) gave a negative age, so
+                # `age > LOCK_READ_AFTER` never held and a DEAD holder was never read: every locked write
+                # gave up after LOCK_TIMEOUT (held False, 2.00s, lock left). abs() is safe: a live
+                # holder is still read as alive and kept, and a fresh lock is near 0 either way.
+                age = abs(now - st.st_mtime)
             except OSError:
                 here, age = None, 0.0
             if here is not None and here != seen:
