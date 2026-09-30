@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Cloudflare's 2026 API tokens and Supabase's secret keys are redacted on sight.** `cfk_`, `cfut_`,
+  `cfat_` and `sb_secret_` values were caught only after a word like `key =`; standing alone in a log
+  line, a URL or JSON they passed through. Supabase's public `sb_publishable_` key is left alone on purpose.
 - **`linguist-generated` patterns now match exactly what git matches.** chamnan read them with shell-glob
   rules, so `docs/*.md` also matched `docs/sub/a.md` and dropped a real file from the index, while
   `a/**/b.py` missed `a/b.py` and an escaped `\!name` never matched. Checked against `git check-attr`

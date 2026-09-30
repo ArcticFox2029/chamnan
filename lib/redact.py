@@ -397,6 +397,14 @@ PATTERNS = [
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])GOCSPX-[A-Za-z0-9_-]{16,}")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])hf_[A-Za-z0-9]{30,}")),
+    # 🎯 [2026-09-30] (R22 acc4, 2026-09-30) Two 2025-2026 provider formats that stood alone in
+    # text with no secret word nearby and passed clear. Cloudflare's `cfk_`, `cfut_` and `cfat_`
+    # tokens are 40 alphanumeric characters plus an 8-hex CRC32 checksum (Cloudflare DLP predefined
+    # profiles). Supabase's `sb_secret_` key is 22 base64url characters, an underscore and an
+    # 8-character checksum. `sb_publishable_` is PUBLIC by design and deliberately has no rule.
+    # The right edge refuses more of the alphabet, so a longer run is not half-matched.
+    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])cf(?:k|ut|at)_[A-Za-z0-9]{40}[0-9a-f]{8}(?![A-Za-z0-9])")),
+    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])sb_secret_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{8}(?![A-Za-z0-9_-])")),
     # An Authorization header names its scheme and then hands over the credential. Matching this
     # explicitly is not a nicety: the bare-assignment rule below sees "Authorization:" as a secret
     # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
@@ -2423,7 +2431,7 @@ _TEMPLATED = _lazy(lambda: re.compile(r"\{[^{}]*\}"))
 # disqualifies the exemption.
 _CREDENTIAL_PREFIX = _lazy(lambda: re.compile(
     r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprse]-|"
-    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_)", re.I))
+    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_|cfk_|cfut_|cfat_|sb_secret_)", re.I))
 _WEAK_SECRET_WORD = _lazy(lambda: re.compile(r"(?:^|[^A-Za-z])keys?\s*$", re.I))
 
 
