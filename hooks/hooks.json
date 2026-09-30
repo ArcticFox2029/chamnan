@@ -42,10 +42,12 @@
     ],
     "SessionEnd": [
       {
+        "_comment": "Claude Code gives a SessionEnd hook max(1500 ms, min(largest declared timeout x 1000, 60000 ms)) unless CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS is set. With no timeout declared this hook got 1.5 s, and measured on the Lumin-App repository chamnan_session_end.py takes 0.83-1.17 s (median 0.94) at load 10.9 and 6.3 s median under other work, most of it _marks() reading ~1,281 workspace files, so the host could kill it and lose the end-of-session digest. 10 s is far above the measurement and well under the 60 s cap. (R36 acc2, 2026-09-30)",
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_session_end.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_session_end.py\"",
+            "timeout": 10
           }
         ]
       }

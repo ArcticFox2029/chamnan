@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The end-of-session digest is no longer cut off by Claude Code.** A SessionEnd hook that declares no
+  timeout gets 1.5 s, and chamnan's took about a second on a large workspace and 6 s on a busy machine, so
+  the host could kill it before the digest was written. It now asks for 10 s.
 - **Cloudflare's 2026 API tokens and Supabase's secret keys are redacted on sight.** `cfk_`, `cfut_`,
   `cfat_` and `sb_secret_` values were caught only after a word like `key =`; standing alone in a log
   line, a URL or JSON they passed through. Supabase's public `sb_publishable_` key is left alone on purpose.
