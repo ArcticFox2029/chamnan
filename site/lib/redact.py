@@ -230,7 +230,7 @@ def _structure_the_value_did_not_open(match, value):
     # `"total_tokens": 88123, "model": "x"` came back as `<REDACTED> "model": "x"`. Every rule that
     # reaches this helper takes a bare `\S` run, so the comma rides along; it is given back here,
     # once, for all four of them (copula, spaced, flag, bare), before the bracket test below.
-    # 🐛 [2026-09-30] Found by the release 1.34.0 CI run -- both tails are structure; the longer
+    # 🐛 [2026-09-30] (self-measured) Found by the release 1.34.0 CI run -- both tails are structure; the longer
     # one is given back, so `{password: x},` keeps `},` and `{"password":x,"next":1}` keeps
     # `,"next":1}`.
     comma = _JSON_COMMA_TAIL.search(value)

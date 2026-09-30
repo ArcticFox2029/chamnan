@@ -316,7 +316,7 @@ def main():
     # 🐛 [2026-09-29] (R47 acc5, 2026-09-29) `Path(".").resolve()` needs the OS cwd to build an
     # absolute path, and raised a bare FileNotFoundError when it was gone; an explicit root is
     # untouched, only the unspecified default routes through ws.current_dir()'s readable sentence.
-    # 🐛 [2026-09-30] Windows CI (Python 3.8) -- resolve() of a path with control characters raised
+    # 🐛 [2026-09-30] (self-measured) Windows CI (Python 3.8) -- resolve() of a path with control characters raised
     # OSError instead of the refusal below. `_err` filters the text, so they do not reach the terminal.
     # `ws.current_dir()` stays OUTSIDE the try: WorkingDirectoryGone is an OSError and must reach
     # the excepthook, which says the directory no longer exists.

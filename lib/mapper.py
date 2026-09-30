@@ -1741,7 +1741,8 @@ def _lang_from_shebang(path):
     """
     try:
         with path.open("rb") as fh:
-            # 🐛 [2026-09-30] Windows CI -- a CRLF first line kept its `\r`, so every shebang there lost its language.
+            # 🐛 [2026-09-30] (self-measured) Windows CI -- a CRLF first line kept its `\r`, so
+            # every shebang there lost its language.
             first = fh.read(200).split(b"\n", 1)[0].rstrip(b"\r")
     except OSError:
         return None

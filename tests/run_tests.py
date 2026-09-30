@@ -47282,72 +47282,78 @@ check("...and the fixture was removed", not _os360.path.exists(_t_fix360), saw=_
 import rollup as _ru361                                                                # noqa: E402
 import workspace as _ws361                                                             # noqa: E402
 
-_t_dir361 = tempfile.mkdtemp(prefix="chamnan-check361-")
-try:
-    def _t_git361(*args):
-        return subprocess.run(["git", "-C", _t_dir361, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-                               "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
-                              capture_output=True, text=True, encoding="utf-8", timeout=30)
+# Windows forbids `"`, `\` and control characters in a file name, and git there does not quote
+# a non-ASCII name under core.quotePath=false, so no name git C-quotes can exist on NTFS: the
+# fixture half is skipped there (first CI run: open() raised on the quote-bearing name).
+if os.name == "nt":
+    print("      · on Windows no file name can carry a character git C-quotes, so the churn fixture was skipped")
+else:
+    _t_dir361 = tempfile.mkdtemp(prefix="chamnan-check361-")
+    try:
+        def _t_git361(*args):
+            return subprocess.run(["git", "-C", _t_dir361, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                   "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
+                                  capture_output=True, text=True, encoding="utf-8", timeout=30)
 
-    _t_init361 = subprocess.run(["git", "init", "-q", _t_dir361], capture_output=True, text=True, encoding="utf-8", timeout=30)
-    check("the fixture repository was initialised", _t_init361.returncode == 0, saw=_t_init361.stderr)
+        _t_init361 = subprocess.run(["git", "init", "-q", _t_dir361], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        check("the fixture repository was initialised", _t_init361.returncode == 0, saw=_t_init361.stderr)
 
-    _t_names361 = ["plain.py", 'with"quote.py', "back\\slash.py", "tab\there.py", "ไทย.py"]
-    for _t_round361 in range(3):
-        for _t_n361 in _t_names361:
-            with open(os.path.join(_t_dir361, _t_n361), "a", encoding="utf-8") as _t_fh361:
-                _t_fh361.write("round %d\n" % _t_round361)
-            _t_git361("add", "--", _t_n361)
-            _t_git361("commit", "-q", "-m", "touch %d" % _t_round361)
-    # Enough history that the ranking is not withheld for being too short.
-    for _t_i361 in range(_ru361.MIN_COMMITS_TO_RANK + 10):
-        with open(os.path.join(_t_dir361, "pad.txt"), "a", encoding="utf-8") as _t_fh361:
-            _t_fh361.write("%d\n" % _t_i361)
-        _t_git361("add", "--", "pad.txt")
-        _t_git361("commit", "-q", "-m", "pad %d" % _t_i361)
-    _t_mv361 = _t_git361("mv", 'with"quote.py', 're"named.py')
-    _t_cm361 = _t_git361("commit", "-q", "-m", "rename")
-    check("the rename committed", _t_mv361.returncode == 0 and _t_cm361.returncode == 0,
-          saw=_t_mv361.stderr + _t_cm361.stderr)
+        _t_names361 = ["plain.py", 'with"quote.py', "back\\slash.py", "tab\there.py", "ไทย.py"]
+        for _t_round361 in range(3):
+            for _t_n361 in _t_names361:
+                with open(os.path.join(_t_dir361, _t_n361), "a", encoding="utf-8") as _t_fh361:
+                    _t_fh361.write("round %d\n" % _t_round361)
+                _t_git361("add", "--", _t_n361)
+                _t_git361("commit", "-q", "-m", "touch %d" % _t_round361)
+        # Enough history that the ranking is not withheld for being too short.
+        for _t_i361 in range(_ru361.MIN_COMMITS_TO_RANK + 10):
+            with open(os.path.join(_t_dir361, "pad.txt"), "a", encoding="utf-8") as _t_fh361:
+                _t_fh361.write("%d\n" % _t_i361)
+            _t_git361("add", "--", "pad.txt")
+            _t_git361("commit", "-q", "-m", "pad %d" % _t_i361)
+        _t_mv361 = _t_git361("mv", 'with"quote.py', 're"named.py')
+        _t_cm361 = _t_git361("commit", "-q", "-m", "rename")
+        check("the rename committed", _t_mv361.returncode == 0 and _t_cm361.returncode == 0,
+              saw=_t_mv361.stderr + _t_cm361.stderr)
 
-    _ru361.forget_churn()
-    _t_churn361 = _ru361._churn(_t_dir361)
-    check("the fixture history produced a churn map at all", bool(_t_churn361),
-          saw="empty: %r" % (_t_churn361,))
+        _ru361.forget_churn()
+        _t_churn361 = _ru361._churn(_t_dir361)
+        check("the fixture history produced a churn map at all", bool(_t_churn361),
+              saw="empty: %r" % (_t_churn361,))
 
-    _t_bad361 = [k for k in _t_churn361 if not os.path.exists(os.path.join(_t_dir361, k))]
-    check("EVERY CHURN KEY NAMES A FILE THAT EXISTS IN THE WORKING TREE",
-          not _t_bad361, saw="keys with no file: %r" % (_t_bad361,))
-    check("...and none starts with a double quote",
-          not [k for k in _t_churn361 if k.startswith('"')],
-          saw="%r" % ([k for k in _t_churn361 if k.startswith('"')],))
-    _t_plain361 = _t_churn361.get("plain.py")
-    for _t_n361 in ("back\\slash.py", "tab\there.py", "ไทย.py"):
-        check("...%r has the same count as plain.py (3 commits each)" % _t_n361,
-              _t_churn361.get(_t_n361) == _t_plain361 == 3,
-              saw="plain=%r this=%r" % (_t_plain361, _t_churn361.get(_t_n361)))
-    check("...the renamed file carries its whole history (3 + the rename = 4) under the new name",
-          _t_churn361.get('re"named.py') == 4, saw="%r" % (_t_churn361,))
+        _t_bad361 = [k for k in _t_churn361 if not os.path.exists(os.path.join(_t_dir361, k))]
+        check("EVERY CHURN KEY NAMES A FILE THAT EXISTS IN THE WORKING TREE",
+              not _t_bad361, saw="keys with no file: %r" % (_t_bad361,))
+        check("...and none starts with a double quote",
+              not [k for k in _t_churn361 if k.startswith('"')],
+              saw="%r" % ([k for k in _t_churn361 if k.startswith('"')],))
+        _t_plain361 = _t_churn361.get("plain.py")
+        for _t_n361 in ("back\\slash.py", "tab\there.py", "ไทย.py"):
+            check("...%r has the same count as plain.py (3 commits each)" % _t_n361,
+                  _t_churn361.get(_t_n361) == _t_plain361 == 3,
+                  saw="plain=%r this=%r" % (_t_plain361, _t_churn361.get(_t_n361)))
+        check("...the renamed file carries its whole history (3 + the rename = 4) under the new name",
+              _t_churn361.get('re"named.py') == 4, saw="%r" % (_t_churn361,))
 
-    # ws.unquote_git_path must reverse git's own quoting of these names.
-    _t_raw361 = subprocess.run(["git", "-C", _t_dir361, "ls-files"], capture_output=True, text=True,
-                               encoding="utf-8", timeout=30).stdout.splitlines()
-    # The truth is the `-z` listing, which git never quotes.
-    _t_true361 = sorted(subprocess.run(["git", "-C", _t_dir361, "ls-files", "-z"], capture_output=True,
-                                       text=True, encoding="utf-8", timeout=30).stdout.split("\0")[:-1])
-    _t_qp361 = _t_git361("ls-files").stdout.splitlines()
-    check("git really quotes at least the awkward names when core.quotePath is left alone (or the fixture is void)",
-          any(r.startswith('"') for r in _t_raw361), saw="%r" % (_t_raw361,))
-    check("ws.unquote_git_path turns git's default-quoted ls-files output into the real names",
-          sorted(_ws361.unquote_git_path(r) for r in _t_raw361) == _t_true361,
-          saw="%r vs %r" % (sorted(_ws361.unquote_git_path(r) for r in _t_raw361), _t_true361))
-    check("...and the quotePath=false output (still quoted for the awkward names) decodes to the same",
-          sorted(_ws361.unquote_git_path(r) for r in _t_qp361) == _t_true361,
-          saw="%r vs %r" % (sorted(_ws361.unquote_git_path(r) for r in _t_qp361), _t_true361))
-    check("...and leaves an unquoted name alone", _ws361.unquote_git_path("plain.py") == "plain.py")
-finally:
-    shutil.rmtree(_t_dir361, ignore_errors=True)
-check("...and the fixture was removed", not os.path.exists(_t_dir361), saw=_t_dir361)
+        # ws.unquote_git_path must reverse git's own quoting of these names.
+        _t_raw361 = subprocess.run(["git", "-C", _t_dir361, "ls-files"], capture_output=True, text=True,
+                                   encoding="utf-8", timeout=30).stdout.splitlines()
+        # The truth is the `-z` listing, which git never quotes.
+        _t_true361 = sorted(subprocess.run(["git", "-C", _t_dir361, "ls-files", "-z"], capture_output=True,
+                                           text=True, encoding="utf-8", timeout=30).stdout.split("\0")[:-1])
+        _t_qp361 = _t_git361("ls-files").stdout.splitlines()
+        check("git really quotes at least the awkward names when core.quotePath is left alone (or the fixture is void)",
+              any(r.startswith('"') for r in _t_raw361), saw="%r" % (_t_raw361,))
+        check("ws.unquote_git_path turns git's default-quoted ls-files output into the real names",
+              sorted(_ws361.unquote_git_path(r) for r in _t_raw361) == _t_true361,
+              saw="%r vs %r" % (sorted(_ws361.unquote_git_path(r) for r in _t_raw361), _t_true361))
+        check("...and the quotePath=false output (still quoted for the awkward names) decodes to the same",
+              sorted(_ws361.unquote_git_path(r) for r in _t_qp361) == _t_true361,
+              saw="%r vs %r" % (sorted(_ws361.unquote_git_path(r) for r in _t_qp361), _t_true361))
+        check("...and leaves an unquoted name alone", _ws361.unquote_git_path("plain.py") == "plain.py")
+    finally:
+        shutil.rmtree(_t_dir361, ignore_errors=True)
+    check("...and the fixture was removed", not os.path.exists(_t_dir361), saw=_t_dir361)
 # ---- 362_many_fstrings_do_not_stall_the_map.py
 # ------------------ a module with thousands of f-strings is skipped, not parsed for minutes
 # 🐛 [2026-09-30] (R68 acc2, 2026-09-30) `ast.parse` on Python 3.12+ is quadratic in the number of
@@ -47551,54 +47557,60 @@ import time as _tm365
 import coedit as _co365                                                                # noqa: E402
 import deps as _dp365                                                                  # noqa: E402
 
-_t_dir365 = tempfile.mkdtemp(prefix="chamnan-check365-")
-try:
-    def _t_git365(*args):
-        return subprocess.run(["git", "-C", _t_dir365, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-                               "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
-                              capture_output=True, text=True, encoding="utf-8", timeout=30)
+# Windows forbids `"`, `\` and control characters in a file name, and git there does not quote
+# a non-ASCII name under core.quotePath=false, so no name git C-quotes can exist on NTFS: the
+# fixture half is skipped there (first CI run: open() raised on the quote-bearing name).
+if os.name == "nt":
+    print("      · on Windows no file name can carry a character git C-quotes, so the git path readers fixture was skipped")
+else:
+    _t_dir365 = tempfile.mkdtemp(prefix="chamnan-check365-")
+    try:
+        def _t_git365(*args):
+            return subprocess.run(["git", "-C", _t_dir365, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                   "-c", "commit.gpgsign=false", "-c", "core.quotePath=false", *args],
+                                  capture_output=True, text=True, encoding="utf-8", timeout=30)
 
-    _t_init365 = subprocess.run(["git", "init", "-q", _t_dir365], capture_output=True, text=True, encoding="utf-8", timeout=30)
-    check("the fixture repository was initialised", _t_init365.returncode == 0, saw=_t_init365.stderr)
+        _t_init365 = subprocess.run(["git", "init", "-q", _t_dir365], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        check("the fixture repository was initialised", _t_init365.returncode == 0, saw=_t_init365.stderr)
 
-    # The Thai name is built from code points so this file stays free of literal Thai.
-    _t_thai365 = "".join(chr(c) for c in (0x0e44, 0x0e1f, 0x0e25, 0x0e4c)) + ".py"
-    _t_names365 = ["plain.py", 'with"quote.py', "tab\tX.py", _t_thai365]
-    for _t_n365 in _t_names365:
-        with open(os.path.join(_t_dir365, _t_n365), "w", encoding="utf-8") as _t_fh365:
-            _t_fh365.write("x\n")
-        _t_git365("add", "--", _t_n365)
-    _t_cm365 = _t_git365("commit", "-q", "-m", "files")
-    check("the fixture commit landed", _t_cm365.returncode == 0, saw=_t_cm365.stderr)
+        # The Thai name is built from code points so this file stays free of literal Thai.
+        _t_thai365 = "".join(chr(c) for c in (0x0e44, 0x0e1f, 0x0e25, 0x0e4c)) + ".py"
+        _t_names365 = ["plain.py", 'with"quote.py', "tab\tX.py", _t_thai365]
+        for _t_n365 in _t_names365:
+            with open(os.path.join(_t_dir365, _t_n365), "w", encoding="utf-8") as _t_fh365:
+                _t_fh365.write("x\n")
+            _t_git365("add", "--", _t_n365)
+        _t_cm365 = _t_git365("commit", "-q", "-m", "files")
+        check("the fixture commit landed", _t_cm365.returncode == 0, saw=_t_cm365.stderr)
 
-    # (a1) coedit: the reader behind the "Last edited" line.
-    _t_now365 = _tm365.time()
-    _t_rows365 = _co365._git_edits(_t_dir365, _t_now365 + 5, _t_now365 - 3600)
-    _t_got365 = sorted({p for _a, p in _t_rows365})
-    check("coedit read the sitting's files at all", len(_t_got365) == len(_t_names365),
-          saw="%r" % (_t_got365,))
-    check("EVERY 'LAST EDITED' PATH NAMES A FILE THAT EXISTS IN THE WORKING TREE",
-          not [p for p in _t_got365 if not os.path.exists(os.path.join(_t_dir365, p))],
-          saw="no file for: %r" % ([p for p in _t_got365 if not os.path.exists(os.path.join(_t_dir365, p))],))
-    check("...and none starts with a double quote", not [p for p in _t_got365 if p.startswith('"')],
-          saw="%r" % ([p for p in _t_got365 if p.startswith('"')],))
+        # (a1) coedit: the reader behind the "Last edited" line.
+        _t_now365 = _tm365.time()
+        _t_rows365 = _co365._git_edits(_t_dir365, _t_now365 + 5, _t_now365 - 3600)
+        _t_got365 = sorted({p for _a, p in _t_rows365})
+        check("coedit read the sitting's files at all", len(_t_got365) == len(_t_names365),
+              saw="%r" % (_t_got365,))
+        check("EVERY 'LAST EDITED' PATH NAMES A FILE THAT EXISTS IN THE WORKING TREE",
+              not [p for p in _t_got365 if not os.path.exists(os.path.join(_t_dir365, p))],
+              saw="no file for: %r" % ([p for p in _t_got365 if not os.path.exists(os.path.join(_t_dir365, p))],))
+        check("...and none starts with a double quote", not [p for p in _t_got365 if p.startswith('"')],
+              saw="%r" % ([p for p in _t_got365 if p.startswith('"')],))
 
-    # (a2) deps: a manifest whose directory holds a double quote, read back through `git show`.
-    _t_man365 = 'q"dir/requirements.txt'
-    os.makedirs(os.path.join(_t_dir365, 'q"dir'))
-    for _t_body365 in ("alpha\nbeta\n", "alpha\n"):
-        with open(os.path.join(_t_dir365, _t_man365), "w", encoding="utf-8") as _t_fh365:
-            _t_fh365.write(_t_body365)
-        _t_git365("add", "--", _t_man365)
-        _t_git365("commit", "-q", "-m", "manifest %d" % len(_t_body365))
-    _t_rem365 = _dp365.removals(_t_dir365, manifests=(_t_man365,))
-    check("deps finds the package removed from a manifest whose path git C-quotes",
-          "beta" in _t_rem365, saw="%r" % (_t_rem365,))
-    # drift: `PATH` there only admits [A-Za-z0-9_./-], a spelling git never quotes, so a fixture that
-    # reaches the unquote through gone_since() cannot be built; the population check below covers it.
-finally:
-    shutil.rmtree(_t_dir365, ignore_errors=True)
-check("...and the fixture was removed", not os.path.exists(_t_dir365), saw=_t_dir365)
+        # (a2) deps: a manifest whose directory holds a double quote, read back through `git show`.
+        _t_man365 = 'q"dir/requirements.txt'
+        os.makedirs(os.path.join(_t_dir365, 'q"dir'))
+        for _t_body365 in ("alpha\nbeta\n", "alpha\n"):
+            with open(os.path.join(_t_dir365, _t_man365), "w", encoding="utf-8") as _t_fh365:
+                _t_fh365.write(_t_body365)
+            _t_git365("add", "--", _t_man365)
+            _t_git365("commit", "-q", "-m", "manifest %d" % len(_t_body365))
+        _t_rem365 = _dp365.removals(_t_dir365, manifests=(_t_man365,))
+        check("deps finds the package removed from a manifest whose path git C-quotes",
+              "beta" in _t_rem365, saw="%r" % (_t_rem365,))
+        # drift: `PATH` there only admits [A-Za-z0-9_./-], a spelling git never quotes, so a fixture that
+        # reaches the unquote through gone_since() cannot be built; the population check below covers it.
+    finally:
+        shutil.rmtree(_t_dir365, ignore_errors=True)
+    check("...and the fixture was removed", not os.path.exists(_t_dir365), saw=_t_dir365)
 
 # (b) population. Every list literal handed to git that names a path-listing form must carry `-z` or
 # live in a module that references `unquote_git_path`. AST-based, so comments and docstrings cannot
