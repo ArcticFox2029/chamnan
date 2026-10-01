@@ -170,6 +170,60 @@ def _top_level(path, root):
 _TRACKED_AMBIGUOUS = {}
 _GENERATED_GLOBS = {}
 SKIPPED_GENERATED = set()
+SKIPPED_AI_IGNORED = set()
+_AI_IGNORE_FILES = (".aiignore", ".cursorignore", ".codeiumignore", ".aiexclude")
+_AI_IGNORE_PATTERNS = {}
+
+
+# 🐛 [2026-10-01] (R411 acc4, 2026-10-01) Reproduced: a fixture whose root `.aiignore` named
+# `secret_pricing.py` (first comment "Pricing formula for enterprise deals, confidential") got that
+# summary into `.chamnan/MAP.md`, which is injected into every session. Users keep these files so AI
+# tools stay away from a path, and chamnan read none of them. Four names, gitignore syntax, at the
+# repository root only: `.aiignore`, `.cursorignore`, `.codeiumignore`, `.aiexclude`.
+def _ai_ignore_patterns(root):
+    """`(negated, pattern)` pairs from the AI-exclusion files at `root`, in file order."""
+    key = str(root)
+    if key in _AI_IGNORE_PATTERNS:
+        return _AI_IGNORE_PATTERNS[key]
+    pats = []
+    for name in _AI_IGNORE_FILES:
+        f = Path(root) / name
+        if not f.is_file():
+            continue
+        try:
+            text = tree.read_capped(f)
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            negated = line.startswith("!")
+            pats.append((negated, line[1:] if negated else line))
+    _AI_IGNORE_PATTERNS[key] = pats
+    return pats
+
+
+def _is_ai_ignored(rel, pats, fold=False):
+    """Last matching pattern decides; a negation cannot re-include under an excluded directory.
+
+    Mirrors `catalogs._ignored_by_files`: a pattern matches the path itself or any ancestor
+    directory, and git cannot re-include a file whose parent directory is excluded.
+    """
+    _fold = lambda: fold() if callable(fold) else fold          # noqa: E731
+    parts = rel.split("/")[:-1]
+    ancestors = ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
+    verdict = False
+    parent_excluded = False
+    for negated, pat in pats:
+        if not tree.gitignore_matches(rel, pat, _fold()):
+            continue
+        if negated and parent_excluded:
+            continue
+        verdict = not negated
+        if not negated and any(tree.gitignore_matches(a, pat, _fold()) for a in ancestors):
+            parent_excluded = True
+    return verdict
 
 
 def _generated_globs(root):
@@ -2004,6 +2058,11 @@ def indexable(root, nested=None, with_text=False, sniff=True):
                                   lambda: tree.git_folds_case(root)):
             SKIPPED_GENERATED.add("/".join(rel_parts))
             continue
+        _ai = _ai_ignore_patterns(root)
+        if _ai and _is_ai_ignored("/".join(rel_parts), _ai,
+                                  lambda: tree.git_folds_case(root)):
+            SKIPPED_AI_IGNORED.add(str(path))
+            continue
         # 🐛 [2026-09-24] (self-measured) Found the first session after 1.31.1 was installed: the
         # dashboard is now built INTO the workspace, and the next index described its pages as the
         # repository's source. A path rule rather than a name in SKIP_DIRS, because `statistic/` is
@@ -2214,6 +2273,7 @@ def reset_skips():
     SKIPPED_UNPARSEABLE.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
+    SKIPPED_AI_IGNORED.clear()
     SKIPPED_UNKNOWN_EXT.clear()
     SKIPPED_UNKNOWN_DIR.clear()
     PARSE_WARNINGS.clear()
@@ -2385,6 +2445,9 @@ def _what_this_index_leaves_out(root):
         out.append(f"**{len(SKIPPED_TOO_LARGE)} file(s) are too large to index** — "
                    f"{_named([p for p, _ in SKIPPED_TOO_LARGE])}. "
                    f"`chamnan-peek <path>` reads the shape of one without loading it.")
+    if SKIPPED_AI_IGNORED:
+        out.append(f"**{len(SKIPPED_AI_IGNORED)} file(s) are left out because an AI-ignore file "
+                   f"names them** — their names are not shown either.")
     if SKIPPED_TOO_MANY_LINES:
         out.append(f"**{len(SKIPPED_TOO_MANY_LINES)} file(s) have too many lines to index** — "
                    f"{_named([p for p, _ in SKIPPED_TOO_MANY_LINES])}.")
