@@ -296,6 +296,25 @@ SITTING_GIT_COMMITS = 60
 _STAMP = "\x01"
 
 
+def _is_shallow(root):
+    """True when `root`'s git dir holds a `shallow` file; any error counts as not shallow."""
+    from pathlib import Path    # local: this module is imported on every Read by the pointer hook
+    try:
+        dot_git = Path(root) / ".git"
+        if dot_git.is_file():
+            # A linked worktree: `.git` is a file reading `gitdir: <path>`.
+            target = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+            if not target.startswith("gitdir:"):
+                return False
+            gitdir = Path(target[len("gitdir:"):].strip())
+            if not gitdir.is_absolute():
+                gitdir = Path(root) / gitdir
+            return (gitdir / "shallow").is_file()
+        return (dot_git / "shallow").is_file()
+    except (OSError, ValueError):
+        return False
+
+
 def _git_edits(root, now, cutoff):
     """[(at, path)] for files touched by recent commits, or [] when git cannot answer.
 
@@ -338,6 +357,7 @@ def _git_edits(root, now, cutoff):
     if out.returncode != 0:
         return []
     rows, at = [], None
+    stamps = 0
     for line in out.stdout.splitlines():
         line = line.strip()
         if not line:
@@ -353,11 +373,20 @@ def _git_edits(root, now, cutoff):
         # commit, which is the false absence this line is supposed to prevent.
         if line.startswith(_STAMP) and line[1:].isdigit():
             at = int(line[1:])
+            stamps += 1
             continue
         if at is not None and cutoff <= at <= now:
             # 🐛 [2026-09-30] (R97 acc4, 2026-09-30) A committed `tab<TAB>X.py` showed in the
             # "Last edited" line as git's quoted spelling `"tab\tX.py"`, not the file's name.
             rows.append((at, ws.unquote_git_path(line)))
+    # 🐛 [2026-10-01] (R282 acc2, 2026-10-01) On a `git clone --depth=1` checkout every tracked file
+    # belongs to the one grafted commit, so this named the first five files alphabetically as if they
+    # had just been edited. One commit seen AND a shallow repository means the history cannot say
+    # what was edited last, so say nothing; a real repository with one recent commit is unaffected.
+    # Shallowness is read from the `shallow` file git keeps in its git dir, not from a git call:
+    # the suite pins the number of git call sites, and the file exists exactly when it is shallow.
+    if stamps == 1 and rows and _is_shallow(root):
+        return []
     return rows
 
 
