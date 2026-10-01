@@ -22,7 +22,6 @@ for anybody who wants the harder version in a pre-commit hook they installed the
 import json
 import os
 import shlex
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -106,6 +105,8 @@ def main():
         # warning to STDERR — so the hook ran, the guard found the staged key, and nothing was
         # shown. A false success made while wiring up the fix for false successes. Both streams
         # are read, because which one a warning uses is the guard's choice, not this hook's.
+        # Imported here, not at module top: ~14 ms on every Bash call for a path that rarely runs (R373 acc5, 2026-10-01).
+        import subprocess
         _r = subprocess.run([sys.executable, str(guard)], cwd=str(root), capture_output=True,
                             text=True, encoding="utf-8", errors="replace", timeout=20,
                             env=dict(os.environ))

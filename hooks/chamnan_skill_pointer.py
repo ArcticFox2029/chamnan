@@ -43,7 +43,6 @@ READS: .chamnan/logs/skill_pointer_nudge/*.json via { at least 1
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -190,6 +189,8 @@ def _what_this_repo_already_has(payload):
         # this interpreter cannot read the head of a BinOp, so it reports the site as executing
         # something unknown. And `text=True` alone decodes with the platform's preferred encoding,
         # which is not UTF-8 everywhere this ships.
+        # Imported here, not at module top: ~14 ms on every Bash call for a path that rarely runs (R373 acc5, 2026-10-01).
+        import subprocess
         out = subprocess.run([sys.executable, str(recall), *words], cwd=str(root),
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", timeout=20).stdout
@@ -359,6 +360,7 @@ def _about_to_discard(command, root):
         # Thai, Chinese or accented dirty path comes back C-quoted (`"\340\271\204...txt"`) and
         # this function prints it straight into the advisory below — the "name the exact paths"
         # line then names a path nobody could actually type or copy.
+        import subprocess
         out = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
                               "status", "--porcelain"],
                              capture_output=True, text=True, encoding="utf-8",
