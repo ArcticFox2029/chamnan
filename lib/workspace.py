@@ -103,7 +103,21 @@ def _quiet_broken_pipe(kind, value, tb, _previous=sys.excepthook):
     if isinstance(kind, type) and issubclass(kind, WorkingDirectoryGone):
         print("chamnan: %s" % (value,), file=sys.stderr)
         sys.exit(1)
-    _previous(kind, value, tb)
+    # 🐛 [2026-10-01] (R380 acc4, 2026-10-01) Python's default hook prints the exception MESSAGE
+    # raw, and stderr of a command run through a tool call goes into the model's context and the
+    # transcript. Measured: `import workspace; raise ValueError('config value <ghp_ token> is not
+    # valid')` printed the token on stderr; `redact.scrub` over that stderr removes it. The
+    # exception TYPE and the frames still print; only secret-shaped values in the text are
+    # replaced. If scrubbing itself fails, fall back to the default hook so the traceback is
+    # never hidden.
+    try:
+        import traceback
+        import redact
+        text = "".join(traceback.format_exception(kind, value, tb))
+        sys.stderr.write(redact.scrub(text))
+        sys.stderr.flush()
+    except Exception:
+        _previous(kind, value, tb)
 
 
 def _flush_or_let_go():
