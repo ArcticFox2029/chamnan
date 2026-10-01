@@ -784,3 +784,127 @@ def render_env(pairs, unsafe):
                    f"publishes them.")
     out.append("")
     return "\n".join(out)
+
+
+# 🎯 [2026-10-01] (R211 acc4, measured) Coding agents ran tests in 73.7% of projects that declare
+# build configuration vs 41.7% of those without. A repository's own test/build/lint commands reached
+# neither MAP.md nor the session block, so they are surfaced here, labelled as declared.
+COMMAND_NAMES = ("test", "tests", "check", "build", "lint", "typecheck", "format", "fmt")
+MAX_COMMANDS = 8
+_COMMAND_READ_CAP = 256 * 1024
+
+
+def _read_root_file(root, name):
+    """Text of one root-level file (capped), or None when it is absent or unreadable."""
+    path = Path(root) / name
+    try:
+        if not path.is_file():
+            return None
+        with open(path, "rb") as fh:
+            return fh.read(_COMMAND_READ_CAP).decode("utf-8")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def scan_commands(root):
+    """Declared test/build/lint commands as [(command, source_filename)], at most 8.
+
+    Reads only files at the repository root. Every command is built from the fixed allowlist
+    COMMAND_NAMES or from a fixed string, so no repository-controlled text reaches the output
+    except through those fixed names; that is why no quoting beyond the usual is needed.
+    """
+    root = Path(root)
+    found = []
+    seen = set()
+
+    def add(cmd, source):
+        if cmd not in seen:
+            seen.add(cmd)
+            found.append((cmd, source))
+
+    def exists(name):
+        try:
+            return (root / name).is_file()
+        except OSError:
+            return False
+
+    text = _read_root_file(root, "package.json")
+    if text is not None:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        scripts = data.get("scripts") if isinstance(data, dict) else None
+        if isinstance(scripts, dict):
+            if exists("pnpm-lock.yaml"):
+                runner = "pnpm"
+            elif exists("yarn.lock"):
+                runner = "yarn"
+            elif exists("bun.lockb") or exists("bun.lock"):
+                runner = "bun"
+            else:
+                runner = "npm"
+            for name in COMMAND_NAMES:
+                if name in scripts:
+                    add("npm test" if (runner == "npm" and name == "test")
+                        else f"{runner} run {name}", "package.json")
+
+    for fname in ("Makefile", "makefile", "GNUmakefile"):
+        text = _read_root_file(root, fname)
+        if text is not None:
+            for m in re.finditer(r"^([A-Za-z0-9][\w.-]*)\s*:(?![=:])", text, re.M):
+                if m.group(1) in COMMAND_NAMES:
+                    add(f"make {m.group(1)}", fname)
+            break
+
+    for fname in ("justfile", "Justfile", ".justfile"):
+        text = _read_root_file(root, fname)
+        if text is not None:
+            for m in re.finditer(r"^([A-Za-z0-9][\w-]*)[^\n:=]*:(?![=])", text, re.M):
+                if m.group(1) in COMMAND_NAMES:
+                    add(f"just {m.group(1)}", fname)
+            break
+
+    text = _read_root_file(root, "pyproject.toml")
+    if text is not None:
+        if "[tool.pytest" in text:
+            add("pytest", "pyproject.toml")
+        if "[tool.ruff" in text:
+            add("ruff check", "pyproject.toml")
+        if "[tool.mypy" in text:
+            add("mypy .", "pyproject.toml")
+    if exists("pytest.ini"):
+        add("pytest", "pytest.ini")
+    else:
+        text = _read_root_file(root, "setup.cfg")
+        if text is not None and "[tool:pytest]" in text:
+            add("pytest", "setup.cfg")
+    if exists("tox.ini"):
+        add("tox", "tox.ini")
+    if exists("noxfile.py"):
+        add("nox", "noxfile.py")
+
+    if exists("Cargo.toml"):
+        add("cargo test", "Cargo.toml")
+        add("cargo build", "Cargo.toml")
+    if exists("go.mod"):
+        add("go test ./...", "go.mod")
+        add("go build ./...", "go.mod")
+    if exists("gradlew"):
+        add("./gradlew test", "gradlew")
+        add("./gradlew build", "gradlew")
+    elif exists("pom.xml"):
+        add("mvn test", "pom.xml")
+    return found[:MAX_COMMANDS]
+
+
+def render_commands(found):
+    if not found:
+        return ""
+    # No *_BUDGET_SHARE here on purpose: the suite caps the sum of shares, and the flat cap of
+    # MAX_COMMANDS short entries already bounds this section.
+    listed = ", ".join(f"`{mdblock.as_quoted(cmd, 80)}` ({mdblock.as_quoted(src, 80)})"
+                       for cmd, src in found[:MAX_COMMANDS])
+    return "\n".join(["## Declared commands", "",
+                       "Declared in this repository's own files; chamnan has not run them.",
+                       "", listed, ""])

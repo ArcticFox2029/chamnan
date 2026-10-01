@@ -2539,7 +2539,9 @@ def _render(files, root):
     stored = assets_mod.scan(root,
                              {f["path"] for f in files} | deployed.get("claimed", set()),
                              EXT_LANG)
-    for section_text in (schema_mod.render(tables),
+    commands = catalogs_mod.scan_commands(root)
+    for section_text in (catalogs_mod.render_commands(commands),
+                         schema_mod.render(tables),
                          catalogs_mod.render_routes(routes),
                          catalogs_mod.render_env(env_pairs, env_unsafe),
                          deploy_mod.render(deployed),

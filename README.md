@@ -364,6 +364,7 @@ Four capabilities. Everything listed is shipped and running today.
 | **Data model** | Table and model names with a one-line summary, pulled from DDL, migrations and ORM models — instead of a schema dump. Only appears if the repo defines one. |
 | **API surface** | Method, path and handler, from route decorators, OpenAPI documents and `.proto` service definitions — instead of the whole spec. |
 | **Configuration** | The environment variable names the repo reads. **Names only, never values** — and it warns if `.env` is not gitignored. |
+| **Declared commands** | The test, build and lint commands the repository's own files declare (`package.json` scripts, `Makefile`, `justfile`, `pyproject.toml`, `Cargo.toml`, `go.mod`, Gradle, Maven) — at most eight, from a fixed list of names. Declared there; chamnan has not run them. |
 | **Deployment** | What actually runs, read from Kubernetes, Ansible, Compose, Helm and CI manifests: kinds and names, images, roles, pipelines. A Secret contributes its name and nothing under it. |
 | **Stored material** | The non-source trees — scanned paperwork, exports, archives — as counts, sizes and dominant extensions. It exists to stop an agent going to look, which costs far more than the section does. Never opened, never read. |
 
