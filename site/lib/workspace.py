@@ -1441,6 +1441,26 @@ def _own_process_started():
     return _OWN_PROCESS_STARTED[0]
 
 
+# This machine's name, cached like `_OWN_PROCESS_STARTED`: it is written into every lock so a
+# waiter on a different host can tell the PID in it cannot be checked locally.
+_OWN_HOST = []
+
+
+def _own_host():
+    """This machine's host name, computed once; "" when it cannot be determined."""
+    if not _OWN_HOST:
+        try:
+            if hasattr(os, "uname"):
+                name = os.uname().nodename
+            else:
+                name = os.environ.get("COMPUTERNAME", "")
+            name = str(name).replace("\r", "").replace("\n", "").strip()
+        except Exception:
+            name = ""
+        _OWN_HOST.append(name)
+    return _OWN_HOST[0]
+
+
 # 🎯 [owner, 2026-09-23] A plugin other people install has to clean up after itself, safely, and the
 # scope is the repository: its own logs, and working stages that finished but were never removed.
 # `prune_orphaned_temps` covers a killed atomic WRITE, which leaves a `.tmp` file. It does not
@@ -3408,6 +3428,8 @@ def _lock_holder_state(lock):
         follows from two values that are both present and disagree. A false ALIVE costs waiting;
         a false DEAD unlinks a live holder's lock and hands the file to two writers at once, which
         is strictly worse than the bug this exists to fix.
+      - PID on another host (third line differs from ours) -> UNKNOWN: its PID cannot be checked
+        here, so only the age rule at LOCK_STALE may break it.
     """
     try:
         lines = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
@@ -3416,6 +3438,9 @@ def _lock_holder_state(lock):
     if not lines or not lines[0].strip().isdigit():
         return LOCK_HOLDER_UNKNOWN
     pid = int(lines[0].strip())
+    recorded_host = lines[2].strip() if len(lines) > 2 else ""
+    if recorded_host and _own_host() and recorded_host != _own_host():
+        return LOCK_HOLDER_UNKNOWN
     if not _pid_is_alive(pid):
         return LOCK_HOLDER_DEAD
     recorded_start = lines[1].strip() if len(lines) > 1 else ""
@@ -3465,8 +3490,13 @@ def exclusive(path):
             # is handed to an unrelated live process, and the age rule can never break it. The
             # second line is this process's own birth time, cached in `_own_process_started` so
             # paying for it happens once per process lifetime rather than on every acquire.
+            #
+            # 🐛 [2026-10-01] (R173 acc4, 2026-10-01) A PID only means something on the machine that
+            # wrote it. A workspace shared by two machines (NFS/SMB home, a mounted volume) let a
+            # waiter on another host read a live lock as DEAD after 0.25 s -- the PID does not
+            # exist there -- and break it, so the host goes in the lock as a third line.
             try:
-                os.write(fd, f"{os.getpid()}\n{_own_process_started()}\n".encode())
+                os.write(fd, f"{os.getpid()}\n{_own_process_started()}\n{_own_host()}\n".encode())
             except OSError:
                 pass
             break
