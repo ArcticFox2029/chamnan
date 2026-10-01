@@ -201,6 +201,23 @@ def _what_this_repo_already_has(payload):
     # prints, so the "" this docstring promises for no match never happened.
     if not lines or lines[0].startswith("chamnan: nothing in the stores matches"):
         return ""
+    # 🐛 [2026-10-01] (R342 acc2, R367 acc5, R369 acc5) Measured over 53 lookups in one session:
+    # every entry whose recall line said it matched only "in the body" was irrelevant, and every
+    # relevant entry matched in the title or the blurb. (The leading number of a check file, e.g.
+    # `387_...`, matching stray numbers in long note bodies is one way body-only matches arise.)
+    # Drop entries that matched only in the body. An entry is its lines up to and including its
+    # `matched ...` line; if the shape is not that, keep the output as recall printed it.
+    entries, cur = [], []
+    for ln in lines[1:]:
+        cur.append(ln)
+        if ln.strip().startswith("matched "):
+            entries.append(cur)
+            cur = []
+    if entries and not cur:
+        kept = [e for e in entries if not e[-1].rstrip().endswith(" in the body")]
+        if not kept:
+            return ""
+        lines = [lines[0]] + [ln for e in kept for ln in e]
     head = ["chamnan: before writing `%s` — the store was asked for you:" % Path(raw).name]
     head += ["  " + ln.strip()[:130] for ln in lines[:7]]
     head.append("  (this ran automatically; `chamnan-recall <words>` is the manual form)")
