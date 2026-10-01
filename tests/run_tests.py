@@ -48663,6 +48663,40 @@ _long_key378 = "api_" + "x" * 196 + "_token"
 _out378 = _rd378.scrub('%s = "%s"' % (_long_key378, "".join(chr(97 + (i * 7) % 26) for i in range(24)) + "Q9"))
 check("...while a 200-character key name still has its value redacted",
       _rd378.PLACEHOLDER in _out378, saw=_out378[-60:])
+# ---- 379_a_secret_inside_a_quoted_list_element_leaves_the_list_whole.py
+# ------------------ a secret inside a quoted list element is redacted, and the list around it survives
+# 🐛 [2026-10-01] (R239 acc4, 2026-10-01) When the key itself opened a quoted string --
+# `["DB_PASSWORD=<v>","X=1"]`, a Docker image's Env list, a compose environment list -- the bare-value
+# rule ran its value past the string's closing quote, so scrub returned `["DB_PASSWORD=<REDACTED>]`:
+# the quote and every later element gone. The closing quote now ends the value, and the remainder is
+# scrubbed in its own right, because a second assignment in the same list must still be caught.
+# Values are built at runtime from a seeded generator, never written into this file.
+import importlib as _il379
+import random as _rnd379
+import string as _st379
+
+_rd379 = _il379.import_module("redact")
+_rng379 = _rnd379.Random(379)
+_g379 = "".join(_rng379.choice(_st379.ascii_letters + _st379.digits) for _ in range(14))
+_h379 = "".join(_rng379.choice(_st379.ascii_letters + _st379.digits) for _ in range(20))
+_P379 = _rd379.PLACEHOLDER
+
+_cases379 = [
+    ('["DB_PASSWORD=%s","X=1"]' % _g379, '["DB_PASSWORD=%s","X=1"]' % _P379),
+    ('x = "DB_PASSWORD=%s"' % _g379, 'x = "DB_PASSWORD=%s"' % _P379),
+    ("env: ['API_TOKEN=%s', 'DEBUG=1']" % _g379, "env: ['API_TOKEN=%s', 'DEBUG=1']" % _P379),
+]
+_bad379 = [(want, _rd379.scrub(src)) for src, want in _cases379 if _rd379.scrub(src) != want]
+check("A SECRET IN A QUOTED LIST ELEMENT IS REDACTED AND THE CLOSING QUOTE AND LATER ELEMENTS SURVIVE",
+      not _bad379, saw=_bad379)
+
+_two379 = _rd379.scrub('["DB_PASSWORD=%s","API_KEY=%s"]' % (_g379, _h379))
+check("...while a second secret later in the same list is still redacted",
+      _g379 not in _two379 and _h379 not in _two379 and _two379.count(_P379) == 2, saw=_two379)
+
+_bare379 = _rd379.scrub("DB_PASSWORD=%s" % _g379)
+check("...and an unquoted assignment is redacted as before", _bare379 == "DB_PASSWORD=" + _P379,
+      saw=_bare379)
 # ---- 37_two_different_sequences_get_two_candidate_files.py
 # ------------------------------------------- the second habit overwrote the first, silently
 # 🐛 [2026-09-10] `candidates.slug` truncated at 60 characters with no collision check, so two
@@ -48759,6 +48793,251 @@ try:
           _resolved.name == _old_name, saw=f"resolved to {_resolved.name}, legacy is {_old_name}")
 finally:
     shutil.rmtree(_t_legacy, ignore_errors=True)
+# ---- 380_a_damaged_recall_index_is_called_damaged_and_no_match_stays_silent.py
+# ------------------ a damaged recall index is called damaged, and an unmatched tool name injects nothing
+# 🐛 [2026-10-01] (R240 acc4, R258 acc4, 2026-10-01) Two halves of one habit: reading recall's answer
+# from its text. A store_index.json truncated, emptied or overwritten made `chamnan-recall` say
+# "no index yet" -- untrue, the file was there and broken, and the fix the user needs differs. And the
+# skill pointer skipped a no-match answer by looking for "0 of", text recall never prints, so every new
+# tool file with an unmatched name got a three-line "nothing in the stores matches" block, against its
+# own docstring's promise of "".
+import json as _js380
+import os as _os380
+import shutil as _sh380
+import subprocess as _sp380
+import sys as _sy380
+import tempfile as _tf380
+from pathlib import Path as _P380
+
+_d380 = _P380(_tf380.mkdtemp(prefix="chamnan-check380-"))
+try:
+    _sp380.run(["git", "init", "-q", str(_d380)], capture_output=True, timeout=30)
+    (_d380 / ".chamnan" / "memory" / "lessons").mkdir(parents=True)
+    (_d380 / ".chamnan" / "memory" / "lessons" / "zebra.md").write_text(
+        "# Zebra deploy\n\nThe zebra server restarts nightly.\n", encoding="utf-8")
+    _env380 = dict(_os380.environ, CLAUDE_PROJECT_DIR=str(_d380))
+
+    def _recall380(*words):
+        return _sp380.run([_sy380.executable, str(ROOT / "bin" / "chamnan-recall"), *words], cwd=str(_d380),
+                          env=_env380, capture_output=True, text=True, encoding="utf-8", timeout=120)
+
+    _none380 = _recall380("zebra")
+    _recall380("--reindex")
+    _index380 = _d380 / ".chamnan" / "state" / "store_index.json"
+    _whole380 = _index380.read_bytes()
+    _index380.write_bytes(_whole380[: len(_whole380) // 2])
+    _half380 = _recall380("zebra")
+    check("A DAMAGED RECALL INDEX IS REPORTED AS DAMAGED, NOT AS MISSING",
+          "damaged" in _half380.stderr and "no index yet" not in _half380.stderr,
+          saw=_half380.stderr[:200])
+    check("...while a workspace with no index at all still says there is none",
+          "no index yet" in _none380.stderr, saw=_none380.stderr[:200])
+
+    _index380.write_bytes(_whole380)
+
+    def _pointer380(stem):
+        payload = {"session_id": "c380", "cwd": str(_d380), "hook_event_name": "PreToolUse", "tool_name": "Write",
+                   "tool_input": {"file_path": str(_d380 / ".chamnan" / "tools" / (stem + ".py")), "content": "x"}}
+        return _sp380.run([_sy380.executable, str(ROOT / "hooks" / "chamnan_skill_pointer.py")], cwd=str(_d380),
+                          env=_env380, input=_js380.dumps(payload), capture_output=True, text=True,
+                          encoding="utf-8", timeout=120).stdout
+
+    _miss380 = _pointer380("quokka_walrus_unmatched")
+    _hit380 = _pointer380("zebra_deploy_check")
+    check("...and a new tool whose name matches nothing gets no 'nothing matches' block",
+          "nothing in the stores matches" not in _miss380, saw=_miss380[:200])
+    check("...while a matching name still gets the store's answer", "zebra" in _hit380, saw=_hit380[:200])
+finally:
+    _sh380.rmtree(_d380, ignore_errors=True)
+# ---- 381_a_declared_legacy_encoding_keeps_its_map_summary.py
+# ------------------ a source file that declares a legacy encoding keeps its summary in the map
+# 🐛 [2026-10-01] (R275 acc2, 2026-10-01) Python files declaring `coding: tis-620`, `latin-1` or
+# `shift_jis` kept their symbols in MAP.md but lost their summary to `— —`: every file was decoded as
+# UTF-8 with replacement, so the docstring turned into U+FFFD and was rejected. Thai legacy code is
+# the case this project's users have. UTF-8 is still tried first, so a valid UTF-8 file decodes
+# exactly as before, and an unknown codec name falls back to today's behaviour.
+import os as _os381
+import shutil as _sh381
+import subprocess as _sp381
+import sys as _sy381
+import tempfile as _tf381
+from pathlib import Path as _P381
+
+_d381 = _P381(_tf381.mkdtemp(prefix="chamnan-check381-"))
+try:
+    _g381 = ["git", "-C", str(_d381), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false"]
+    _sp381.run(["git", "init", "-q", str(_d381)], capture_output=True, timeout=30)
+    _files381 = {
+        "thai_tis620.py": ('# -*- coding: tis-620 -*-\n"""คำนวณภาษี"""\n'
+                           "def vat(x):\n    return x * 0.07\n", "tis-620", "คำนวณภาษี"),
+        "french_latin1.py": ('# -*- coding: latin-1 -*-\n"""Génère les factures."""\n'
+                             "def facture():\n    pass\n", "latin-1", "Génère les factures"),
+        "plain.py": ('"""Plain ASCII module."""\ndef plain():\n    pass\n', "utf-8", "Plain ASCII module"),
+        "bogus.py": ('# -*- coding: no-such-codec -*-\n"""Bad cookie."""\ndef b():\n    pass\n', "utf-8", "Bad cookie"),
+    }
+    for _n381, (_t381, _enc381, _w381) in _files381.items():
+        (_d381 / _n381).write_bytes(_t381.encode(_enc381))
+    _sp381.run(_g381 + ["add", "-A"], capture_output=True, timeout=30)
+    _sp381.run(_g381 + ["commit", "-qm", "init"], capture_output=True, timeout=30)
+    _sp381.run([_sy381.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_d381),
+               env=dict(_os381.environ, CLAUDE_PROJECT_DIR=str(_d381)), capture_output=True, timeout=300)
+    _map381 = (_d381 / ".chamnan" / "MAP.md").read_text(encoding="utf-8") if (_d381 / ".chamnan" / "MAP.md").is_file() else ""
+    _missing381 = [n for n, (_t, _e, want) in _files381.items() if want not in _map381]
+    check("A FILE DECLARING TIS-620 OR LATIN-1 KEEPS ITS SUMMARY IN THE MAP, NOT REPLACEMENT CHARACTERS",
+          not _missing381 and "�" not in _map381, saw=(_missing381, _map381.count("�")))
+finally:
+    _sh381.rmtree(_d381, ignore_errors=True)
+# ---- 382_a_sync_client_conflict_copy_is_not_read_as_a_note.py
+# ------------------ a sync client's conflict copy is not read as a note, and doctor names it
+# 🐛 [2026-10-01] (R283 acc2, 2026-10-01) iCloud, Dropbox, Google Drive and Syncthing leave a copy
+# beside a file both machines changed. In a workspace holding `friday.md` and
+# `friday (conflicted copy 2026-10-01).md`, the session block injected the COPY and called the real
+# file its duplicate, listed `zebra 2.md` as a second lesson, and recall returned the copy first.
+# A copy is now recognised by its name AND by its original sitting beside it, so a user's own
+# `phase 2.md` with no `phase.md` stays an ordinary note.
+import importlib as _il382
+import shutil as _sh382
+import tempfile as _tf382
+from pathlib import Path as _P382
+
+_ws382 = _il382.import_module("workspace")
+_mem382 = _il382.import_module("memory")
+_d382 = _P382(_tf382.mkdtemp(prefix="chamnan-check382-"))
+try:
+    _rules382 = _d382 / ".chamnan" / "memory" / "rules"
+    _less382 = _d382 / ".chamnan" / "memory" / "lessons"
+    _rules382.mkdir(parents=True)
+    _less382.mkdir(parents=True)
+    for _p382, _t382 in [(_rules382 / "friday.md", "# Never push on Friday\n"),
+                         (_rules382 / "friday (conflicted copy 2026-10-01).md", "# Never push on Friday\n"),
+                         (_less382 / "zebra.md", "# Zebra deploy\n"),
+                         (_less382 / "zebra 2.md", "# Zebra deploy\n"),
+                         (_less382 / "zebra (1).md", "# Zebra deploy\n"),
+                         (_less382 / "zebra.sync-conflict-20261001-101500-ABCDEFG.md", "# Zebra deploy\n"),
+                         (_less382 / "phase 2.md", "# Phase two\n")]:
+        _p382.write_text(_t382, encoding="utf-8")
+    _names382 = sorted(p.name for c in ("rules", "lessons") for p in _mem382.entries(_d382, c))
+    check("A SYNC-CLIENT CONFLICT COPY IS NOT LISTED AS A NOTE",
+          _names382 == ["friday.md", "phase 2.md", "zebra.md"], saw=_names382)
+    _copies382 = sorted(p.name for p in (_d382 / ".chamnan").rglob("*.md") if _ws382.is_sync_conflict_copy(p))
+    check("...all four client shapes are recognised as copies, and a lone 'phase 2.md' is not",
+          len(_copies382) == 4 and "phase 2.md" not in _copies382, saw=_copies382)
+finally:
+    _sh382.rmtree(_d382, ignore_errors=True)
+# ---- 383_a_recall_blurb_carries_no_stray_emphasis_markers.py
+# ------------------ a recall blurb unwraps paired emphasis instead of leaving `**` mid-line
+# 🐛 [2026-10-01] (R254 acc4, 2026-10-01) `_blurb_of` stripped `*` and `_` only from the ends of the
+# line, so a note opening `**Superseded 2026-09-01 by x.md.** Pushes the build.` showed
+# `Superseded 2026-09-01 by x.md.** Pushes the build.` in every recall hit, and `**Status:** closed`
+# showed `Status:** closed`. Paired `**…**` and `__…__` are unwrapped now; a snake_case name and a
+# dunder such as `__init__` are identifiers, not emphasis, and survive.
+import importlib as _il383
+
+_rc383 = _il383.import_module("recall")
+_cases383 = [
+    ("# Title\n\n**Superseded 2026-09-01 by x.md.** Pushes the build.\n", "Superseded 2026-09-01 by x.md. Pushes the build."),
+    ("# Title\n\n**Status:** closed\n", "Status: closed"),
+    ("# Title\n\nUse apply_promo_code and __init__ here.\n", "Use apply_promo_code and __init__ here."),
+]
+_bad383 = [(want, _rc383._blurb_of(src, "Title")) for src, want in _cases383 if _rc383._blurb_of(src, "Title") != want]
+check("A RECALL BLURB UNWRAPS PAIRED EMPHASIS AND KEEPS IDENTIFIERS", not _bad383, saw=_bad383)
+check("...and an index built before the change is rebuilt rather than reused", _rc383.TERMS_VERSION >= 3,
+      saw=_rc383.TERMS_VERSION)
+# ---- 384_a_shallow_clone_names_no_last_edited_files.py
+# ------------------ a shallow clone's single grafted commit names no "Last edited" files
+# 🐛 [2026-10-01] (R282 acc2, 2026-10-01) On a `git clone --depth=1` checkout every tracked file shares
+# the one grafted commit, so "Last edited" named the first five files alphabetically --
+# `.claude-plugin/marketplace.json`, `.gitattributes`, ... -- as if they had just been edited. When
+# the log holds one commit and git has marked the repository shallow, the line now says nothing; a
+# real repository whose latest commit touched several files keeps it.
+import importlib as _il384
+import shutil as _sh384
+import subprocess as _sp384
+import tempfile as _tf384
+import time as _time384
+from pathlib import Path as _P384
+
+_co384 = _il384.import_module("coedit")
+_d384 = _P384(_tf384.mkdtemp(prefix="chamnan-check384-"))
+try:
+    _src384, _sha384 = _d384 / "src", _d384 / "shallow"
+    _g384 = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+    _sp384.run(["git", "init", "-q", str(_src384)], capture_output=True, timeout=30)
+    for _i384, _n384 in enumerate(("a.py", "b.py", "c.py")):
+        (_src384 / _n384).write_text("x = %d\n" % _i384, encoding="utf-8")
+        _sp384.run(["git", "-C", str(_src384), *_g384, "add", _n384], capture_output=True, timeout=30)
+        _sp384.run(["git", "-C", str(_src384), *_g384, "commit", "-qm", "c%d" % _i384], capture_output=True, timeout=30)
+    _sp384.run(["git", "clone", "-q", "--depth=1", _src384.as_uri(), str(_sha384)], capture_output=True, timeout=60)
+    _deep384 = _co384._git_edits(_src384, _time384.time(), _time384.time() - 86400)
+    _shallow384 = _co384._git_edits(_sha384, _time384.time(), _time384.time() - 86400)
+    check("A SHALLOW CLONE'S ONE GRAFTED COMMIT NAMES NO 'LAST EDITED' FILES",
+          (_sha384 / ".git" / "shallow").is_file() and _shallow384 == [], saw=_shallow384)
+    check("...while an ordinary repository still names its edited files", bool(_deep384), saw=_deep384)
+finally:
+    _sh384.rmtree(_d384, ignore_errors=True)
+# ---- 385_a_secret_split_by_a_shell_continuation_is_redacted_whole.py
+# ------------------ a secret split by a shell line continuation is redacted on both lines
+# 🐛 [2026-10-01] (R352 acc5, 2026-10-01) `export GH_TOKEN=<first half>\` followed by `<second half>` on
+# the next line left the second half in clear: the rules redact the value up to the backslash and the
+# next line has no key. A placeholder that runs straight into the backslash-newline (no space between)
+# means the value was split, so the first token of the next line is redacted too. A space before the
+# backslash ends the value, so ordinary continued commands keep their next line untouched.
+# The token is built at runtime from a seeded generator, never written into this file.
+import importlib as _il385
+import random as _rnd385
+import string as _st385
+
+_rd385 = _il385.import_module("redact")
+_r385 = _rnd385.Random(385)
+_tok385 = "gh" + "p_" + "".join(_r385.choice(_st385.ascii_letters + _st385.digits) for _ in range(36))
+_split385 = _rd385.scrub("export GH_TOKEN=%s\\\n    %s\n" % (_tok385[:20], _tok385[20:]))
+check("A TOKEN SPLIT BY A BACKSLASH-NEWLINE LEAVES NEITHER HALF IN CLEAR",
+      _tok385[:20] not in _split385 and _tok385[20:] not in _split385 and "\\\n" in _split385,
+      saw=_split385.replace(_tok385[20:], "<SECOND HALF>"))
+_plain385 = "curl -s \\\n  --data x \\\n  https://example.invalid/\n"
+check("...while an ordinary continued command is left exactly as written",
+      _rd385.scrub(_plain385) == _plain385, saw=_rd385.scrub(_plain385))
+_spaced385 = _rd385.scrub("TOKEN=%s \\\n  --next\n" % _tok385)
+check("...and a value that ends before a spaced backslash does not take the next line with it",
+      _spaced385.endswith("\\\n  --next\n") and _tok385 not in _spaced385, saw=_spaced385)
+# ---- 386_git_refusing_a_repository_for_its_owner_is_named_with_the_fix.py
+# ------------------ when git refuses a repository for "dubious ownership", chamnan says so and names the fix
+# 🐛 [2026-10-01] (R322 acc2, 2026-10-01) In containers, bind mounts and other users' checkouts git
+# refuses the repository, and chamnan went silent: the session block dropped every git-based line with
+# no reason, and doctor said only that git "cannot say what has moved". The refusal is now recorded
+# from the probe chamnan already runs (no new git call), and the block's git section names it with
+# git's own `safe.directory` command. Simulated with git's GIT_TEST_ASSUME_DIFFERENT_OWNER.
+import importlib as _il386
+import os as _os386
+import shutil as _sh386
+import subprocess as _sp386
+import tempfile as _tf386
+from pathlib import Path as _P386
+
+_ws386 = _il386.import_module("workspace")
+_ses386 = _il386.import_module("sessions")
+_d386 = _P386(_tf386.mkdtemp(prefix="chamnan-check386-"))
+_old386 = _os386.environ.get("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+_saved386 = _ws386._GIT_REFUSED_OWNERSHIP
+try:
+    _sp386.run(["git", "init", "-q", str(_d386)], capture_output=True, timeout=30)
+    _os386.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+    _speaks386 = _ws386.git_can_speak_for(_d386)
+    _seen386 = _ws386.git_refused_ownership()
+    _section386 = _ses386.where_git_says_you_stopped(_d386)
+    check("WHEN GIT REFUSES A REPOSITORY FOR ITS OWNER, CHAMNAN RECORDS IT INSTEAD OF GOING QUIET",
+          _speaks386 is False and bool(_seen386), saw=(_speaks386, _seen386))
+    check("...and the session section names the refusal and git's safe.directory fix",
+          "dubious ownership" in _section386 and "safe.directory" in _section386, saw=_section386[:240])
+finally:
+    if _old386 is None:
+        _os386.environ.pop("GIT_TEST_ASSUME_DIFFERENT_OWNER", None)
+    else:
+        _os386.environ["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = _old386
+    _ws386._GIT_REFUSED_OWNERSHIP = _saved386
+    _ws386._GIT_SPEAKS.pop(str(_d386.resolve()), None)
+    _sh386.rmtree(_d386, ignore_errors=True)
 # ---- 38_the_repeat_detector_names_the_tool_that_exists.py
 # ------------------------------------------- "save yours" when one was already there
 # 🐛 [2026-09-10] The repeat detector fires on the third near-identical scratch script and said
