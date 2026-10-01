@@ -3332,7 +3332,20 @@ def scrub(text, windowed=True, *, _unmask=True):
         stop = at + len(PLACEHOLDER)
         out.append(text[pos:stop])
         pos = stop + _swallow_trailing_credential_runs(text, stop)
-    return "".join(out)
+    # 🐛 [2026-10-01] (R352 acc5, 2026-10-01) A shell line continuation can split a token across
+    # two lines: `KEY=<first half>\` newline `<second half>`. The rules above redact the first half
+    # and leave the second in clear. The space test is what makes this safe: a space before the
+    # backslash (`--volume a \`) ends the value, so the next line is a new argument and is left
+    # alone; NO space means the value ran straight into the continuation, so the first token of the
+    # next line is its remainder. Runs on the result, so it fires only after a placeholder exists.
+    # Tokens under 4 characters are too short to be a credential half and are left.
+    return _CONTINUED_VALUE_TAIL.sub(
+        lambda m: m.group(0) if len(m.group(3)) < 4 else m.group(1) + "\\\n" + m.group(2) + PLACEHOLDER,
+        "".join(out))
+
+
+_CONTINUED_VALUE_TAIL = _lazy(lambda: re.compile(
+    re.escape(PLACEHOLDER).join(("(", ")")) + r"\\\n([ \t]*)(\S+)"))
 
 
 # 🐛 `scrub` removes credentials. It has never removed CONTROL characters, and repository text
