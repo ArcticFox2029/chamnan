@@ -28,6 +28,7 @@ output above, and running it prints the same thing plain `chamnan-map` does.
 Never imports or executes the code it reads.
 """
 import ast
+import codecs
 import fnmatch
 import os
 import subprocess
@@ -2131,7 +2132,13 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             if bom is None and b"\x00" in raw[:8192]:
                 SKIPPED_BINARY.append(path)
                 continue
-            text = raw.decode(bom or "utf-8-sig", errors="replace")
+            if bom:
+                text = raw.decode(bom, errors="replace")
+            else:
+                try:
+                    text = raw.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    text = raw.decode(_declared_encoding(raw) or "utf-8-sig", errors="replace")
             if "\r" in text:
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
             yield path, lang, text
@@ -2154,6 +2161,23 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # 16-39 seconds per firing, against the docstring's own claim of "0.04s on a 1,478-file
             # repository". The caller re-checks the handful of files that are actually newer.
             yield path, lang
+
+
+def _declared_encoding(raw):
+    """The codec a PEP 263 / Emacs / Vim coding cookie in the first two lines names, or None.
+
+    # 🐛 [2026-10-01] (R275 acc2, 2026-10-01) Files declaring a legacy encoding (tis-620, latin-1,
+    # shift_jis) kept their symbols in MAP.md but lost their summary to "— —", because every file
+    # was decoded as UTF-8 with errors="replace" and the docstring became U+FFFD. Strict UTF-8 is
+    # tried FIRST by the caller, so a valid UTF-8 file never reaches this and decodes as before."""
+    for line in raw.split(b"\n")[:2]:
+        m = re.search(r"coding[:=]\s*([-\w.]+)", line.decode("latin-1"))
+        if m:
+            try:
+                return codecs.lookup(m.group(1)).name
+            except LookupError:
+                return None
+    return None
 
 
 def _bom_encoding(raw):
