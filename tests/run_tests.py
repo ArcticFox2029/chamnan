@@ -49593,6 +49593,34 @@ finally:
     else:
         _os396.environ["CLAUDE_PROJECT_DIR"] = _old_env396
     _sh396.rmtree(_d396, ignore_errors=True)
+# ---- 397_an_uncaught_traceback_is_scrubbed_before_it_is_printed.py
+# ------------------ an uncaught traceback is scrubbed before it reaches stderr
+# 🐛 [2026-10-01] (R380 acc4, 2026-10-01) Crash-report research: scrub before the report leaves the
+# process. workspace installs the excepthook of every command in bin/, and for an ordinary exception
+# it fell through to Python's own hook, which printed the exception MESSAGE raw -- measured, a token
+# inside a ValueError came out on stderr, and stderr of a command run through a tool call is read by
+# the model. The traceback now goes through redact.scrub; its type and frames still print.
+# The token is built at runtime from a seeded generator, never written into this file.
+import subprocess as _sp397
+import sys as _sy397
+
+_code397 = (
+    "import random, string, sys\n"
+    "sys.path.insert(0, %r)\n"
+    "import workspace\n"
+    "r = random.Random(397)\n"
+    "tok = 'gh' + 'p_' + ''.join(r.choice(string.ascii_letters + string.digits) for _ in range(36))\n"
+    "sys.stdout.write(tok)\n"
+    "sys.stdout.flush()\n"
+    "raise ValueError('config value %%s is not valid' %% tok)\n" % str(ROOT / "lib"))
+_run397 = _sp397.run([_sy397.executable, "-c", _code397], capture_output=True, text=True,
+                     encoding="utf-8", errors="replace", timeout=60)
+_tok397 = _run397.stdout.strip()
+check("AN UNCAUGHT EXCEPTION'S MESSAGE IS SCRUBBED BEFORE IT REACHES STDERR",
+      len(_tok397) == 40 and _tok397 not in _run397.stderr, saw=_run397.stderr.replace(_tok397, "<TOKEN>")[-300:])
+check("...while the traceback still names the exception and where it came from",
+      "Traceback" in _run397.stderr and "ValueError" in _run397.stderr and _run397.returncode != 0,
+      saw=(_run397.returncode, _run397.stderr[-200:]))
 # ---- 39_a_pin_buys_share_not_only_order.py
 # ------------------------------------------- a pin that reached the title and stopped there
 # 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
