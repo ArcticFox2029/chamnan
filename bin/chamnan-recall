@@ -112,7 +112,13 @@ def main(argv):
 
     try:
         index = json.loads((wsdir / recall.INDEX).read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError, RecursionError):
+    except (OSError, ValueError, RecursionError) as exc:
+        # 🐛 [2026-10-01] (R240 acc4, 2026-10-01) A damaged index (truncated, empty, garbage) used
+        # to be reported as missing, which is false: the file is there and broken.
+        if isinstance(exc, FileNotFoundError) or not (wsdir / recall.INDEX).is_file():
+            missing = True
+        else:
+            missing = False
         # `RecursionError` beside the other two because `json.loads` raises it rather than
         # `ValueError` on a document nested past the interpreter's limit, and the package has a
         # check that every one of its loads survives that — an index is a file on disk like any
@@ -121,6 +127,11 @@ def main(argv):
         # 🐛 Not "rebuild it quietly". The one thing this command promises is that a query does not
         # walk the stores, and a first run that silently indexes 55 files is that promise broken on
         # the one run where a user is deciding whether to trust it.
+        if not missing:
+            print("chamnan: the index at .chamnan/state/store_index.json is damaged and was not "
+                  "read — `chamnan-recall --reindex` rebuilds it from the stores, which are "
+                  "untouched.", file=sys.stderr)
+            return 1
         print("chamnan: no index yet — `chamnan-recall --reindex` builds it, once, and then "
               "queries read that file instead of the stores.", file=sys.stderr)
         return 1

@@ -196,7 +196,9 @@ def _what_this_repo_already_has(payload):
     except Exception:
         return ""
     lines = [ln for ln in out.splitlines() if ln.strip()]
-    if not lines or "0 of" in lines[0]:
+    # 🐛 [2026-10-01] (R258 acc4, 2026-10-01) The old test looked for "0 of", text recall never
+    # prints, so the "" this docstring promises for no match never happened.
+    if not lines or lines[0].startswith("chamnan: nothing in the stores matches"):
         return ""
     head = ["chamnan: before writing `%s` — the store was asked for you:" % Path(raw).name]
     head += ["  " + ln.strip()[:130] for ln in lines[:7]]
