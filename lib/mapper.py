@@ -2520,7 +2520,7 @@ def _render(files, root):
         if here != cur_dir:
             cur_dir = here
             lines.append("")
-            lines.append(f"**`{mdblock.as_quoted(here if here != '.' else '.')}/`**")
+            lines.append(f"**`{mdblock.as_quoted(here if here != '.' else '.', mdblock.QUICK_INDEX_DIR_CHARS)}/`**")
         shown = PurePosixPath(f["path"]).name
         lines.append(f"- **`{mdblock.as_quoted(shown)}`**"
                      f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {mdblock.one_line(summary)}")

@@ -1266,6 +1266,19 @@ def dead_entries(root, map_text):
                     if n.rstrip("/") not in present and not (root / n).exists()]
         else:
             dead = [n for n in ordered if not (root / n).exists()]
+        # 🐛 [2026-10-01] (R245 acc4, 2026-10-01) Parsed names are the map's SHOWN form (control
+        # characters folded, long names clipped), so `exists()` on them lied: the same fixture
+        # (`esc\x1b[31mname.py`, `rlo\u202eyp.txt.py`, `src/<99-char dir>/inner/mod.py`) read 3 of 4
+        # indexed files as "no longer exist". Drop every name that is how a real file is shown. A
+        # healthy map has no dead names and pays nothing here.
+        if dead:
+            shown = set()
+            for f in _indexable(root):
+                try:
+                    shown.add(mdblock.quick_index_path(display(f, root)))
+                except ValueError:
+                    continue
+            dead = [n for n in dead if n not in shown]
         return len(dead), len(named), dead[:3]
     except Exception:
         return 0, 0, []      # never let a nicety break a session
@@ -1300,7 +1313,11 @@ def unindexed(root, map_text):
                 rel = display(f, root)
             except ValueError:
                 continue
-            if rel not in named:
+            # 🐛 [2026-10-01] (R245 acc4, 2026-10-01) The map writes names through `as_quoted`, which
+            # folds control characters and clips; the raw disk path never equals that. Fixture with
+            # `esc\x1b[31mname.py`, `rlo\u202eyp.txt.py` and a 99-char directory: 3 of 4 indexed
+            # files were reported "not in the index". Compare the shown form as well.
+            if rel not in named and mdblock.quick_index_path(rel) not in named:
                 missing.append(rel)
         # Newest first: a file created in the last hour is the one a session is most likely to be
         # about to open, and the least likely to be findable any other way.

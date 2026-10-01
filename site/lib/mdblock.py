@@ -226,6 +226,26 @@ def as_quoted(value, limit=80):
     return text if len(text) <= limit else whole_graphemes(text[:limit - 1]) + "…"
 
 
+# A directory heading must name a path a reader can open. At the 80-character default it cut
+# `src/main/java/...` mid-name and dropped the rest, so every file below it read as missing.
+QUICK_INDEX_DIR_CHARS = 400
+
+
+def quick_index_path(rel):
+    """The exact path string the Quick Index parse reconstructs for root-relative posix path `rel`.
+
+    One source of truth shared by the mapper (which writes the heading and row) and the
+    session-start hook (which compares the parsed names with the disk), so the two cannot disagree
+    about control-character folding or clipping again.
+    """
+    import posixpath
+    folder, name = posixpath.dirname(rel), posixpath.basename(rel)
+    f = as_quoted(folder or ".", QUICK_INDEX_DIR_CHARS).strip("/")
+    f = "" if f in (".", "") else f
+    n = as_quoted(name)
+    return f"{f}/{n}" if f else n
+
+
 # The per-item ceiling on repository-authored FREE TEXT that is injected into every session.
 #
 # 120 because `memory.MAX_TITLE_CHARS` had already picked it for exactly this hazard and had the
