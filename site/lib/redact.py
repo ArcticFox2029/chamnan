@@ -226,6 +226,22 @@ def _structure_the_value_did_not_open(match, value):
     from that point on is closers, commas, semicolons and space. `password=abc}def` still goes
     whole, because `}def` may be the rest of a credential rather than the rest of a line.
     """
+    # 🐛 [2026-10-01] (R239 acc4, 2026-10-01) A key that starts INSIDE a quoted string ends with
+    # that string: `["DB_PASSWORD=<g>","X=1"]` came back as `["DB_PASSWORD=<REDACTED>` and
+    # `x = "DB_PASSWORD=<g>"` lost its closing `"`, because the bare `\S{6,}` value ran past the
+    # quote. The first unescaped copy of the opening quote in the value closes the string; an
+    # escaped one (`\"`) is part of the string and is skipped. The tail is scrubbed, not returned
+    # raw, because it may hold a second assignment (`"API_KEY=..."`) this pass already consumed.
+    # Only when the quote encloses key AND value: if the key part itself holds the quote, it closed
+    # inside the key (`"password": f"<g>"`) and the value's quote is the value's own, not an end.
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    before_key = match.string[line_start:match.start()].rstrip()
+    if before_key and before_key[-1] in "\"'" and before_key[-1] not in (match.group(1) or ""):
+        q = before_key[-1]
+        k = next((i for i, ch in enumerate(value)
+                  if ch == q and i >= 1 and value[i - 1] != "\\"), -1)
+        if k >= 1:
+            return scrub(value[k:])
     # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) A JSON comma is structure, not part of the value:
     # `"total_tokens": 88123, "model": "x"` came back as `<REDACTED> "model": "x"`. Every rule that
     # reaches this helper takes a bare `\S` run, so the comma rides along; it is given back here,
