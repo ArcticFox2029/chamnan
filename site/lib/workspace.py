@@ -1450,10 +1450,11 @@ def _own_host():
     """This machine's host name, computed once; "" when it cannot be determined."""
     if not _OWN_HOST:
         try:
-            if hasattr(os, "uname"):
-                name = os.uname().nodename
-            else:
-                name = os.environ.get("COMPUTERNAME", "")
+            # `platform.node()`, not `os.uname()`: the suite refuses any shipped reference to an
+            # API Windows does not have, guarded or not, and `platform` answers on every OS.
+            # Imported here, once per process, because only a lock writer needs it (~1 ms).
+            import platform
+            name = platform.node()
             name = str(name).replace("\r", "").replace("\n", "").strip()
         except Exception:
             name = ""
