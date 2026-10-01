@@ -536,7 +536,8 @@ def _edit_will_not_survive(payload):
     hooks say, because it is the only notice where the whole edit is wasted rather than merely
     duplicated or under-informed. `hooks.json` puts this hook first for that reason.
 
-    Once per (session, path). A file being edited repeatedly is the normal shape of work, and a
+    Once per (session, path); the ignored verdict is once per (session, folder). A file being
+    edited repeatedly is the normal shape of work, and a
     notice on every edit of it is the one people learn to scroll past -- the lesson
     `_environment_notice` already records about `kubectl --context prod`.
 
@@ -574,8 +575,21 @@ def _edit_will_not_survive(payload):
         return ""
     seen.append(key)
     del seen[:-400]
+    # 🐛 [2026-10-01] (R205 measured) The ignored-file sentence named no file and fired once per
+    # path, so writing several files into one ignored folder repeated it (19 times in one measured
+    # session). One ignored folder is one fact, so it is said once, with the path.
+    tail = ""
+    if why and why.startswith(survives.UNKEPT_LEAD):
+        dirs = entry.setdefault("doomed_dirs", [])
+        folder = key.rsplit("/", 1)[0] if "/" in key else ""
+        if folder in dirs:
+            _nudge_write(wsdir, session, entry)
+            return ""
+        dirs.append(folder)
+        del dirs[:-200]
+        tail = " Other files in this folder are not named again this session."
     _nudge_write(wsdir, session, entry)
-    return ("chamnan: " + why) if why else ""
+    return ("chamnan: " + why + tail) if why else ""
 
 
 def main():

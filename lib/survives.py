@@ -242,6 +242,10 @@ def _nested_checkout_between(root, path):
     return False
 
 
+# The pointer hook matches on this lead to tell the ignored verdict from the generated one.
+UNKEPT_LEAD = "git will not keep an edit to "
+
+
 def verdict(root, path):
     """\"\" when the edit survives, else one sentence saying why it will not.
 
@@ -249,14 +253,15 @@ def verdict(root, path):
     alternatives, and being overwritten by the next build is the more surprising of the two.
     """
     try:
+        rel = _rel(root, path) or os.path.basename(str(path))
         why = generated(root, path)
         if why:
-            return ("this file is generated — %s — so the next build discards an edit here. "
-                    "Change whatever generates it instead." % why)
+            return ("this file (`%s`) is generated — %s — so the next build discards an edit here. "
+                    "Change whatever generates it instead." % (rel, why))
         why = unkept(root, path)
         if why:
-            return ("git will not keep an edit here — %s. Move the file into the tree, or expect "
-                    "the change to vanish." % why)
+            return UNKEPT_LEAD + ("`%s` — %s. Move the file into the tree, or expect the change "
+                                  "to vanish." % (rel, why))
     except Exception:
         return ""
     return ""
