@@ -952,6 +952,14 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
 # slice; that slice was 7 of 8 before this line, and the one it missed was this.
 _KV_SEP = r"[:=\uFF1A\uFF1D]"
 
+# 🐛 [2026-10-01] (R181 acc4, 2026-09-30) An unbounded run of word characters next to SECRET_WORDS
+# made scrub quadratic on a line of repeated secret words: "key-" * n took 27 s at 8,000 chars,
+# "token-" * n 6.9 s, "secret-key-" * n 4.6 s. This is a key name: across 4,167 tracked files, 3,651
+# secret-word keys all had a tail under 32 characters, so 64 is twice the longest real one, and a
+# bounded run keeps the cost per start position constant.
+KEY_RUN_MAX = 64
+_KEY_RUN = r"[\w-]{0,%d}" % KEY_RUN_MAX
+
 _BETWEEN_NAME_AND_VALUE = (
     r"(?:"
     r"[A-Za-z_][\w.]*(?:\[[^\]\n]*\]|<[^>\n]*>)?[ \t]*=[ \t]*"   # a type, then the real `=`
@@ -988,7 +996,7 @@ _TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*
 _GROUPING_BEFORE_VALUE = r"(?:(?:[\[(]|\\)\s*)?"
 
 ASSIGNED_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE
+    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE
     + r"|" + _TYPE_BEFORE_ASSIGN + r")" + _GROUPING_BEFORE_VALUE + r")(['\"])([^'\"]{6,})\2", re.I))
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
@@ -1031,7 +1039,7 @@ _BETWEEN_NAME_AND_VALUE_SPACED = (
 # Restricted to `[ \t]*` -- same line only -- so a key that ends its own line in `:` with nothing
 # after it stops there instead of reading into whatever the next line happens to contain.
 ASSIGNED_SECRET_BARE = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"[ \t]*" + _BETWEEN_NAME_AND_VALUE_SPACED
+    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"[ \t]*" + _BETWEEN_NAME_AND_VALUE_SPACED
     + r"|" + _TYPE_BEFORE_ASSIGN + r"))"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
@@ -1070,7 +1078,7 @@ _QUALIFIED_SECRET_PHRASE = (
     r"(?<![A-Za-z])(?:api|access|secret|private|public|signing|encryption|master"
     r"|session|refresh|auth|bearer|client|app|service)[ ](?:keys?|tokens?)(?![A-Za-z])")
 COPULA_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r"|" + _QUALIFIED_SECRET_PHRASE + r")[\w-]*\s+(?:is|was)\s+)"
+    r"((?:" + SECRET_WORDS + r"|" + _QUALIFIED_SECRET_PHRASE + r")" + _KEY_RUN + r"\s+(?:is|was)\s+)"
     r"(\S{6,})", re.I))
 
 # A credential written as XML/HTML element text. Maven `settings.xml`, Tomcat `server.xml`, .NET
@@ -1120,7 +1128,7 @@ JSON_NAME_VALUE_PAIR_SECRET = _lazy(lambda: re.compile(
 # found no quote and the bare rule captured `>` alone and failed its six-character floor. This is
 # how `config/database.php` is written in every Laravel app and every Rails `.rb` config.
 ROCKET_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I))
+    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I))
 # A YAML block scalar puts `|` or `>-` where the value would be and the value on the next line, so
 # there was nothing on the key's own line to capture. Helm values.yaml is full of them.
 # 🐛 [2026-09-15] The header was `[|>][-+]?` -- the chomping indicator only. YAML also allows an
@@ -1131,7 +1139,7 @@ ROCKET_SECRET = _lazy(lambda: re.compile(
 # a gate that skips is as silent as a rule that misses. (R3.3 multiline structured scalars.)
 _YAML_BLOCK_OPENER = _lazy(lambda: re.compile(r":\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n"))
 YAML_BLOCK_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I))
+    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"\s*:\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I))
 # Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
 # `.pgpass`'s colon-delimited final field. `_netrc` — the Windows spelling — and `.pgpass` are in
 # neither refusal list, so peek opens both.
@@ -1156,7 +1164,7 @@ YAML_BLOCK_SECRET = _lazy(lambda: re.compile(
 # `_is_a_plain_word` guard still refuses `password combination \`.
 _ENDS_THE_LINE = r"(?=[ \t\r]*\\?[ \t\r]*$)"
 SPACED_SECRET = _lazy(lambda: re.compile(
-    r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})" + _ENDS_THE_LINE,
+    r"((?:^|[ \t])" + _KEY_RUN + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r"[ \t]+)(\S{6,})" + _ENDS_THE_LINE,
     re.I | re.M))
 # A command-line FLAG and its value: `-storepass hunter2`, `--password hunter2`. SPACED_SECRET
 # cannot reach these because it anchors the value at end-of-line, and that anchor is not negotiable
@@ -1167,11 +1175,11 @@ SPACED_SECRET = _lazy(lambda: re.compile(
 # Bounded to a value with no whitespace, and the flag must be the whole token, so `--password-file
 # creds.txt` (a PATH, not a secret) still has to be handled by the value shape rather than by luck.
 FLAG_SECRET = _lazy(lambda: re.compile(
-    r"((?:^|[ \t])--?[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(?!-)([^\s]{4,})", re.I | re.M))
+    r"((?:^|[ \t])--?" + _KEY_RUN + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r"[ \t]+)(?!-)([^\s]{4,})", re.I | re.M))
 PGPASS_LINE = _lazy(lambda: re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)" + _ENDS_THE_LINE, re.M))
 
 ASSIGNED_SECRET_CALL = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*)"
+    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*)"
     r"(?!<REDACTED>)([A-Za-z_][\w.]*\s*\(.*)$", re.I | re.M))
 
 # Never opened by the scanner at all, whatever else matches. .gitignore is not relied on: it is
@@ -2142,7 +2150,9 @@ DELIMITED_AFTER_SECRET_WORD = _lazy(lambda: re.compile(
     # word and its `:`, so this lookahead missed the assignment and took `":hunter2xyz,"` (the key's
     # closing quote to the next key's opening quote) as a quoted value, eating the `:` and the comma.
     # One optional quote is allowed before the separator so the assignment rules own that shape.
-    r"(?![^\s`\"'=:]*[`\"']?[=:])"
+    # 🐛 [2026-10-01] (R181 acc4, 2026-09-30) The run before the separator is bounded by KEY_RUN_MAX:
+    # unbounded, it was the slowest rule on a line of repeated secret words.
+    r"(?![^\s`\"'=:]{0,%d}[`\"']?[=:])" % KEY_RUN_MAX +
     r"(?P<gap>[^`\"'\r\n=]{0,40}?)"
     r"(?P<q>[`\"'])(?P<value>[^`\"'\r\n]{6,200})(?P=q)",
     re.I))
@@ -2376,7 +2386,7 @@ _MAX_WINDOW = 200_000
 # much is slower and never wrong, matching too little leaks — and the rewrite changes neither
 # direction.
 _OPENS_A_QUOTED_VALUE = _lazy(lambda: re.compile(
-    r"""[\w-]*\s*(?:['"]\s*)?(?:=>|""" + _KV_SEP + r""")\s*(['"])"""))
+    _KEY_RUN + r"""\s*(?:['"]\s*)?(?:=>|""" + _KV_SEP + r""")\s*(['"])"""))
 
 
 _QUALIFIED_PHRASE_ANYWHERE = _lazy(lambda: re.compile(_QUALIFIED_SECRET_PHRASE, re.I))
@@ -3864,7 +3874,7 @@ _HEADER_LANGS = {
 _HEADER_WORD = _lazy(lambda: re.compile(
     r"""^\s*(?:["']\s*)?(?:"""
     + _HEADER_BARE
-    + r"""|[\w-]*[_-](?:""" + _HEADER_TAIL + r"""|key|token)s?"""
+    + r"""|""" + _KEY_RUN + r"""[_-](?:""" + _HEADER_TAIL + r"""|key|token)s?"""
     + r"""|(?-i:[a-z0-9]+(?:Password|Passwd|Passphrase|Secret|Token|Key|Credential)s?)"""
     + r""")\s*(?:["']\s*)?$""", re.I))
 
@@ -3932,10 +3942,10 @@ def _is_a_header_row(fields):
 # array of generic secrets: one redacted, two in the clear, with a `<REDACTED>` at the front of them
 # saying the line had been handled. A YAML block sequence was missed outright (R3 agent 2, 2026-09-08).
 _LIST_OPEN = _lazy(lambda: re.compile(
-    r"(?<![\w-])(['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
+    r"(?<![\w-])(['\"]?)((?:" + SECRET_WORDS + r")" + _KEY_RUN + r")\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
 # A YAML block sequence: the key alone on its line, then indented `- item` lines under it.
 _BLOCK_KEY = _lazy(lambda: re.compile(
-    r"^(\s*['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)(['\"]?\s*:\s*)$", re.I))
+    r"^(\s*['\"]?)((?:" + SECRET_WORDS + r")" + _KEY_RUN + r")(['\"]?\s*:\s*)$", re.I))
 _BLOCK_ITEM = _lazy(lambda: re.compile(r"^(\s+-\s+)(['\"]?)(.+?)\2(\s*)$"))
 # A bare number in such a list is a port, a retry count or a length, not a credential. Redacting it
 # costs a reader information and hides nothing, and it is the one element type that is safe to keep.

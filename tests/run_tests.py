@@ -48622,6 +48622,47 @@ check("...AND `chamnan-recall` EXPLAINS ITS HITS WITHOUT NAMING THE STOP WORD",
                                 for ln in _why377),
       saw=_out377.stdout[-600:])
 _rmtree(_ws377.parent, ignore_errors=True)
+# ---- 378_a_line_of_repeated_secret_words_scrubs_in_linear_time.py
+# ------------------ a line of repeated secret words is scrubbed in linear time, not quadratic
+# 🐛 [2026-10-01] (R181 acc4, 2026-09-30) Every rule that reads a key name ran an unbounded `[\w-]*`
+# after the secret word, so on a line made of the word repeated -- `key-key-…`, `token-token-…` --
+# each start position ran to the end of the line and backtracked: 27 s for 8,000 characters of
+# `key-`, 6.9 s of `token-`, and `scrub` sits in front of every commit and every peek. The run is
+# now bounded (`redact.KEY_RUN_MAX`). Asserted twice: structurally, so load on the machine cannot
+# decide it, and by a time limit set ten times above the fixed cost and far below the old one.
+import importlib as _il378
+import re as _re378
+import time as _time378
+
+_rd378 = _il378.import_module("redact")
+
+_unbounded378 = []
+for _name378 in dir(_rd378):
+    _val378 = getattr(_rd378, _name378)
+    for _item378 in (_val378 if isinstance(_val378, list) else [_val378]):
+        if isinstance(_item378, _rd378._Lazy):
+            _item378 = _item378._compiled()
+        if isinstance(_item378, _re378.Pattern) and "[\\w-]*" in _item378.pattern:
+            _unbounded378.append(_name378)
+check("NO REDACTOR RULE READS A KEY NAME WITH AN UNBOUNDED [\\w-]* RUN",
+      not _unbounded378, saw=sorted(set(_unbounded378)))
+
+_slow378 = {}
+for _shape378 in ("key-", "token-", "secret-key-", "password_"):
+    _text378 = (_shape378 * 4000)[:8000]
+    _t0378 = _time378.perf_counter()
+    _rd378.scrub(_text378)
+    _took378 = _time378.perf_counter() - _t0378
+    if _took378 > 3.0:
+        _slow378[_shape378] = round(_took378, 2)
+check("...and 8,000 characters of a repeated secret word scrub in under 3 s (27 s before)",
+      not _slow378, saw=_slow378)
+
+# The bound must not cost a real key: one 200 characters long still has its value found.
+_long_key378 = "api_" + "x" * 196 + "_token"
+_out378 = _rd378.scrub('%s = "%s"' % (_long_key378, "".join(chr(97 + (i * 7) % 26) for i in range(24)) + "Q9"))
+check("...while a 200-character key name still has its value redacted",
+      _rd378.PLACEHOLDER in _out378, saw=_out378[-60:])
 # ---- 37_two_different_sequences_get_two_candidate_files.py
 # ------------------------------------------- the second habit overwrote the first, silently
 # 🐛 [2026-09-10] `candidates.slug` truncated at 60 characters with no collision check, so two
