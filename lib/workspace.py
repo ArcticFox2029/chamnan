@@ -4346,6 +4346,41 @@ def workspace_is_tracked(root):
     return out.returncode == 0 and bool(out.stdout.strip())
 
 
+def is_sparse(root):
+    """True when `root` is a sparse checkout, read from files in the git dir and never from git.
+
+    It reads files because the suite pins the number of git call sites, and the answer is on disk
+    anyway: `info/sparse-checkout` lists the patterns. That file is left behind by `git
+    sparse-checkout disable`, so it alone proves nothing and `core.sparseCheckout = true` in the
+    common config (or `config.worktree` of a linked worktree) must agree. Any error counts as not
+    sparse.
+    """
+    try:
+        dot_git = Path(root) / ".git"
+        if dot_git.is_file():
+            target = dot_git.read_text(encoding="utf-8", errors="replace").strip()
+            if not target.startswith("gitdir:"):
+                return False
+            gitdir = Path(target[len("gitdir:"):].strip())
+            if not gitdir.is_absolute():
+                gitdir = Path(root) / gitdir
+        else:
+            gitdir = dot_git
+        common = gitdir
+        marker = gitdir / "commondir"
+        if marker.is_file():
+            common = gitdir / marker.read_text(encoding="utf-8", errors="replace").strip()
+        if not (gitdir / "info" / "sparse-checkout").is_file():
+            return False
+        pattern = re.compile(r"(?im)^\s*sparsecheckout\s*=\s*true\s*$")
+        for cfg in (common / "config", gitdir / "config.worktree"):
+            if cfg.is_file() and pattern.search(cfg.read_text(encoding="utf-8", errors="replace")):
+                return True
+        return False
+    except (OSError, ValueError):
+        return False
+
+
 def git_can_speak_for(root):
     """True when git recognises `root` as part of a repository — the weaker question `git_owns` is
     not, and the right one for every READ that is path-scoped to `root`.

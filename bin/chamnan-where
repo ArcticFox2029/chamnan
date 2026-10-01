@@ -74,6 +74,9 @@ def main(argv):
         print(f"chamnan: no use of `{symbol}` under {Path(root).name}/. {scope}")
         if unjudged:
             print(f"  {unjudged} file(s) could not be judged, so this is not a proof of absence.")
+        # R177: a sparse checkout lacks files outside its set, so a use may sit where nothing was read.
+        if ws.is_sparse(root):
+            print("  This checkout is sparse: files outside it were not read, so this is not a proof of absence.")
         return 0
 
     by_kind = {}

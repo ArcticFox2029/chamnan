@@ -387,6 +387,12 @@ def _git_edits(root, now, cutoff):
     # the suite pins the number of git call sites, and the file exists exactly when it is shallow.
     if stamps == 1 and rows and _is_shallow(root):
         return []
+    # 🐛 [2026-10-01] (R177 acc4, sparse checkout) git log names files a sparse checkout does not
+    # have, and they then showed as "Last edited" though nobody here can open them. A deleted file
+    # in an ordinary checkout is still named, since only a sparse checkout is filtered.
+    if ws.is_sparse(root):
+        from pathlib import Path    # local, as in `_is_shallow`
+        rows = [(at, p) for at, p in rows if (Path(root) / p).exists()]
     return rows
 
 
