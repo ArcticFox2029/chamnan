@@ -64,7 +64,8 @@ _ASCII_ONLY = re.compile(r"\A[\x00-\x7f]*\Z")
 
 # The shape of the stored terms. Bump it when `terms()` changes what it emits, so `build()` does
 # not half-reuse entries whose terms were computed the old way.
-TERMS_VERSION = 2
+# v3 = blurbs unwrap paired emphasis (R254).
+TERMS_VERSION = 3
 
 
 def _ascii(text):
@@ -201,6 +202,12 @@ def _blurb_of(text, title):
             continue
         if s.strip("*_ ") == title:
             continue
+        # 🐛 [2026-10-01] (R254 acc4, 2026-10-01) Only the line ends were stripped, so a leading
+        # `**Status:** closed` left a stray `**` mid-line. Paired emphasis is unwrapped first; a
+        # lowercase `__init__` is a dunder identifier, not bold, and single `_` in words is kept.
+        s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
+        s = re.sub(r"(?<!\w)__(.+?)__(?!\w)",
+                   lambda m: m.group(0) if re.fullmatch(r"[a-z0-9_]+", m.group(1)) else m.group(1), s)
         return re.sub(r"\s+", " ", s.strip("*_ "))[:240]
     return ""
 
