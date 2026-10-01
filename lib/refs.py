@@ -34,6 +34,7 @@ import ast
 import bisect
 import os
 import re
+import unicodedata
 
 # 🐛 [2026-09-22] (self-measured) This was 800,000 and the first real run proved the number wrong.
 # `tests/run_tests.py` in this package is 2.8 MB, so it landed in "not judged" -- and it is exactly
@@ -114,8 +115,20 @@ def in_source(text, symbol):
     # counted the way the parser counts them -- `\r\n` and a lone `\r` are one break each, and
     # `splitlines()` is not used because it also breaks on form feed and U+2028, which Python does
     # not, and that would shift every line after one of them.
-    hot = [i for i, line in enumerate(text.replace("\r\n", "\n").replace("\r", "\n").split("\n"), 1)
-           if symbol in line]
+    #
+    # 🐛 [2026-10-01] (R418 acc4, 2026-10-01) Python NFKC-normalises identifiers when parsing
+    # (PEP 3131), so the AST names are NFKC while `symbol` arrived raw. A Thai `def คำนวณราคา(x)`
+    # called as `คำนวณราคา(2)` printed "no use" (SARA AM U+0E33 decomposes under NFKC), and a
+    # `café_total` called in NFD spelling found only the def. Compare against the NFKC form, and
+    # let a line whose spelling differs only by normalisation through the prefilter.
+    sym = unicodedata.normalize("NFKC", symbol)
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if text.isascii() and symbol.isascii():
+        hot = [i for i, line in enumerate(text.replace("\r\n", "\n").replace("\r", "\n").split("\n"), 1)
+               if symbol in line]
+    else:
+        hot = [i for i, line in enumerate(lines, 1)
+               if symbol in line or sym in unicodedata.normalize("NFKC", line)]
     out = []
     stack = [(tree, False)]
     while stack:
@@ -127,15 +140,15 @@ def in_source(text, symbol):
             if at == len(hot) or hot[at] > end:
                 continue
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            if symbol in _bound_locally(n):
+            if sym in _bound_locally(n):
                 shadowed = True
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == symbol:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == sym:
             out.append((n.lineno, "def"))
         elif isinstance(n, ast.Call) and not shadowed:
             f = n.func
-            if isinstance(f, ast.Name) and f.id == symbol:
+            if isinstance(f, ast.Name) and f.id == sym:
                 out.append((n.lineno, "call"))
-            elif isinstance(f, ast.Attribute) and f.attr == symbol:
+            elif isinstance(f, ast.Attribute) and f.attr == sym:
                 out.append((n.lineno, "attribute"))
         for child in ast.iter_child_nodes(n):
             stack.append((child, shadowed))
@@ -530,7 +543,15 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                 # Measured on this package, `chamnan-where whole_graphemes`: 113 files parsed and
                 # 1.49 million AST nodes walked to return three results. The three files that
                 # contain the string are the only ones that can hold one.
-                if symbol not in body:
+                #
+                # 🐛 [2026-10-01] (R418 acc4, 2026-10-01) For a .py file the raw substring test is
+                # not exact: Python NFKC-normalises identifiers (PEP 3131), so a call spelled in NFD
+                # is the same name with different characters. Non-ASCII input also tries the NFKC
+                # forms; the ASCII fast path is unchanged.
+                if symbol not in body and not (
+                        ext == ".py" and not (body.isascii() and symbol.isascii())
+                        and unicodedata.normalize("NFKC", symbol)
+                        in unicodedata.normalize("NFKC", body)):
                     how["exact" if ext == ".py" else "lexical"] += 1
                     continue
                 if ext == ".py":
