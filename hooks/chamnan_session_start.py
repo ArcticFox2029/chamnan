@@ -517,7 +517,8 @@ def store_section(root, title, body, source, scan_sources=None, brief=""):
             elif candidate.is_dir():
                 directory_store = True
                 paths.extend(path for path in candidate.glob("*.md")
-                             if not ws.is_store_index(path))
+                             if not ws.is_store_index(path)
+                             and not ws.is_sync_conflict_copy(path))
         conflicted = []
         for path in paths:
             if not path.is_file() or not ws.inside(path, root):
@@ -2644,7 +2645,8 @@ def main():
             skills = []
             if (wsdir / "skills").is_dir():
                 for p in sorted((wsdir / "skills").glob("*.md")):
-                    if not ws.inside(p, root) or ws.is_store_index(p):
+                    if (not ws.inside(p, root) or ws.is_store_index(p)
+                            or ws.is_sync_conflict_copy(p)):
                         continue
                     try:
                         raw_skill = p.read_text(encoding="utf-8-sig", errors="replace")

@@ -130,7 +130,8 @@ def records(root):
     # session record is read by the SessionStart hook with no user action at all, so a planted link
     # put a file's title and structure into every session's block automatically.
     return sorted((p for p in d.glob("*.md")
-                   if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root)),
+                   if p.is_file() and not ws.is_store_index(p)
+                   and not ws.is_sync_conflict_copy(p) and ws.inside(p, root)),
                   key=_key, reverse=True)
 
 
@@ -476,7 +477,8 @@ def _is_nothing(body):
 
 def _candidates(d):
     """Every file `prune` is allowed to consider. One definition, because two would drift."""
-    return [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)]
+    return [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)
+            and not ws.is_sync_conflict_copy(q)]
 
 
 def _age(path):

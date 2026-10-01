@@ -197,6 +197,28 @@ def which_quarantine(wsdir, lines):
                        + " — logs/recovered.jsonl says when and why"))
 
 
+def which_sync_copies(wsdir, lines):
+    """Flag sync-client conflict copies sitting beside the files they copy.
+
+    🐛 [2026-10-01] (R283 acc2, 2026-10-01) The stores skip such copies, so one that held the
+    newer text is silently ignored; see `ws.is_sync_conflict_copy` for the measured defect.
+    """
+    found = []
+    try:
+        for p in wsdir.rglob("*"):
+            if p.is_file() and ws.is_sync_conflict_copy(p):
+                found.append(p.relative_to(wsdir).as_posix())
+    except OSError:
+        pass
+    found.sort()
+    if not found:
+        lines.append((OK, "no sync-client conflict copies in the workspace"))
+        return
+    lines.append((BAD, f"{len(found)} sync-client conflict copie(s) sit beside the files they copy "
+                       f"and are ignored: {', '.join(found[:3])}; compare each with its original, "
+                       "keep one, delete the other"))
+
+
 def which_hook_crashes(wsdir, lines):
     """Every hook crash `never_fail` swallowed in the last week, by hook, error and line.
 
@@ -331,6 +353,7 @@ def main(argv):
     which_stores(wsdir, lines)
     which_quarantine(wsdir, lines)
     which_hook_crashes(wsdir, lines)
+    which_sync_copies(wsdir, lines)
     which_env_overrides(lines)
     # 🐛 [2026-09-24] (self-measured) Two more lines used to run `.chamnan/tools/silence.py` and
     # `invariant_map.py` from the repository this was pointed at — files that do not ship with

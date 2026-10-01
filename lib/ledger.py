@@ -50,7 +50,8 @@ def _files(root, *parts):
         d = d / p
     if not d.is_dir():
         return None
-    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p))
+    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p)
+                  and not ws.is_sync_conflict_copy(p))
 
 
 def _mtimes(paths):

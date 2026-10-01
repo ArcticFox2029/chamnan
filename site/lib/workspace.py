@@ -686,6 +686,36 @@ def is_store_index(path):
     return pathlib.Path(path).name.lower() in ("readme.md", "index.md")
 
 
+_SYNC_CONFLICT_SHAPES = (
+    re.compile(r"^(?P<base>.+) (?:[2-9]|[1-9][0-9])$"),                       # iCloud / macOS copy
+    re.compile(r"^(?P<base>.+) \((?=[^)]*conflicted copy)[^)]*\)$", re.I),   # Dropbox
+    re.compile(r"^(?P<base>.+) \([0-9]+\)$"),                                # Google Drive
+    re.compile(r"^(?P<base>.+)\.sync-conflict-[0-9]{8}-[0-9]{6}(?:-[A-Za-z0-9]+)?$"),  # Syncthing
+)
+
+
+def is_sync_conflict_copy(path):
+    """True when `path` is a sync client's conflict copy of a sibling file that exists.
+
+    🐛 [2026-10-01] (R283 acc2, 2026-10-01) Sync clients leave copies beside the real file. In a
+    workspace holding `memory/rules/friday.md` and `friday (conflicted copy 2026-10-01).md`, plus
+    `memory/lessons/zebra.md` and `zebra 2.md`, the SessionStart block injected the CONFLICTED
+    copy and called the real file its duplicate, listed `zebra 2.md` as a second lesson, and
+    chamnan-recall returned the copy first; chamnan-doctor said nothing. The name alone is not
+    enough -- the twin must exist, so a user's own `phase 2.md` with no `phase.md` stays a note.
+    Never raises: any OSError reads as "not a copy".
+    """
+    try:
+        p = pathlib.Path(path)
+        for shape in _SYNC_CONFLICT_SHAPES:
+            m = shape.match(p.stem)
+            if m and (p.parent / (m.group("base") + p.suffix)).is_file():
+                return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 
@@ -754,7 +784,8 @@ def store_entries(directory_, root):
     if not directory_.is_dir():
         return []
     return sorted(p for p in directory_.glob("*.md")
-                  if p.is_file() and not is_store_index(p) and inside(p, root))
+                  if p.is_file() and not is_store_index(p) and not is_sync_conflict_copy(p)
+                  and inside(p, root))
 
 
 def find_root(start=None):

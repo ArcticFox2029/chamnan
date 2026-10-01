@@ -122,6 +122,7 @@ def markdown_entries(d, root):
         return []
     return sorted(p for p in d.glob("*.md")
                   if p.is_file() and not ws.is_store_index(p)
+                  and not ws.is_sync_conflict_copy(p)
                   and ws.inside(p, root, _resolved_root=root_resolved))
 
 

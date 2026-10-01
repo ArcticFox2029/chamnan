@@ -238,7 +238,7 @@ def paths_for(ws_dir, folder):
     """Every `.md` file under the folder one `KINDS` entry names."""
     base = ws_dir / folder
     if base.is_dir():
-        return sorted(base.rglob("*.md"))
+        return sorted(p for p in base.rglob("*.md") if not ws.is_sync_conflict_copy(p))
     return []
 
 

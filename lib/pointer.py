@@ -218,7 +218,7 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
             # that sweep because it lives in a different module. What a pointer surfaces is a
             # TITLE, which is exactly the first line of whatever it was aimed at. (R3 agent 2,
             # reproduced end to end.)
-            if not ws.inside(f, wsdir):
+            if not ws.inside(f, wsdir) or ws.is_sync_conflict_copy(f):
                 continue
             try:
                 if f.stat().st_size > MAX_BYTES:
