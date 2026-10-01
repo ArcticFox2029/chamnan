@@ -65,6 +65,15 @@ def fenced_lines(text):
 #   Bidi embeddings, overrides and isolates (U+202A-202E, U+2066-2069) -- reorder the rendered text
 #     against the stored bytes. The Trojan Source class, CVE-2021-42574.
 #   ZWSP and BOM (U+200B, U+FEFF) -- invisible, and split a word into two that no search matches.
+#   Tag characters (U+E0000-E007F), word joiner and invisible operators (U+2060-2064), deprecated
+#     format characters (U+206A-206F), interlinear annotation (U+FFF9-FFFB) and the variation
+#     selectors supplement (U+E0100-E01EF) -- invisible, with no role in a one-line label. Tag
+#     characters are the "ASCII smuggling" channel: text a person cannot see but a model reads.
+#     # 🐛 [2026-10-01] (R371 acc5, 2026-10-01) Measured: `one_line` of 'ok' + tag-encoded
+#     'IGNORE' + ... kept all six tag characters and U+2060.
+#     The set now matches `redact._TERMINAL_SAFE` except U+FE00-FE0F, which stays: it is the emoji
+#     presentation selector (`whole_graphemes` and ordinary emoji depend on it). The cost, accepted:
+#     a subdivision flag such as England's loses its tags and shows as a plain black flag.
 #
 # What is deliberately NOT on the list, and this is the load-bearing half: ZWJ (U+200D), ZWNJ
 # (U+200C) and the directional MARKS (U+200E/200F). ZWJ and ZWNJ are letters-shaping characters --
@@ -96,7 +105,12 @@ _CONTROLS = str.maketrans(
         + [chr(i) for i in range(0x80, 0xA0) if chr(i) != "\x85"]
         + [chr(i) for i in range(0x202A, 0x202F)]
         + [chr(i) for i in range(0x2066, 0x206A)]
-        + ["\u200b", "\ufeff"]}})
+        + ["\u200b", "\ufeff"]
+        + [chr(i) for i in range(0x2060, 0x2065)]
+        + [chr(i) for i in range(0x206A, 0x2070)]
+        + [chr(i) for i in range(0xFFF9, 0xFFFC)]
+        + [chr(i) for i in range(0xE0000, 0xE0080)]
+        + [chr(i) for i in range(0xE0100, 0xE01F0)]}})
 
 
 # 🐛 [2026-09-07] `# ` and `[ \t]+` are ASCII, and a CJK keyboard types U+3000 IDEOGRAPHIC SPACE
