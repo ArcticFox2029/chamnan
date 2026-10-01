@@ -48,6 +48,11 @@ HEREDOC = re.compile(r"<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*\n(.*?)\n\1", re.S)
 TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}")
 SIMILAR = 0.55        # Jaccard at or above this counts as "the same script again"
 REPEAT_AT = 3         # say something on the third one, not the second
+# 🐛 [2026-10-01] (R370 acc5, 2026-10-01) The advice in each of these notices is the same whatever the
+# target, so after it has been said twice in a session a third saying is the repeat that teaches a
+# reader to skip chamnan's lines. Measured in one long session: ~81 scratch-script lines and ~63
+# repeated-search lines, none acted on.
+NOTICE_KIND_CAP = 2
 KEEP_ENTRIES = 300    # bounded log; this is a hint generator, not an archive
 # Unique identifiers of four characters or more. A real five-line analysis script has about
 # eight; 12 was tuned against long scripts and silently ignored exactly the short, repeated
@@ -487,6 +492,23 @@ def _searched_symbol(command):
     return ""
 
 
+def _kind_may_speak(wsdir, session_id, kind):
+    """True while notice `kind` has been said fewer than NOTICE_KIND_CAP times this session; counts
+    the saying. No session id or any store error keeps today's behaviour (speak)."""
+    if not session_id:
+        return True
+    try:
+        entry = _nudge_read(wsdir, session_id)
+        spoken = entry.setdefault("kinds_spoken", {})
+        if int(spoken.get(kind, 0)) >= NOTICE_KIND_CAP:
+            return False
+        spoken[kind] = int(spoken.get(kind, 0)) + 1
+        _nudge_write(wsdir, session_id, entry)
+        return True
+    except Exception:      # noqa: BLE001 -- a broken store must not change what is said
+        return True
+
+
 def _repeated_search(payload, wsdir, root):
     """Say once when the same name has been searched for the third time this session.
 
@@ -523,6 +545,9 @@ def _repeated_search(payload, wsdir, root):
         return False
     entry["searched_told"] = told + [term]
     _nudge_write(wsdir, session_id, entry)
+    # 🐛 [2026-10-01] (R370 acc5, 2026-10-01) Per-session cap across terms; the term stays recorded as told.
+    if not _kind_may_speak(wsdir, session_id, "repeated_search"):
+        return False
     say(f"chamnan: that is the {REPEAT_AT}rd search for `{term}` in this session. "
         f"`chamnan-where {shlex.quote(term)}` answers the same question without the comments and string "
         f"literals a text search returns — exact for Python, lexical for twenty more languages, "
@@ -885,7 +910,9 @@ def main():
 
     # Only the exact threshold speaks. Firing on every later repeat would turn a useful nudge into
     # noise the user learns to scroll past. Outside the lock: `say()` only writes to stdout.
-    if len(matches) + 1 == REPEAT_AT:
+    # 🐛 [2026-10-01] (R370 acc5, 2026-10-01) Per-session cap across clusters.
+    if (len(matches) + 1 == REPEAT_AT
+            and _kind_may_speak(wsdir, str(payload.get("session_id") or ""), "scratch_repeat")):
         first = matches[0].get("at", "")[:10]
         # \U0001f41b [2026-09-10] This said "save yours and promote it" and never asked the question
         # that would have helped: does one of these already exist? It fired three times in one night
