@@ -49621,6 +49621,82 @@ check("AN UNCAUGHT EXCEPTION'S MESSAGE IS SCRUBBED BEFORE IT REACHES STDERR",
 check("...while the traceback still names the exception and where it came from",
       "Traceback" in _run397.stderr and "ValueError" in _run397.stderr and _run397.returncode != 0,
       saw=(_run397.returncode, _run397.stderr[-200:]))
+# ---- 398_a_thai_or_differently_normalised_name_is_found.py
+# ------------------ chamnan-where finds a Thai identifier and a name spelled in another normal form
+# 🐛 [2026-10-01] (R418 acc4, 2026-10-01) Search can silently omit correctly named symbols when encoding
+# differs. Python NFKC-normalises identifiers when it parses (PEP 3131), and refs compared the AST's
+# names with the query as typed: a Thai function defined and called in two files was reported as
+# "no use" -- SARA AM decomposes under NFKC -- and a call spelled in NFD was skipped by the line
+# prefilter, so only the definition of an accented name was found. Both are matched now.
+import importlib as _il398
+import unicodedata as _ud398
+
+_refs398 = _il398.import_module("refs")
+_thai398 = "คำนวณราคา"
+_def398 = "def %s(x):\n    return x\n" % _thai398
+_call398 = "from a import %s\nprint(%s(2))\n" % (_thai398, _thai398)
+check("A THAI FUNCTION'S DEFINITION AND CALL ARE BOTH FOUND",
+      _refs398.in_source(_def398, _thai398) == [(1, "def")]
+      and _refs398.in_source(_call398, _thai398) == [(2, "call")],
+      saw=(_refs398.in_source(_def398, _thai398), _refs398.in_source(_call398, _thai398)))
+_nfd398 = _ud398.normalize("NFD", "café_total")
+check("...and a call spelled in NFD is found for a name typed in NFC",
+      _refs398.in_source("print(%s())\n" % _nfd398, "café_total") == [(1, "call")],
+      saw=_refs398.in_source("print(%s())\n" % _nfd398, "café_total"))
+check("...while an ASCII name is answered as before",
+      _refs398.in_source("def plain():\n    pass\nplain()\n", "plain") == [(1, "def"), (3, "call")],
+      saw=_refs398.in_source("def plain():\n    pass\nplain()\n", "plain"))
+
+# And through `find()`, whose file prefilter skipped a file holding only the NFD spelling.
+import shutil as _sh398
+import tempfile as _tf398
+from pathlib import Path as _P398
+
+_d398 = _P398(_tf398.mkdtemp(prefix="chamnan-check398-"))
+try:
+    (_d398 / "a.py").write_text("def café_total():\n    return 1\n", encoding="utf-8")
+    (_d398 / "b.py").write_text("print(%s())\n" % _nfd398, encoding="utf-8")
+    _hits398 = sorted((rel, kind) for rel, _line, kind in _refs398.find(_d398, "café_total")[0])
+    check("...and a whole-tree search finds the NFD call in its own file",
+          _hits398 == [("a.py", "def"), ("b.py", "call")], saw=_hits398)
+finally:
+    _sh398.rmtree(_d398, ignore_errors=True)
+# ---- 399_a_file_an_ai_ignore_file_names_stays_out_of_the_map.py
+# ------------------ a file a repository's AI-ignore file names stays out of the map
+# 🐛 [2026-10-01] (R411 acc4, 2026-10-01) Users keep `.aiignore`, `.cursorignore`, `.codeiumignore` or
+# `.aiexclude` to keep files away from AI tools, and chamnan read none of them: a file named in
+# `.aiignore` had its "confidential" opening comment summarised into MAP.md, which every session is
+# given. The map walk now honours those four files with gitignore rules -- a negation cannot
+# re-include a file under an excluded directory, as in git -- and says how many files it left out.
+import shutil as _sh399
+import subprocess as _sp399
+import sys as _sy399
+import tempfile as _tf399
+from pathlib import Path as _P399
+
+_d399 = _P399(_tf399.mkdtemp(prefix="chamnan-check399-"))
+try:
+    _r399 = _d399 / "repo"
+    _sp399.run(["git", "init", "-q", str(_r399)], capture_output=True, timeout=30)
+    (_r399 / "private").mkdir()
+    (_r399 / "secret_pricing.py").write_text("# Pricing formula, confidential\ndef p():\n    return 1\n", encoding="utf-8")
+    (_r399 / "helper.py").write_text("# public helper\ndef h():\n    return 2\n", encoding="utf-8")
+    (_r399 / "private" / "notes.py").write_text("# private notes\nx = 1\n", encoding="utf-8")
+    (_r399 / "private" / "keep.py").write_text("# kept by negation\ny = 2\n", encoding="utf-8")
+    (_r399 / "a.secret.py").write_text("# cursor-excluded\nz = 3\n", encoding="utf-8")
+    (_r399 / ".aiignore").write_text("secret_pricing.py\nprivate/\n!private/keep.py\n", encoding="utf-8")
+    (_r399 / ".cursorignore").write_text("*.secret.py\n", encoding="utf-8")
+    _run399 = _sp399.run([_sy399.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_r399),
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    _map399 = (_r399 / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+    _leaked399 = [n for n in ("secret_pricing", "confidential", "notes.py", "keep.py", "a.secret.py")
+                  if n in _map399]
+    check("A FILE AN AI-IGNORE FILE NAMES NEVER REACHES THE MAP", not _leaked399 and "helper.py" in _map399,
+          saw=(_leaked399, _run399.stdout[-300:]))
+    check("...and the map run says how many files it left out for that reason",
+          "AI-ignore" in _run399.stdout + _run399.stderr + _map399, saw=(_run399.stdout + _run399.stderr)[-400:])
+finally:
+    _sh399.rmtree(_d399, ignore_errors=True)
 # ---- 39_a_pin_buys_share_not_only_order.py
 # ------------------------------------------- a pin that reached the title and stopped there
 # 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
