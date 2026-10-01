@@ -4099,6 +4099,22 @@ def git_is_too_old():
     return _GIT_TOO_OLD
 
 
+# The directory git named when it refused a repository for "dubious ownership" (True when it refused
+# without naming one), else None. Kept apart from `_GIT_TOO_OLD`: that one is "upgrade git", this
+# one is "trust this directory", and neither sentence helps the other reader.
+_GIT_REFUSED_OWNERSHIP = None
+
+
+def git_refused_ownership():
+    """The path git named when it refused this repository as "dubious ownership", else None.
+
+    None until one has been seen: this reports evidence already gathered, it does not go looking.
+    `git_can_speak_for` is what sets it, and every caller that needs this answer has been through
+    that function first.
+    """
+    return _GIT_REFUSED_OWNERSHIP
+
+
 def git_is_installed():
     """Whether a `git` executable is on PATH at all. Cached, like `git_owns`.
 
@@ -4370,6 +4386,13 @@ def git_can_speak_for(root):
         if out.returncode != 0 and "unknown option" in (out.stderr or "").lower():
             global _GIT_TOO_OLD
             _GIT_TOO_OLD = True
+        # 🐛 [2026-10-01] (R322 acc2, 2026-10-01) git refuses a repository owned by another user
+        # (containers, bind mounts, CI) and exits non-zero, which read as "not a repository" and
+        # silenced every git-based line with no explanation. Same stderr, same probe, no new call.
+        if out.returncode != 0 and "dubious ownership" in (out.stderr or "").lower():
+            global _GIT_REFUSED_OWNERSHIP
+            named = re.search(r"repository at '([^']+)'", out.stderr or "")
+            _GIT_REFUSED_OWNERSHIP = named.group(1) if named else str(root)
         answer = out.returncode == 0 and bool(out.stdout.strip())
         toplevel = out.stdout.strip() if answer else None
         if not answer:

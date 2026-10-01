@@ -172,7 +172,13 @@ def which_artefacts(root, wsdir, lines):
         stamped = m.group(1) if m else ""
     except OSError:
         pass
-    if not head:
+    if not head and ws.git_refused_ownership():
+        # 🐛 [2026-10-01] (R322 acc2, 2026-10-01) `_git` already asked `git_can_speak_for`, so the
+        # evidence exists by here. "git cannot say" hid that the reason is fixable in one command.
+        lines.append((BAD, "git refuses this repository (\"dubious ownership\": it is owned by "
+                           "another user), so nothing git-based can be checked. If you trust it: "
+                           f"git config --global --add safe.directory {shlex.quote(str(ws.git_refused_ownership()))}"))
+    elif not head:
         lines.append((UNKNOWN, f"MAP.md is {age:.0f}d old and git cannot say what has moved since"))
     elif not stamped:
         lines.append((UNKNOWN, "MAP.md carries no commit stamp at all — its age is the only "

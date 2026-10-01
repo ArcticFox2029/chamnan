@@ -23,6 +23,7 @@ import calendar
 import datetime
 import subprocess
 import re
+import shlex
 import mdblock
 import tokens
 from pathlib import Path
@@ -226,6 +227,14 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
                     "is too old for `git -C`, which arrived in git 1.8.5 (2013) and is what every "
                     "query here uses. Upgrading git restores this section; everything else in this "
                     "block already works without it.")
+        if ws.git_refused_ownership():
+            # 🐛 [2026-10-01] (R322 acc2, 2026-10-01) Said nothing before: "dubious ownership" read
+            # as "not a repository", and every git-based line vanished without a reason.
+            _path = mdblock.as_quoted(str(ws.git_refused_ownership()), 200)
+            return ("**Where the last session stopped** — not available: git refuses this "
+                    "repository because it is owned by another user (git calls it \"dubious "
+                    "ownership\"); every git-based line in this block is off until it is trusted. "
+                    f"If you trust it: `git config --global --add safe.directory {shlex.quote(_path)}`.")
         # 🐛 [2026-09-06] Without this, a directory holding a `.git` git itself refuses -- an
         # interrupted `git init`, a copied-without-contents `.git` -- made every call below walk up
         # and answer about the nearest REAL repository above it. Reproduced: this section reported
