@@ -274,6 +274,8 @@ def _document_notice(path, root, session_id, size):
         if agent_report.is_file():
             extra = f" `python3 .chamnan/tools/read_agent_report.py {shlex.quote(str(path))}` is set up here."
     except Exception:
+        # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+        ws.record_swallowed()
         extra = ""
     rule = ""
     try:
@@ -282,6 +284,7 @@ def _document_notice(path, root, session_id, size):
             rule = (" This repository has written that down: "
                     "`memory/rules/the-local-model-reads-long-things-first.md`.")
     except Exception:
+        ws.record_swallowed()
         rule = ""
     return (
         f"chamnan: `{name}` is a long document (~{size:,} bytes). Pulling a list or an answer out "

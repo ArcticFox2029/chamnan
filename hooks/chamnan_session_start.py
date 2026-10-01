@@ -424,6 +424,8 @@ def why_this_session(payload):
                               "from the workspace instead; `chamnan-open` picks between the two "
                               "before a session starts. The earlier conversation is kept either way.")
             except Exception:          # noqa: BLE001 — advice is never worth losing the block for
+                # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+                ws.record_swallowed()
                 advice = ""
         return (f"_Resumed after the prompt cache expired, so the whole conversation is "
                 f"re-sent{cost}._{advice}")
@@ -996,6 +998,7 @@ def index_is_behind(root, map_path):
             return 0, []
         return newest - built, [str(f.relative_to(root).as_posix()) for f in newer]
     except Exception:
+        ws.record_swallowed()
         return 0, []      # never let a nicety break a session
 
 
@@ -1281,6 +1284,7 @@ def dead_entries(root, map_text):
             dead = [n for n in dead if n not in shown]
         return len(dead), len(named), dead[:3]
     except Exception:
+        ws.record_swallowed()
         return 0, 0, []      # never let a nicety break a session
 
 
@@ -1337,6 +1341,7 @@ def unindexed(root, map_text):
         missing = [r for r in missing if _mapper.is_text_file(root / r)]
         return len(missing), missing[:3]
     except Exception:
+        ws.record_swallowed()
         return 0, []
 
 
@@ -2252,6 +2257,7 @@ def main():
         try:
             _drift = adapters.artefact_drift(root)
         except Exception:      # noqa: BLE001 — a report must not stop a session starting
+            ws.record_swallowed()
             _drift = []
         if _drift:
             _ahead = [r for r, s, _v in _drift if s == "ahead"]
@@ -2550,6 +2556,7 @@ def main():
             try:
                 tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8-sig"))
             except Exception:
+                ws.record_swallowed()
                 tools = []
             # 🐛 index.json arrives with a clone like anything else, and nothing checked that an
             # entry names a tool that is actually there. This section's own header says "prefer

@@ -3958,6 +3958,17 @@ def _record_swallowed():
         pass
 
 
+def record_swallowed():
+    """Count a failure that a handler is about to swallow, where `chamnan-doctor` reads it.
+
+    Call it as the first statement of an `except Exception:` that makes a whole feature fall
+    silent, so a bug inside the feature shows up as a row in `logs/hook_errors.jsonl` instead of
+    the feature being dead for everyone. Not for exceptions that are expected (a missing file, a
+    malformed payload): those are normal and would only bury the real rows.
+    """
+    _record_swallowed()
+
+
 def version_line():
     """One line naming the build, where it lives, and what interpreter is running it.
 

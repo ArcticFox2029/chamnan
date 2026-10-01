@@ -178,6 +178,8 @@ def _block(root):
             nested = sorted(d.relative_to(_base).as_posix()
                             for d in mapper._nested_repo_dirs(root))
         except Exception:
+            # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+            ws.record_swallowed()
             nested = []
         if nested:
             # Each name through one_line, for the reason the rule titles below are: a DIRECTORY NAME
@@ -195,6 +197,7 @@ def _block(root):
     try:
         rules = memory.rules_text(root)
     except Exception:
+        ws.record_swallowed()
         rules = ""
     if rules:
         # 🐛 `ln.startswith("**")` scooped up a rule's own BODY lines as if each were a separate

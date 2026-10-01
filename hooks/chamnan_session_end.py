@@ -88,6 +88,8 @@ def _repeated_failures(wsdir):
         import gotcha
         return sum(1 for _k, v in gotcha.repeats(wsdir).items() if v[0] >= gotcha.REPEATS)
     except Exception:              # noqa: BLE001
+        # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+        ws.record_swallowed()
         return 0
 
 
@@ -110,6 +112,7 @@ def _a_gotcha_is_owed(root, wsdir):
                     % (repeats, now))
         return ""
     except Exception:              # noqa: BLE001 — a notice is never worth a failed hook
+        ws.record_swallowed()
         return ""
 
 def main():

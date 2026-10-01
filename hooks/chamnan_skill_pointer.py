@@ -195,6 +195,8 @@ def _what_this_repo_already_has(payload):
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", timeout=20).stdout
     except Exception:
+        # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+        ws.record_swallowed()
         return ""
     lines = [ln for ln in out.splitlines() if ln.strip()]
     # 🐛 [2026-10-01] (R258 acc4, 2026-10-01) The old test looked for "0 of", text recall never
@@ -371,6 +373,7 @@ def _about_to_discard(command, root):
         if not ws.git_can_speak_for(root):
             return ""
     except Exception:            # noqa: BLE001 — a guard must never be why a command fails
+        ws.record_swallowed()
         return ""
     try:
         # 🐛 [2026-09-28] (R185 acc4, 2026-09-28) Left at git's default `core.quotePath=true`, a
@@ -383,6 +386,7 @@ def _about_to_discard(command, root):
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", timeout=10)
     except Exception:            # noqa: BLE001 — a guard must never be why a command fails
+        ws.record_swallowed()
         return ""
     if out.returncode != 0:
         return ""
@@ -442,6 +446,7 @@ def _repeat_notice(payload):
                 f"{str(when)[:10]} — `{mdblock.as_quoted(err, 120)}`. Same command, same error; "
                 f"nothing is blocked.")
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        ws.record_swallowed()
         return ""
 
 
@@ -457,6 +462,7 @@ def _outside_the_checkout(payload):
         return boundary.advice(payload.get("tool_name") or "",
                                payload.get("tool_input") or {}, ws.hook_root(payload))
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        ws.record_swallowed()
         return ""
 
 def _running_right_now(payload):
@@ -470,6 +476,7 @@ def _running_right_now(payload):
         return inuse.advice(payload.get("tool_name") or "",
                             payload.get("tool_input") or {}, ws.hook_root(payload))
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        ws.record_swallowed()
         return ""
 
 def _the_lesson_recorded_here(payload):
@@ -483,6 +490,7 @@ def _the_lesson_recorded_here(payload):
         return bugnotes.advice(payload.get("tool_name") or "",
                                payload.get("tool_input") or {}, ws.hook_root(payload))
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        ws.record_swallowed()
         return ""
 
 def _the_others_in_the_set(payload):
@@ -496,6 +504,7 @@ def _the_others_in_the_set(payload):
         return siblings.advice(payload.get("tool_name") or "",
                                payload.get("tool_input") or {}, ws.hook_root(payload))
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        ws.record_swallowed()
         return ""
 
 def _wrong_shape(payload):
@@ -512,6 +521,7 @@ def _wrong_shape(payload):
         command = (payload.get("tool_input") or {}).get("command") or ""
         return canonical.advice(command, root)
     except Exception:              # noqa: BLE001 — a notice is never worth a failed tool call
+        ws.record_swallowed()
         return ""
 
 def _long_read_notice(payload):
@@ -526,6 +536,7 @@ def _long_read_notice(payload):
         mod = _ilu.module_from_spec(spec)
         spec.loader.exec_module(mod)
     except Exception:
+        ws.record_swallowed()
         return ""
     buf = _io.StringIO()
     try:
@@ -538,6 +549,7 @@ def _long_read_notice(payload):
         finally:
             sys.stdin = _stdin
     except Exception:
+        ws.record_swallowed()
         return ""
     out = buf.getvalue().strip()
     if not out:
@@ -545,6 +557,7 @@ def _long_read_notice(payload):
     try:
         return _json.loads(out)["hookSpecificOutput"]["additionalContext"]
     except Exception:
+        ws.record_swallowed()
         return ""
 
 
@@ -591,6 +604,7 @@ def _edit_will_not_survive(payload):
         import survives
         why = survives.verdict(root, key)
     except Exception:
+        ws.record_swallowed()
         return ""
     seen.append(key)
     del seen[:-400]

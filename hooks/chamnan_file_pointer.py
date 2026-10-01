@@ -71,11 +71,14 @@ def _note_query(payload):
         import redact
         _q = redact.scrub(str(inp.get("pattern") or ""))
     except Exception:                       # noqa: BLE001 — accounting must never break a tool call
+        # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+        ws.record_swallowed()
         _q = ""
     try:
         pointer.note_query(wsdir, payload.get("session_id") or "", rel, _q,
                            actor=ws.actor(payload))
     except Exception:                       # noqa: BLE001
+        ws.record_swallowed()
         pass
     return 0
 

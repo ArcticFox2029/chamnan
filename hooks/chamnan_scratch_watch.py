@@ -715,6 +715,8 @@ def _index_missed_this_file(payload, root, wsdir, session_id):
         if rel in mp.read_text(encoding="utf-8", errors="replace"):
             return
     except Exception:      # noqa: BLE001 — a hook that only writes fails silently
+        # 🐛 [2026-10-01] (R216 acc4, 2026-10-01) A feature that falls silent on any exception is counted in logs/hook_errors.jsonl, where doctor reports it.
+        ws.record_swallowed()
         return
     state["map_missing_said"] = True
     _nudge_write(wsdir, session_id, state)
