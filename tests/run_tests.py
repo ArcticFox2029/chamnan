@@ -48186,19 +48186,27 @@ check(f"the new prefilter and HEAD's re.I one agree on hits and scrub output ove
       _old370 is not None and not _diff370,
       saw="; ".join(_diff370) or ("no HEAD copy" if _old370 is None else None))
 
-# (d) timing over MAP.md, median of 3 (skipped when the file is absent)
-if _old370 is not None and _map370.is_file():
+# (d) timing over MAP.md (skipped when the file is absent)
+# 🐛 [2026-10-01] (R214 acc4, 2026-09-28) This timed the two modules one after the other, three runs
+# each, and once the change was committed HEAD's module IS the working one -- so it compared
+# identical code sequentially, and machine load drifting between the two batches decided the result.
+# The runs now alternate, seven pairs, so drift lands on both sides alike; and when the working
+# source is HEAD's, there is no change to time and the comparison is skipped rather than faked.
+_same370 = _head370.returncode == 0 and \
+    (ROOT / "lib" / "redact.py").read_text(encoding="utf-8") == _head370.stdout
+if _old370 is not None and _map370.is_file() and _same370:
+    skip("  [SKIP] prefilter timing — lib/redact.py is HEAD's, so there is no change to time")
+elif _old370 is not None and _map370.is_file():
     _big370 = _texts370["MAP.md"]
-
-    def _time370(mod):
-        mod._secret_word_hits_uncached(_big370)
-        runs = []
-        for _ in range(3):
-            t0 = _tm370.perf_counter()
-            mod._secret_word_hits_uncached(_big370)
-            runs.append(_tm370.perf_counter() - t0)
-        return _st370.median(runs)
-    _tn370, _to370 = _time370(_r370), _time370(_old370)
+    _r370._secret_word_hits_uncached(_big370)
+    _old370._secret_word_hits_uncached(_big370)
+    _new_runs370, _old_runs370 = [], []
+    for _ in range(7):
+        for _mod370, _runs370 in ((_r370, _new_runs370), (_old370, _old_runs370)):
+            _t0_370 = _tm370.perf_counter()
+            _mod370._secret_word_hits_uncached(_big370)
+            _runs370.append(_tm370.perf_counter() - _t0_370)
+    _tn370, _to370 = _st370.median(_new_runs370), _st370.median(_old_runs370)
     check("scanning MAP.md with the folded prefilter is not slower than the re.I one",
           _tn370 <= _to370 * 1.1, saw=f"new={_tn370 * 1000:.1f}ms old={_to370 * 1000:.1f}ms")
 # ---- 371_a_commit_subject_reaches_the_agent_fenced.py
@@ -49509,6 +49517,82 @@ try:
           "lock-files-on-shared-disks" in _title395, saw=_title395[:300])
 finally:
     _sh395.rmtree(_d395, ignore_errors=True)
+# ---- 396_a_feature_that_falls_silent_on_an_exception_is_counted.py
+# ------------------ a hook feature that falls silent on an exception leaves a row doctor reports
+# 🐛 [2026-10-01] (R216 acc4, 2026-10-01) Silent failure is 8.7% of Python exception-handling bugs.
+# Hooks wrap whole features in `except Exception: return ""`, so a bug inside one made that feature
+# dead for every user with nothing recorded -- R258's pointer test that never matched was found by
+# reading, not by any record. Each such handler now calls `ws.record_swallowed()`, which appends the
+# hook, the exception type and the line to logs/hook_errors.jsonl, the ledger `chamnan-doctor` reads.
+# Asserted twice: one feature is made to raise and its row is read back, and every named feature
+# handler is required to make the call, so a new one cannot quietly opt out.
+import ast as _ast396
+import importlib as _il396
+import json as _js396
+import os as _os396
+import shutil as _sh396
+import subprocess as _sp396
+import sys as _sy396
+import tempfile as _tf396
+from pathlib import Path as _P396
+
+_FEATURES396 = {
+    "chamnan_skill_pointer.py": {"_what_this_repo_already_has", "_about_to_discard", "_repeat_notice",
+                                 "_outside_the_checkout", "_running_right_now", "_the_lesson_recorded_here",
+                                 "_the_others_in_the_set", "_wrong_shape", "_long_read_notice",
+                                 "_edit_will_not_survive"},
+    "chamnan_session_start.py": {"index_is_behind", "dead_entries", "unindexed", "why_this_session"},
+    "chamnan_file_pointer.py": {"_note_query"},
+    "chamnan_bulk_read_notice.py": {"_document_notice"},
+    "chamnan_subagent_start.py": {"_block"},
+    "chamnan_session_end.py": {"_a_gotcha_is_owed", "_repeated_failures"},
+    "chamnan_scratch_watch.py": {"_index_missed_this_file"},
+}
+_missing396 = []
+for _f396, _names396 in _FEATURES396.items():
+    _tree396 = _ast396.parse((ROOT / "hooks" / _f396).read_text(encoding="utf-8"))
+    for _fn396 in _ast396.walk(_tree396):
+        if isinstance(_fn396, _ast396.FunctionDef) and _fn396.name in _names396:
+            for _h396 in _ast396.walk(_fn396):
+                if isinstance(_h396, _ast396.ExceptHandler) and getattr(_h396.type, "id", None) == "Exception":
+                    _calls396 = [c for c in _ast396.walk(_h396) if isinstance(c, _ast396.Call)
+                                 and getattr(c.func, "attr", "") == "record_swallowed"]
+                    if not _calls396:
+                        _missing396.append("%s:%d %s" % (_f396, _h396.lineno, _fn396.name))
+check("EVERY HOOK FEATURE THAT FALLS SILENT ON AN EXCEPTION RECORDS IT", not _missing396, saw=_missing396)
+
+_d396 = _P396(_tf396.mkdtemp(prefix="chamnan-check396-"))
+_old_env396 = _os396.environ.get("CLAUDE_PROJECT_DIR")
+try:
+    _sp396.run(["git", "init", "-q", str(_d396)], capture_output=True, timeout=30)
+    (_d396 / ".chamnan" / "logs").mkdir(parents=True)
+    _os396.environ["CLAUDE_PROJECT_DIR"] = str(_d396)
+    if str(ROOT / "hooks") not in _sy396.path:
+        _sy396.path.insert(0, str(ROOT / "hooks"))
+    _sp_mod396 = _il396.import_module("chamnan_skill_pointer")
+    _sv396 = _il396.import_module("survives")
+    _orig396 = _sv396.verdict
+
+    def _boom396(*_a, **_k):
+        raise RuntimeError("planted")
+
+    _sv396.verdict = _boom396
+    try:
+        _said396 = _sp_mod396._edit_will_not_survive(
+            {"session_id": "c396", "cwd": str(_d396), "tool_input": {"file_path": str(_d396 / "a.py")}})
+    finally:
+        _sv396.verdict = _orig396
+    _log396 = _d396 / ".chamnan" / "logs" / "hook_errors.jsonl"
+    _rows396 = [_js396.loads(l) for l in _log396.read_text(encoding="utf-8").splitlines() if l.strip()] \
+        if _log396.is_file() else []
+    check("...and a feature made to raise stays silent but leaves a row naming the exception",
+          _said396 == "" and any(r.get("error") == "RuntimeError" for r in _rows396), saw=(_said396, _rows396))
+finally:
+    if _old_env396 is None:
+        _os396.environ.pop("CLAUDE_PROJECT_DIR", None)
+    else:
+        _os396.environ["CLAUDE_PROJECT_DIR"] = _old_env396
+    _sh396.rmtree(_d396, ignore_errors=True)
 # ---- 39_a_pin_buys_share_not_only_order.py
 # ------------------------------------------- a pin that reached the title and stopped there
 # 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
