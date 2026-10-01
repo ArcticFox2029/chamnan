@@ -49038,6 +49038,167 @@ finally:
     _ws386._GIT_REFUSED_OWNERSHIP = _saved386
     _ws386._GIT_SPEAKS.pop(str(_d386.resolve()), None)
     _sh386.rmtree(_d386, ignore_errors=True)
+# ---- 387_an_ignored_folder_is_named_once_with_the_file.py
+# ------------------ an edit git will not keep is named by its path, once per ignored folder per session
+# 🐛 [2026-10-01] (R205 acc5, 2026-10-01) "git will not keep an edit here — git is ignoring it" named
+# no file and fired once per PATH, so a session writing several files into one ignored folder got the
+# same unnamed sentence again and again -- 19 times in one measured session, which is the shape that
+# teaches a reader to skip it. One ignored folder is one fact: it is now said once, with the path, and
+# a second ignored folder is still named.
+import json as _js387
+import os as _os387
+import shutil as _sh387
+import subprocess as _sp387
+import sys as _sy387
+import tempfile as _tf387
+from pathlib import Path as _P387
+
+_d387 = _P387(_tf387.mkdtemp(prefix="chamnan-check387-"))
+try:
+    _sp387.run(["git", "init", "-q", str(_d387)], capture_output=True, timeout=30)
+    (_d387 / ".chamnan").mkdir()
+    (_d387 / ".gitignore").write_text("out/\ntmp/\n", encoding="utf-8")
+    for _sub387 in ("out", "tmp", "src"):
+        (_d387 / _sub387).mkdir()
+    _env387 = dict(_os387.environ, CLAUDE_PROJECT_DIR=str(_d387))
+
+    def _write387(rel):
+        payload = {"session_id": "c387", "cwd": str(_d387), "hook_event_name": "PreToolUse", "tool_name": "Write",
+                   "tool_input": {"file_path": str(_d387 / rel), "content": "x = 1\n"}}
+        return _sp387.run([_sy387.executable, str(ROOT / "hooks" / "chamnan_skill_pointer.py")], cwd=str(_d387),
+                          env=_env387, input=_js387.dumps(payload), capture_output=True, text=True,
+                          encoding="utf-8", timeout=120).stdout
+
+    _first387 = _write387("out/a.txt")
+    _second387 = _write387("out/b.txt")
+    _other387 = _write387("tmp/c.txt")
+    _plain387 = _write387("src/app.py")
+    check("AN EDIT GIT WILL NOT KEEP IS NAMED BY ITS PATH",
+          "git will not keep" in _first387 and "out/a.txt" in _first387, saw=_first387[:300])
+    check("...and a second file in the same ignored folder is not warned again",
+          "git will not keep" not in _second387, saw=_second387[:300])
+    check("...while a different ignored folder is still named",
+          "git will not keep" in _other387 and "tmp/c.txt" in _other387, saw=_other387[:300])
+    check("...and an ordinary file gets no such warning", "git will not keep" not in _plain387,
+          saw=_plain387[:300])
+finally:
+    _sh387.rmtree(_d387, ignore_errors=True)
+# ---- 388_a_repositorys_declared_commands_reach_the_map.py
+# ------------------ the test/build commands a repository declares reach the map, labelled as not run
+# 🎯 [2026-10-01] (R211 acc4, 2026-10-01) Coding agents ran tests in 73.7% of projects with build
+# configuration and 41.7% without, and a repository's own `package.json` scripts, Makefile targets
+# and pytest configuration reached neither MAP.md nor the session block. The map now carries one
+# bounded "Declared commands" line, read from fixed names at the root only, and says chamnan has not
+# run them. A script or target outside the allowlist (`postinstall`, `deploy`) is never named.
+import importlib as _il388
+import shutil as _sh388
+import subprocess as _sp388
+import sys as _sy388
+import tempfile as _tf388
+from pathlib import Path as _P388
+
+_cat388 = _il388.import_module("catalogs")
+_d388 = _P388(_tf388.mkdtemp(prefix="chamnan-check388-"))
+try:
+    _r388 = _d388 / "repo"
+    _r388.mkdir()
+    _sp388.run(["git", "init", "-q", str(_r388)], capture_output=True, timeout=30)
+    (_r388 / "package.json").write_text(
+        '{"name": "x", "scripts": {"test": "jest", "build": "tsc", "postinstall": "node setup.js"}}\n',
+        encoding="utf-8")
+    (_r388 / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    (_r388 / "Makefile").write_text("test:\n\tpytest\n\ndeploy:\n\t./ship.sh\n", encoding="utf-8")
+    (_r388 / "pyproject.toml").write_text("[tool.pytest.ini_options]\naddopts = \"-q\"\n", encoding="utf-8")
+    (_r388 / "app.py").write_text("# the app\ndef main():\n    return 1\n", encoding="utf-8")
+
+    _cmds388 = [c for c, _src in _cat388.scan_commands(_r388)]
+    check("A REPOSITORY'S DECLARED TEST AND BUILD COMMANDS ARE READ WITH THE RUNNER ITS LOCKFILE NAMES",
+          {"pnpm run test", "pnpm run build", "make test", "pytest"} <= set(_cmds388), saw=_cmds388)
+    check("...and a script or target outside the allowlist is never named",
+          not any("postinstall" in c or "deploy" in c for c in _cmds388), saw=_cmds388)
+    _section388 = _cat388.render_commands(_cat388.scan_commands(_r388))
+    check("...and the section says chamnan has not run them", "not run" in _section388, saw=_section388[:300])
+    _empty388 = _d388 / "empty"
+    _empty388.mkdir()
+    check("...while a repository that declares nothing gets no section at all",
+          _cat388.render_commands(_cat388.scan_commands(_empty388)) == "")
+
+    _run388 = _sp388.run([_sy388.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_r388),
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    _map388 = _r388 / ".chamnan" / "MAP.md"
+    _text388 = _map388.read_text(encoding="utf-8") if _map388.is_file() else ""
+    _head388 = _text388.split("## Full Detail", 1)[0]
+    check("...and the built map carries them above Full Detail, where the session block reads",
+          "pnpm run test" in _head388 and "make test" in _head388,
+          saw=(_run388.returncode, _run388.stderr[-300:], _head388[-600:]))
+finally:
+    _sh388.rmtree(_d388, ignore_errors=True)
+# ---- 389_a_sparse_checkout_names_no_absent_file_and_claims_no_absence.py
+# ------------------ a sparse checkout: absent files are not "Last edited", and "no use" is not proof
+# 🐛 [2026-10-01] (R177 acc4, 2026-10-01) git models paths outside a sparse checkout as tracked but
+# absent. chamnan named such a path in "Last edited" though nobody here can open it, and
+# `chamnan-where` answered "no use of X" when the use sat in a file the checkout does not have.
+# Sparseness is read from the git dir's own files (no new git call site): the sparse-checkout file
+# AND `core.sparseCheckout = true`, since `git sparse-checkout disable` leaves the file behind.
+import importlib as _il389
+import os as _os389
+import shutil as _sh389
+import subprocess as _sp389
+import sys as _sy389
+import tempfile as _tf389
+import time as _time389
+from pathlib import Path as _P389
+
+_ws389 = _il389.import_module("workspace")
+_co389 = _il389.import_module("coedit")
+_d389 = _P389(_tf389.mkdtemp(prefix="chamnan-check389-"))
+try:
+    _r389 = _d389 / "repo"
+    _g389 = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+    _sp389.run(["git", "init", "-q", str(_r389)], capture_output=True, timeout=30)
+    (_r389 / "a").mkdir()
+    (_r389 / "b").mkdir()
+    (_r389 / "a" / "x.py").write_text("def keep():\n    return 1\n", encoding="utf-8")
+    (_r389 / "b" / "y.py").write_text("def only_in_b():\n    return 2\n", encoding="utf-8")
+    _sp389.run(["git", "-C", str(_r389), *_g389, "add", "-A"], capture_output=True, timeout=30)
+    _sp389.run(["git", "-C", str(_r389), *_g389, "commit", "-qm", "both"], capture_output=True, timeout=30)
+    (_r389 / "c.py").write_text("x = 3\n", encoding="utf-8")
+    _sp389.run(["git", "-C", str(_r389), *_g389, "add", "c.py"], capture_output=True, timeout=30)
+    _sp389.run(["git", "-C", str(_r389), *_g389, "commit", "-qm", "c"], capture_output=True, timeout=30)
+    _sp389.run(["git", "-C", str(_r389), *_g389, "rm", "-q", "c.py"], capture_output=True, timeout=30)
+    _sp389.run(["git", "-C", str(_r389), *_g389, "commit", "-qm", "drop c"], capture_output=True, timeout=30)
+    _env389 = dict(_os389.environ, CLAUDE_PROJECT_DIR=str(_r389))
+
+    def _where389(sym):
+        return _sp389.run([_sy389.executable, str(ROOT / "bin" / "chamnan-where"), sym], cwd=str(_r389),
+                          env=_env389, capture_output=True, text=True, encoding="utf-8", timeout=120).stdout
+
+    _dense_edits389 = [p for _at, p in _co389._git_edits(_r389, _time389.time(), _time389.time() - 86400)]
+    _dense_where389 = _where389("never_defined_anywhere")
+    _sp389.run(["git", "-C", str(_r389), "sparse-checkout", "set", "a"], capture_output=True, timeout=30)
+    _sparse_ok389 = not (_r389 / "b" / "y.py").exists()
+    _edits389 = [p for _at, p in _co389._git_edits(_r389, _time389.time(), _time389.time() - 86400)]
+    _where_sparse389 = _where389("only_in_b")
+    check("A SPARSE CHECKOUT IS RECOGNISED FROM THE GIT DIR'S OWN FILES",
+          _sparse_ok389 and _ws389.is_sparse(_r389), saw=(_sparse_ok389, _ws389.is_sparse(_r389)))
+    check("...and a file it does not have is not named as last edited",
+          "b/y.py" not in _edits389 and "a/x.py" in _edits389, saw=_edits389)
+    check("...and 'no use' there says it is not a proof of absence",
+          "no use" in _where_sparse389 and "sparse" in _where_sparse389, saw=_where_sparse389[:300])
+    check("...while an ordinary checkout names both files, and a deleted one, and adds no sparse sentence",
+          {"a/x.py", "b/y.py", "c.py"} <= set(_dense_edits389) and "sparse" not in _dense_where389,
+          saw=(_dense_edits389, _dense_where389[:200]))
+    _sp389.run(["git", "-C", str(_r389), "sparse-checkout", "disable"], capture_output=True, timeout=30)
+    check("...and a checkout whose sparseness was disabled is not called sparse",
+          not _ws389.is_sparse(_r389), saw=_ws389.is_sparse(_r389))
+    # The setting alone, with no patterns file, checks everything out: not sparse.
+    _bare389 = _d389 / "bare"
+    _sp389.run(["git", "init", "-q", str(_bare389)], capture_output=True, timeout=30)
+    _sp389.run(["git", "-C", str(_bare389), "config", "core.sparseCheckout", "true"], capture_output=True, timeout=30)
+    check("...nor is one that only sets core.sparseCheckout with no patterns file",
+          not _ws389.is_sparse(_bare389), saw=_ws389.is_sparse(_bare389))
+finally:
+    _sh389.rmtree(_d389, ignore_errors=True)
 # ---- 38_the_repeat_detector_names_the_tool_that_exists.py
 # ------------------------------------------- "save yours" when one was already there
 # 🐛 [2026-09-10] The repeat detector fires on the third near-identical scratch script and said
@@ -49102,6 +49263,93 @@ if _t_ws38 is not None:
           "likely_already_done" in _t_watch38, saw=None)
     check("...and it degrades to the old message rather than failing the tool call",
           "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
+# ---- 390_a_lock_written_on_another_host_is_not_judged_dead_here.py
+# ------------------ a lock written on another machine is not broken because its PID is absent here
+# 🐛 [2026-10-01] (R173 acc4, 2026-10-01) The lock recorded a PID and a birth time but no host. In a
+# workspace two machines share (an NFS or SMB home, a mounted volume), a waiter read the other
+# machine's LIVE lock after 0.25 s, found no such PID locally, called it dead and unlinked it -- two
+# writers on one file, the lost update the mutex exists to prevent. The host is now the lock's third
+# line; another host's lock is "unknown" and only the 30 s age rule may break it. Locks of one or two
+# lines, written before this, are judged exactly as before.
+import importlib as _il390
+import os as _os390
+import shutil as _sh390
+import tempfile as _tf390
+from pathlib import Path as _P390
+
+_ws390 = _il390.import_module("workspace")
+_d390 = _P390(_tf390.mkdtemp(prefix="chamnan-check390-"))
+try:
+    def _state390(text):
+        lock = _d390 / "probe.lock"
+        lock.write_text(text, encoding="utf-8")
+        return _ws390._lock_holder_state(lock)
+
+    _here390 = _ws390._own_host()
+    _gone390 = 999999
+    while _ws390._pid_is_alive(_gone390):
+        _gone390 += 1
+    check("A LOCK FROM ANOTHER HOST IS 'UNKNOWN', NOT 'DEAD', THOUGH ITS PID IS ABSENT HERE",
+          bool(_here390) and _state390("%d\n\nanother-host-390\n" % _gone390) == _ws390.LOCK_HOLDER_UNKNOWN,
+          saw=(_here390, _state390("%d\n\nanother-host-390\n" % _gone390)))
+    check("...while a dead PID on this host is still dead",
+          _state390("%d\n\n%s\n" % (_gone390, _here390)) == _ws390.LOCK_HOLDER_DEAD)
+    check("...and a lock written before the host line is judged as before",
+          _state390("%d\n" % _gone390) == _ws390.LOCK_HOLDER_DEAD)
+    with _ws390.exclusive(_d390 / "f.json") as _got390:
+        _lines390 = (_d390 / "f.json.lock").read_text(encoding="utf-8").splitlines()
+    check("...and a lock taken now carries this host on its third line, and reads as alive",
+          _got390 and len(_lines390) >= 3 and _lines390[0] == str(_os390.getpid()) and _lines390[2] == _here390,
+          saw=_lines390)
+finally:
+    _sh390.rmtree(_d390, ignore_errors=True)
+# ---- 391_an_indexed_file_with_an_odd_or_long_path_is_not_called_missing.py
+# ------------------ a file the map shows in folded form is not "no longer exist", nor "not in the index"
+# 🐛 [2026-10-01] (R245 acc4, 2026-10-01) The Quick Index writes names through `as_quoted`, which folds
+# control characters and cut a directory heading at 80 characters; the session-start hook parsed those
+# shown names back and compared them with the disk. On a fixture with an ESC name, a U+202E name and a
+# file under a 99-character directory, 3 of 4 indexed files were reported as "no longer exist" AND the
+# same 3 as "not in the index" -- every session, for every file below a long directory such as
+# `src/main/java/...`. Both directions now compare in the shown form, from one shared helper, and the
+# heading keeps a directory path whole up to 400 characters.
+import importlib as _il391
+import shutil as _sh391
+import subprocess as _sp391
+import sys as _sy391
+import tempfile as _tf391
+from pathlib import Path as _P391
+
+_d391 = _P391(_tf391.mkdtemp(prefix="chamnan-check391-"))
+try:
+    _sp391.run(["git", "init", "-q", str(_d391)], capture_output=True, timeout=30)
+    _long391 = _d391 / "src" / ("very_long_directory_name_segment_" * 3) / "inner"
+    _long391.mkdir(parents=True)
+    (_long391 / "mod.py").write_text("# a module\ndef f():\n    return 1\n", encoding="utf-8")
+    (_d391 / "plain.py").write_text("# plain\nx = 1\n", encoding="utf-8")
+    (_d391 / "rlo‮yp.txt.py").write_text("# rlo\nx = 3\n", encoding="utf-8")
+    try:
+        (_d391 / "esc\x1b[31mname.py").write_text("# escaped\nx = 2\n", encoding="utf-8")
+    except OSError:
+        pass                         # a filesystem that refuses control characters in names
+    _run391 = _sp391.run([_sy391.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_d391),
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    _text391 = (_d391 / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+    if str(ROOT / "hooks") not in _sy391.path:
+        _sy391.path.insert(0, str(ROOT / "hooks"))
+    _ss391 = _il391.import_module("chamnan_session_start")
+    _dead391 = _ss391.dead_entries(_d391, _text391)
+    _un391 = _ss391.unindexed(_d391, _text391)
+    check("A FILE SHOWN IN FOLDED FORM, OR BELOW A LONG DIRECTORY, IS NOT CALLED 'NO LONGER EXIST'",
+          _run391.returncode == 0 and _dead391[0] == 0 and _dead391[1] >= 3, saw=(_run391.returncode, _dead391))
+    check("...nor 'not in the index'", _un391[0] == 0, saw=_un391)
+    check("...and the heading names the long directory whole",
+          "very_long_directory_name_segment_" * 3 + "/inner/" in _text391, saw=_text391[:400])
+    (_d391 / "plain.py").unlink()
+    _gone391 = _ss391.dead_entries(_d391, _text391)
+    check("...while a file that really was deleted is still named",
+          _gone391[0] == 1 and _gone391[2] == ["plain.py"], saw=_gone391)
+finally:
+    _sh391.rmtree(_d391, ignore_errors=True)
 # ---- 39_a_pin_buys_share_not_only_order.py
 # ------------------------------------------- a pin that reached the title and stopped there
 # 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
