@@ -222,6 +222,54 @@ def privacy_preview(root, profile, ceiling, payload=None):
         "This preview is not a sandbox and is not a preview of host tool results.\n")
 
 
+def _volatile_normalised(text):
+    """`text` with the lines that move on every commit neutralised, for a "did anything change" test.
+
+    Fence nonces become one fixed token, `Built from <sha>` becomes `Built from SHA`, and the
+    `_Last edited ...`, `_chamnan · ` status and snapshot-note lines are dropped,
+    and trailing whitespace goes. Only ever used to DECIDE whether to write; never written out.
+    """
+    out = []
+    for line in _FENCE.sub(lambda m: m.group(0).replace(m.group(1), "000000"), text).splitlines():
+        if line.startswith(("_Last edited ", "_chamnan · ",
+                            "_This file is a snapshot of the repository as it was on")):
+            continue
+        out.append(re.sub(r"Built from [0-9a-f]{7,40}", "Built from SHA", line).rstrip())
+    return "\n".join(out).strip()
+
+
+def _write_would_change_nothing(root, agent, body):
+    """True when the target already holds this body, ignoring only the per-commit volatile lines.
+
+    Reuses the adapters' own target resolution and reader. A marker-region adapter (`generic`) is
+    compared on its region only; a whole-file shared-writer adapter is compared on the file minus
+    its provenance marker. An adapter with its own merging install is never short-circuited.
+    """
+    adapter = adapters.for_agent(agent)
+    start, end = getattr(adapter, "START", None), getattr(adapter, "END", None)
+    if adapter is None or (hasattr(adapter, "install") and not (start and end)):
+        return False
+    try:
+        with adapters.held_target(root, adapter.TARGET) as target:
+            existing = adapters.read_target(target)
+    except (ValueError, OSError):
+        return False
+    if existing is None:
+        return False
+    new = adapter.render(body)
+    if start and end:
+        _h, opened, rest = existing.partition(start)
+        old, closed, _t = rest.partition(end)
+        if not (opened and closed):
+            return False
+        new = new.partition(start)[2].partition(end)[0]
+    else:
+        keep = lambda t: "\n".join(ln for ln in t.splitlines()
+                                   if not ln.lstrip().startswith(adapters._MARKER_OPENS))
+        old, new = keep(existing), keep(new)
+    return _volatile_normalised(old) == _volatile_normalised(new)
+
+
 def _snapshot_note(root, agent):
     """One line saying how old this file is and how to refresh it.
 
@@ -513,8 +561,17 @@ def main():
         # The command the agent will run at session start, spelled absolutely: the agent's working
         # directory when it fires is its own business, and a relative path would resolve against it.
         run = f"{Path(__file__).resolve()} --emit {args.write}"
+        # 🐛 [2026-10-02] (R5 acc5, 2026-10-02) The pre-commit hook rewrote this file on every
+        # commit although nothing it describes had changed: 694 commits in this repository carry an
+        # AGENTS.md diff, and the last three changed only the `_Last edited <N>h ago` line, the
+        # snapshot note (today's date and the MAP.md commit the same hook just refreshed) and the
+        # fence nonce, which is a digest of the body and so moves whenever those two do. Those
+        # volatile lines are ignored ONLY for the decision to write; when the file IS rewritten it
+        # carries them as always.
+        _unchanged = _write_would_change_nothing(root, args.write, body)
         try:
-            written = adapters.install(root, args.write, body, run)
+            written = (Path(root) / adapters.for_agent(args.write).TARGET if _unchanged
+                       else adapters.install(root, args.write, body, run))
         except ValueError as exc:
             _err(f"chamnan-context: {exc}\n")
             return 1
@@ -525,7 +582,7 @@ def main():
             # user sees at the moment it happens.
             _err(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
             return 1
-        print(f"chamnan-context -> {written}")
+        print(f"chamnan-context -> {written}" + (" (unchanged)" if _unchanged else ""))
         # 🐛 [2026-09-08] Four vendors read their own file AND the root `AGENTS.md` -- Roo Code,
         # Continue.dev, Windsurf/Devin and GitHub Copilot, each confirmed against the vendor's own
         # documentation. A user who ran `--write generic` and then `--write roo` now sends the
