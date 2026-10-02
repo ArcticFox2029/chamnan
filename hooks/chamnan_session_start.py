@@ -2555,6 +2555,9 @@ def main():
         if cfg.get("promote", True):
             try:
                 tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8-sig"))
+            except FileNotFoundError:
+                # A workspace with no tool index is ordinary, not a failure; only a broken one is counted (R216 follow-up, 2026-10-02).
+                tools = []
             except Exception:
                 ws.record_swallowed()
                 tools = []
