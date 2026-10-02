@@ -1439,16 +1439,42 @@ _CODE_EXPRESSION = _lazy(lambda: re.compile(
 _STRING_LITERAL = _lazy(lambda: re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1"""))
 
 
-def _redact_literals_in(expr):
+# 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Cut 1: `api_key = os.environ.get("OPENAI_API_KEY")` came
+# back as `os.environ.get("<REDACTED>")`. The first argument of an environment lookup is a variable
+# NAME by the API's contract, never the secret; only an UPPER_SNAKE literal there is exempt, so
+# `os.getenv("hunter2secretvalue")` and the fallback argument are still redacted.
+_ENV_LOOKUP_OPEN = _lazy(lambda: re.compile(
+    r"^(?:os\s*\.\s*)?(?:getenv\s*\(|environ\s*\.\s*get\s*\(|environ\s*\[)\s*"))
+_ENV_VAR_NAME = _lazy(lambda: re.compile(r"^[A-Z][A-Z0-9_]*$"))
+# 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Cut 2: `ENV_FILE_KEY = re.compile(r"^[A-Z_]{2,}=", re.M)`
+# came back as `re.compile(r"<REDACTED>", re.M)`. The literals of a regex call are patterns, not
+# credentials.
+_REGEX_CALL = _lazy(lambda: re.compile(
+    r"^(?:re|regex)\s*\.\s*(?:compile|match|search|fullmatch|sub|subn|findall|finditer|split)\s*\("))
+
+
+def _redact_literals_in(expr, key=None):
     """`expr` with every quoted literal of six or more characters emptied, or None when there is
     nothing to empty — in which case the caller must leave the expression alone rather than
     replace it wholesale."""
     if not _CODE_EXPRESSION.match(expr):
         return None
+    if _REGEX_CALL.match(expr):
+        return expr
+    env_open = _ENV_LOOKUP_OPEN.match(expr)
+    canonical_key = re.sub(r"[^a-z0-9]+", "", _bare_key(key).lower()) if key else ""
     out, hit = [], False
     last = 0
     for m in _STRING_LITERAL.finditer(expr):
         if len(m.group(2)) < 6:
+            continue
+        if env_open and m.start() == env_open.end() and _ENV_VAR_NAME.match(m.group(2)):
+            continue
+        # 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Cut 3: `"output_tokens": usage.get("output_tokens",
+        # 0),` came back as `usage.get("<REDACTED>", 0)`. A literal equal to the key's own name is
+        # the key repeated as a lookup, unless it is a default credential such as "password".
+        if (canonical_key and re.sub(r"[^a-z0-9]+", "", m.group(2).lower()) == canonical_key
+                and not _is_a_default_credential(m.group(2))):
             continue
         hit = True
         out.append(expr[last:m.start()])
@@ -3249,7 +3275,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     _call = lambda chunk: ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
-        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", chunk)
+        else f"{m.group(1)}{_redact_literals_in(m.group(2), _full_key_at(m)) or PLACEHOLDER}", chunk)
     _bare = lambda chunk: ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
@@ -3276,8 +3302,8 @@ def scrub(text, windowed=True, *, _unmask=True):
         # `_redact_literals_in` rewrites the value instead, what it returns already CONTAINS that
         # tail -- appending it again duplicated the bracket, which the same idempotence relation
         # that found the original bug caught in the fix for it within the hour.
-        else f"{m.group(1)}{_redact_literals_in(m.group(2))}"
-        if _redact_literals_in(m.group(2))
+        else f"{m.group(1)}{_redact_literals_in(m.group(2), _full_key_at(m))}"
+        if _redact_literals_in(m.group(2), _full_key_at(m))
         else f"{m.group(1)}{PLACEHOLDER}"
              f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
 
