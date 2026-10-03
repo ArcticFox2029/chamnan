@@ -91,7 +91,7 @@ def _bound_locally(fn):
 def in_source(text, symbol):
     """[(lineno, kind)] for every real use of `symbol` in one module's source.
 
-    `kind` is "call", "attribute" or "def". A name inside a string, a comment or a docstring is
+    `kind` is "call", "attribute", "reference", "export" or "def". A name inside a string, a comment or a docstring is
     none of those, and a call inside a function that binds the same name is not this symbol.
     """
     # 🐛 [2026-09-30] (R68 acc2, 2026-09-30) `ast.parse` is quadratic in the f-string count on
@@ -130,6 +130,7 @@ def in_source(text, symbol):
         hot = [i for i, line in enumerate(lines, 1)
                if symbol in line or sym in unicodedata.normalize("NFKC", line)]
     out = []
+    called = set()          # ids of Name nodes already reported as a call's `.func`
     stack = [(tree, False)]
     while stack:
         n, shadowed = stack.pop()
@@ -142,16 +143,45 @@ def in_source(text, symbol):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             if sym in _bound_locally(n):
                 shadowed = True
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == sym:
+        # 🐛 [2026-10-03] (R6 acc5, 2026-10-03) A class statement is a declaration like a def:
+        # `class StaleError(Exception): pass` printed "no use of `StaleError`". The lexical path
+        # already names class declarations; Python was the member of the set left out.
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == sym:
             out.append((n.lineno, "def"))
         elif isinstance(n, ast.Call) and not shadowed:
             f = n.func
             if isinstance(f, ast.Name) and f.id == sym:
                 out.append((n.lineno, "call"))
+                called.add(id(f))
             elif isinstance(f, ast.Attribute) and f.attr == sym:
                 out.append((n.lineno, "attribute"))
+        # 🐛 [2026-10-03] (R6 acc5, 2026-10-03) A name READ as a value is a use: `class N(StaleError)`,
+        # `isinstance(v, StaleError)`, `except StaleError:`, `def f() -> StaleError`,
+        # `callbacks = [helper]`, `handler = helper` all printed nothing, so `chamnan-where StaleError`
+        # said "no use" with six real ones. A Call's own `.func` is already a "call"; an import is an
+        # alias node, not a Name, and stays excluded.
+        elif (isinstance(n, ast.Name) and n.id == sym and isinstance(n.ctx, ast.Load)
+              and not shadowed and id(n) not in called):
+            out.append((n.lineno, "reference"))
         for child in ast.iter_child_nodes(n):
             stack.append((child, shadowed))
+    # 🐛 [2026-10-03] (R6 acc5, 2026-10-03) A name listed in a module-level `__all__` is reached by
+    # `from m import *` and by name, with no call the parser can see. Fixture: `plugins.py` holds
+    # `__all__ = ["handle_import"]` and `chamnan-where handle_import` printed only `def plugins.py:N`,
+    # so the function looked unused. The element is reported as an "export" at its own line.
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            names = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
+        elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)) and isinstance(stmt.target, ast.Name):
+            names = [stmt.target.id]
+        else:
+            continue
+        if "__all__" not in names or not isinstance(stmt.value, (ast.List, ast.Tuple)):
+            continue
+        for elt in stmt.value.elts:
+            if (isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                    and unicodedata.normalize("NFKC", elt.value) == sym):
+                out.append((elt.lineno, "export"))
     return sorted(set(out))
 
 
@@ -475,7 +505,32 @@ def in_text(text, symbol, lang, line_comments):
     return out
 
 
-def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "site-packages")):
+# 🐛 [2026-10-03] (R6 acc5, 2026-10-03) A function installed as a command is reached by a string in
+# `pyproject.toml` (`mytool = "plugins:handle_export"`), which no parser of Python sees, so
+# `chamnan-where handle_export` printed only its `def`. A line naming `module.path:symbol` is
+# reported as an "entry point". The pattern is lexical, not a TOML parser.
+_ENTRY_FILES = ("pyproject.toml", "setup.cfg")
+
+
+def in_entry_points(text, symbol):
+    """[(lineno, "entry point")] for every `module:symbol` reference in a pyproject.toml/setup.cfg."""
+    pat = re.compile(r"[\w.]+:" + re.escape(symbol) + r"(?![\w])")
+    return [(i, "entry point") for i, line in enumerate(text.splitlines(), 1) if pat.search(line)]
+
+
+# 🐛 [2026-10-03] (R6 acc5, 2026-10-03) Fixture: `main.py` does `getattr(plugins, "handle_" + kind)(x)`
+# and `handle_export` is reached that way, which the parser cannot see. A file that looks a name up
+# with a computed (non-literal) argument is counted in `seen["dynamic"]` so the caller can say that
+# an absence is not a proof. A lexical regex, not a parser: it only needs to decide whether the
+# name argument is a lone string literal.
+_LIT = r"(?:\"[^\"\n]*\"|'[^'\n]*')\s*[,)]"
+_DYNAMIC = re.compile(
+    r"\bgetattr\(\s*[^,\n]+,\s*(?!" + _LIT + r")\S"
+    r"|(?<!def )\b(?:import_module|__import__)\(\s*(?!" + _LIT + r")\S")
+
+
+def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "site-packages"),
+         seen=None):
     """[(relpath, lineno, kind)], the count of files not judged, and how each answer was reached.
 
     The second number is the honest half: a file that could not be parsed, or was too big, is not
@@ -489,6 +544,7 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
     the same reason `mapper`'s coverage line reports how many rows carried a claim nothing checked.
     """
     found, unjudged, how = [], 0, {"exact": 0, "lexical": 0}
+    dynamic = 0
     root_real = os.path.realpath(str(root))
     ext_lang = line_comments = None
 
@@ -503,7 +559,8 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
         dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
         for name in names:
             ext = os.path.splitext(name)[1].lower()
-            if ext != ".py":
+            entry = name in _ENTRY_FILES
+            if ext != ".py" and not entry:
                 # The tables load once, and only if this repository actually holds a file in one of
                 # the other languages -- a pure-Python tree never pays `mapper`'s 124 ms.
                 if ext_lang is None:
@@ -529,6 +586,8 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                     continue
                 with open(p, "r", encoding="utf-8", errors="replace") as fh:
                     body = fh.read()
+                if ext == ".py" and _DYNAMIC.search(body):
+                    dynamic += 1
                 # 🎯 [2026-09-23] Both answers below look for the identifier SPELLED OUT: the parser
                 # finds `Name`/`Attribute`/`arg` nodes whose id is this string, and the lexical pass
                 # word-boundary matches it. Neither can find a name whose characters are not in the
@@ -556,6 +615,8 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                     continue
                 if ext == ".py":
                     hits, method = in_source(body, symbol), "exact"
+                elif entry:
+                    hits, method = in_entry_points(body, symbol), "lexical"
                 else:
                     lang = ext_lang[ext]
                     hits = in_text(body, symbol, lang, line_comments.get(lang, ()))
@@ -582,4 +643,8 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
             rel = os.path.relpath(p, str(root)).replace(os.sep, "/")
             for lineno, kind in hits:
                 found.append((rel, lineno, kind))
+    # `how` stays a count of methods; a runtime-lookup count is not a method, so it goes to the
+    # caller's optional `seen` dict.
+    if seen is not None:
+        seen["dynamic"] = dynamic
     return sorted(found), unjudged, how

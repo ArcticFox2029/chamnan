@@ -65,11 +65,21 @@ def main(argv):
 
     symbol = argv[0]
     root = ws.find_root() or Path(os.getcwd())
-    hits, unjudged, how = refs.find(root, symbol)
+    seen = {}
+    hits, unjudged, how = refs.find(root, symbol, seen=seen)
     # Which method reached the answer is part of the answer, and it is said whether or not anything
     # was found: "no use, and every file was read by a parser" and "no use, and 400 files were read
     # by a scanner that cannot see through a heredoc" are different claims.
     scope = _scope(how)
+    # 🐛 [2026-10-03] (R6 acc5, 2026-10-03) Fixture: `getattr(plugins, "handle_" + kind)(x)` reaches
+    # `handle_export` with nothing a parser can follow, so a bare `def` (or no hit) read as "unused".
+    # Said whenever the only evidence is a definition or none, and not otherwise.
+    def _dynamic_note():
+        if seen.get("dynamic") and all(k == "def" for _r, _l, k in hits):
+            print(f"  {seen['dynamic']} Python file(s) look names up at runtime (getattr or import_module "
+                  f"with a computed name); a use reached that way is invisible to a parser, so this is "
+                  f"not a proof that nothing calls it.")
+
     if not hits:
         print(f"chamnan: no use of `{symbol}` under {Path(root).name}/. {scope}")
         if unjudged:
@@ -77,6 +87,7 @@ def main(argv):
         # R177: a sparse checkout lacks files outside its set, so a use may sit where nothing was read.
         if ws.is_sparse(root):
             print("  This checkout is sparse: files outside it were not read, so this is not a proof of absence.")
+        _dynamic_note()
         return 0
 
     by_kind = {}
@@ -85,10 +96,13 @@ def main(argv):
     print(f"chamnan: {len(hits)} use(s) of `{symbol}`")
     # `use` last and named for what it is: the lexical scanner cannot tell a declaration from a
     # call, and printing one under "call" would send a reader looking for a caller.
-    for kind in ("def", "call", "attribute", "use"):
+    # 🐛 [2026-10-03] (R6 acc5, 2026-10-03) "export" (`__all__`) and "entry point" (pyproject.toml,
+    # setup.cfg) are real reaches that no call shows; column widened to fit `entry point`.
+    for kind in ("def", "call", "attribute", "reference", "export", "entry point", "use"):
         for one in by_kind.get(kind, []):
-            print(f"  {kind:9} {one}")
+            print(f"  {kind:11} {one}")
     print(f"  {scope}")
+    _dynamic_note()
     if unjudged:
         print(f"  ({unjudged} file(s) too large or unparseable — not judged, not absent)")
     return 0
