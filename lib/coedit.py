@@ -482,7 +482,10 @@ def _ago(seconds):
     """
     if seconds < 3600:
         return "<1h"
-    if seconds < 36 * 3600:
+    # 🐛 [2026-10-03] (R9 acc5, 2026-10-03) The hour branch used to end at 36h, so the label went from
+    # "35h" to "1d" (36h // 86400 == 1): an age that grows read as getting younger. Ending at 48h
+    # makes the next label "2d", which is exact, so nothing is rounded up and nothing goes backwards.
+    if seconds < 48 * 3600:
         return "%dh" % (seconds // 3600)
     return "%dd" % (seconds // 86400)
 
