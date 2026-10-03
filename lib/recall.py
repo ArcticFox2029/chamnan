@@ -26,6 +26,7 @@ and a food keyword resolved ชีสเค้ก to เค้ก. A query that 
 looked for whole, which is slower per term and cannot be wrong in that way.
 """
 import math
+import os
 import re
 import unicodedata
 
@@ -304,7 +305,19 @@ def _entry(ws_dir, path, kind, weight, prev=None):
     except OSError:
         return None
     mtime, size = st.st_mtime_ns, st.st_size
+    # 🐛 [2026-10-03] (R25 acc5, 2026-10-03) restic trusted an equal path, size and restored mtime
+    # and missed changed contents; the same hole was here. Reproduced: index a note saying
+    # ALPHAWORD with `chamnan-recall --reindex`, rewrite it to BRAVOWORD (same byte length), restore
+    # its mtime with `os.utime(p, ns=(atime, mtime))` (what `cp -p`, `rsync -a`, tar and unzip do),
+    # `--reindex` again: the old entry was reused, `chamnan-recall BRAVOWORD` found nothing and
+    # ALPHAWORD still matched. The inode change time (`ctime`) cannot be set by `os.utime`, so any
+    # rewrite moves it. It joins the reuse key, and `build()`/`stale_by()` count it too. POSIX only:
+    # on Windows `st_ctime` is the creation time and never moves on a write, so there it adds
+    # nothing and no `ctime` field is stored. An entry from an older index has no `ctime` and is
+    # rebuilt once -- the safe direction.
+    ctime = None if os.name == "nt" else st.st_ctime_ns
     if (isinstance(prev, dict) and prev.get("mtime") == mtime and prev.get("size") == size
+            and (ctime is None or prev.get("ctime") == ctime)
             and all(k in prev for k in _REUSABLE_ENTRY_FIELDS)):
         return dict(prev)
     try:
@@ -342,6 +355,7 @@ def _entry(ws_dir, path, kind, weight, prev=None):
         "text": _non_ascii_lines(text),
         "mtime": mtime,
         "size": size,
+        **({} if ctime is None else {"ctime": ctime}),
     }
 
 
@@ -522,7 +536,8 @@ def build(ws, previous=None):
             e = _entry(ws, path, kind, weight, prev_by_path.get(rel))
             if e:
                 entries.append(e)
-                newest = max(newest, e["mtime"])
+                # `ctime` counts too on POSIX (see `_entry`): `stale_by` compares against this.
+                newest = max(newest, e["mtime"], e.get("ctime", 0))
     entries += _tool_entries(ws)
     entries += _symbol_entries(ws)
 
@@ -559,7 +574,7 @@ def build(ws, previous=None):
 
 
 def stale_by(ws, index):
-    """How many store files are newer than the index. Reads mtimes only, never contents.
+    """How many store files are newer than the index. Reads mtimes (and ctimes on POSIX), never contents.
 
     A directory listing is not a scan: `stat` on 55 paths is microseconds and reads no bytes, which
     is the difference between reporting staleness and paying for a rebuild to discover it.
@@ -569,7 +584,10 @@ def stale_by(ws, index):
     for folder, _kind, _w in KINDS:
         for path in paths_for(ws, folder):
             try:
-                if path.stat().st_mtime_ns > newest:
+                st = path.stat()
+                # The inode change time catches a rewrite whose mtime was restored afterward
+                # (R25 acc5, see `_entry`); on Windows it is the creation time, so it is skipped.
+                if st.st_mtime_ns > newest or (os.name != "nt" and st.st_ctime_ns > newest):
                     behind += 1
             except OSError:
                 continue
