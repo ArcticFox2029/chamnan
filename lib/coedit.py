@@ -188,52 +188,6 @@ def _sequence(wsdir):
     return out
 
 
-def contested(wsdir, window=WINDOW, since_days=MAX_AGE_DAYS):
-    """[(path, [actors])] for files two or more DIFFERENT actors wrote inside `window` edits.
-
-    🎯 [R43 #5, and the owner's direction A] Measured on real GitHub history: pull requests from
-    different agents conflict 41.7% of the time against 19.8% when they come from the same one. The
-    question that follows — *did two agents just write the same file* — could not be asked here
-    because `edits.jsonl` recorded only a time and a path. It records who since 2026-09-23.
-
-    **This is the reader that justifies the field.** A log nobody queries is weight, not evidence,
-    and the field was added with this in the same change rather than on the promise of a later one.
-
-    Why the WINDOW rather than the whole log: two agents editing one file a week apart is ordinary
-    work on a shared codebase. Inside five edits of each other is the shape that loses one of them.
-
-    The main thread counts as an actor, under the name `session`. A subagent overwriting what the
-    session just wrote is the same defect as two subagents doing it, and leaving the main thread out
-    would hide the commonest case — which is the mistake `_de_silent`'s own comment records in a
-    different form: an exemption needs a reason, and this one would have had none.
-    """
-    cutoff = time.time() - since_days * 86400
-    rows = []
-    try:
-        with (wsdir / LOG).open(encoding="utf-8-sig", errors="replace") as fh:
-            for line in fh:
-                try:
-                    rec = json.loads(line)
-                except (ValueError, RecursionError):
-                    continue
-                if not isinstance(rec, dict) or not rec.get("fp"):
-                    continue
-                if (rec.get("at") or 0) < cutoff:
-                    continue
-                rows.append((rec["fp"], rec.get("ag") or rec.get("ty") or "session"))
-    except OSError:
-        return []
-    out = {}
-    for i, (fp, who) in enumerate(rows):
-        # Look BACK over the window rather than forward, so one pass answers it and a file edited
-        # at the very end of the log is treated like any other.
-        near = {w for f, w in rows[max(0, i - window):i] if f == fp}
-        if near and near != {who}:
-            out.setdefault(fp, set()).update(near | {who})
-    return sorted(((fp, sorted(who)) for fp, who in out.items()),
-                  key=lambda r: (-len(r[1]), r[0]))
-
-
 def partners(wsdir, path, window=WINDOW):
     """[(other_path, times, confidence)] for files usually edited right after `path`.
 
