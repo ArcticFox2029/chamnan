@@ -2171,6 +2171,24 @@ def _newer_version_has_been_here(root):
         return False
 
 
+_NOT_CHAMNANS_WARNED = set()
+
+
+def _near_config_key(key):
+    """True when `key` is a near-miss spelling of a real config key (the typo path keeps those)."""
+    import difflib
+    return bool(difflib.get_close_matches(str(key), list(DEFAULT_CONFIG), n=1, cutoff=CONFIG_TYPO_CUTOFF))
+
+
+def _warn_config_not_chamnans(path):
+    key = str(path)
+    if key in _NOT_CHAMNANS_WARNED:
+        return
+    _NOT_CHAMNANS_WARNED.add(key)
+    print(f"chamnan: {path} is not a chamnan config (none of its keys are chamnan's), so it was "
+          f"left as it is and defaults are in use.", file=sys.stderr)
+
+
 def ensure(root=None):
     ws = workspace(root)
     # 🐛 `chamnan-map --preview`'s own --help says it "writes nothing", and in a repository that had
@@ -2262,6 +2280,19 @@ def ensure(root=None):
             current = None
         if not isinstance(current, dict):
             current = {}
+        # 🐛 [2026-10-03] (R12 acc5, 2026-10-03) The merge below keeps only keys that are in
+        # DEFAULT_CONFIG, so a config.json that is not chamnan's at all was rewritten as chamnan's
+        # defaults. Reproduced: a repository whose `.chamnan` is a symlink to a directory outside
+        # it already holding `{"auths": {"keep": "me"}}` (the shape of Docker's config); the
+        # SessionStart hook, which needs no user action, replaced that file with the default
+        # config and every foreign key was gone. A non-empty object sharing no key with
+        # DEFAULT_CONFIG -- not even a near-miss typo of one -- is somebody else's file: it is left
+        # byte-for-byte as it is and the run goes on defaults. `{}` is not covered: it is a chamnan
+        # config being created, and keeps today's behaviour.
+        if current and not any(
+                k in DEFAULT_CONFIG or _near_config_key(k) for k in current):
+            _warn_config_not_chamnans(cfg)
+            return None
         merged = dict(DEFAULT_CONFIG)
         # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale
         # option cannot sit in the file looking as though it still does something.

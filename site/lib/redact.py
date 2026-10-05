@@ -632,6 +632,13 @@ _NONENGLISH_SECRET_WORDS_SPELLED_WORDS = [
 
 # The names that mean "a credential lives here". Written once and shared by the assignment
 # patterns below, which had drifted -- one had gained spellings the other had not.
+# 🐛 [2026-10-01] (R181 acc4, 2026-09-30) An unbounded run of word characters next to SECRET_WORDS
+# made scrub quadratic on a line of repeated secret words: "key-" * n took 27 s at 8,000 chars,
+# "token-" * n 6.9 s, "secret-key-" * n 4.6 s. This is a key name: across 4,167 tracked files, 3,651
+# secret-word keys all had a tail under 32 characters, so 64 is twice the longest real one, and a
+# bounded run keeps the cost per start position constant.
+KEY_RUN_MAX = 64
+
 _LATIN_SECRET_WORDS = (
     # Each one a whole COMPONENT of the name, with a plural allowed. These were bare substrings
     # while `key` and `auth` beside them were carefully bounded -- the same bug, left in the words
@@ -677,7 +684,11 @@ _LATIN_SECRET_WORDS = (
     # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
     # the identifier family this module's own docstring says was already fixed once. The credential
     # spellings — access_token, auth_token, api_token, refresh_token — all carry one.
-    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]tokens?(?![A-Za-z])"
+    # 🐛 [2026-10-05] (R26 acc5, 2026-10-05) These name runs were unbounded, so `API_KEY=<8,000
+    # hex>` took 3.4 s to scrub: each start position in an unbroken alphanumeric run backtracked to
+    # its end. R181 bounded `_KEY_RUN` and left these seven; they now share KEY_RUN_MAX (R72 acc4
+    # measured the shape of the bound). Check 408 pins the cost curve and the recall.
+    r"|(?<![A-Za-z])[A-Za-z0-9]{1," + str(KEY_RUN_MAX) + r"}[_-]tokens?(?![A-Za-z])"
     # \U0001f41b [2026-09-11] ...and the same component on the OTHER side. `token` and `key`
     # require a neighbour, for the measured reason above -- but the rule only ever looked LEFT,
     # so `TOKEN_A=`, `TOKEN_B=`, `KEY_OLD=` and `TOKEN_PROD=` had no rule at all while
@@ -703,7 +714,7 @@ _LATIN_SECRET_WORDS = (
     # A leading component is what separates a credential from the statement — `ansible_ssh_pass`
     # from `    pass` — and it costs nothing on the secret side, because every real spelling of
     # this one carries a prefix (R1 agent 2, 2026-09-09).
-    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]pass(?:words?)?(?![A-Za-z])"
+    r"|(?<![A-Za-z])[A-Za-z0-9]{1," + str(KEY_RUN_MAX) + r"}[_-]pass(?:words?)?(?![A-Za-z])"
     # \U0001f41b [2026-09-11] ...and the same word in SCREAMING_CASE, which the separator rule above
     # cannot reach and which the 2026-09-10 fix gave to `TOKEN` and `KEY` and not to this one.
     # `PASS=hunter2`, `DBPASS=`, `FTPPASS=` and `MYSQLPASS=` all passed through byte for byte, beside
@@ -720,14 +731,14 @@ _LATIN_SECRET_WORDS = (
     # in "pass" are a closed one. `BYPASS=1` being destroyed is the same damage as `MONKEY_PATCH=1`.
     # Written as a lookahead on the WHOLE word, so `BYPASSKEY` is still caught rather than smuggled.
     r"|(?-i:(?<![A-Za-z])(?!(?:BY|COM|ENCOM|OVER|SUR|TRES|UNDER|RE|OUT)PASS(?:ES)?(?![A-Z0-9]))"
-    r"[A-Z0-9]*PASS(?:WORD)?S?)(?![A-Za-z])"
+    r"[A-Z0-9]{0," + str(KEY_RUN_MAX) + r"}PASS(?:WORD)?S?)(?![A-Za-z])"
     # `PWD` and `CRED` are the same omission one size down. Both are caught bare and after a
     # separator, and neither was reachable with a SCREAMING prefix run against it -- `DBPWD=` and
     # `APICRED=` beside `DB_PWD=` and `API_CRED=`, which were. A prefix is REQUIRED here, unlike
     # `PASS` above, because three and four letters land inside real words too easily to give up the
     # left boundary; `SACRED` is the one English word that ends in `CRED` and it is excluded by name.
-    r"|(?-i:(?<![A-Za-z])[A-Z0-9]+PWDS?)(?![A-Za-z])"
-    r"|(?-i:(?<![A-Za-z])(?!SACRED(?![A-Z0-9]))[A-Z0-9]+CREDS?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z])[A-Z0-9]{1," + str(KEY_RUN_MAX) + r"}PWDS?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z])(?!SACRED(?![A-Z0-9]))[A-Z0-9]{1," + str(KEY_RUN_MAX) + r"}CREDS?)(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
     # \U0001f41b [2026-09-11] `Pwd`, `Cred`, `Storepass` and `Keypass` were absent from this list
@@ -763,7 +774,7 @@ _LATIN_SECRET_WORDS = (
     # exactly the shape someone would reach for to get a name past a filter. `S?(?![A-Z0-9])` is
     # what makes it "this word IS monkey" rather than "this word starts with monkey".
     r"|(?-i:(?<![A-Za-z])(?!(?:MON|DON|TUR|HOC|JOC|WHIS|LAC|MIC|MALAR)KEYS?(?![A-Z0-9]))"
-    r"[A-Z0-9]+KEYS?)(?![A-Za-z])"
+    r"[A-Z0-9]{1," + str(KEY_RUN_MAX) + r"}KEYS?)(?![A-Za-z])"
     # `key` as a whole COMPONENT of the name, not the four compound spellings that were listed by
     # hand. ssh_key, signing_key, encryption_key, master_key and db_key all passed through
     # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
@@ -777,7 +788,7 @@ _LATIN_SECRET_WORDS = (
     # component (api_key, ssh_key, AccountKey), so requiring one costs nothing on the secret side
     # and stops the single largest source of damage on the other. `password`, `secret` and
     # `credential` keep their bare form, because `password = "…"` really is one.
-    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]keys?(?![A-Za-z])"
+    r"|(?<![A-Za-z])[A-Za-z0-9]{1," + str(KEY_RUN_MAX) + r"}[_-]keys?(?![A-Za-z])"
     r"|(?<![A-Za-z])keys?[_-][A-Za-z0-9]+(?![A-Za-z])"
     # ...and the same component written in CamelCase, where there is no separator to anchor on:
     # AccountKey, ApiKey, PrivateKey. `(?-i:...)` turns the surrounding re.I off for this branch
@@ -968,12 +979,6 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
 # slice; that slice was 7 of 8 before this line, and the one it missed was this.
 _KV_SEP = r"[:=\uFF1A\uFF1D]"
 
-# 🐛 [2026-10-01] (R181 acc4, 2026-09-30) An unbounded run of word characters next to SECRET_WORDS
-# made scrub quadratic on a line of repeated secret words: "key-" * n took 27 s at 8,000 chars,
-# "token-" * n 6.9 s, "secret-key-" * n 4.6 s. This is a key name: across 4,167 tracked files, 3,651
-# secret-word keys all had a tail under 32 characters, so 64 is twice the longest real one, and a
-# bounded run keeps the cost per start position constant.
-KEY_RUN_MAX = 64
 _KEY_RUN = r"[\w-]{0,%d}" % KEY_RUN_MAX
 
 _BETWEEN_NAME_AND_VALUE = (
@@ -1439,16 +1444,42 @@ _CODE_EXPRESSION = _lazy(lambda: re.compile(
 _STRING_LITERAL = _lazy(lambda: re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1"""))
 
 
-def _redact_literals_in(expr):
+# 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Cut 1: `api_key = os.environ.get("OPENAI_API_KEY")` came
+# back as `os.environ.get("<REDACTED>")`. The first argument of an environment lookup is a variable
+# NAME by the API's contract, never the secret; only an UPPER_SNAKE literal there is exempt, so
+# `os.getenv("hunter2secretvalue")` and the fallback argument are still redacted.
+_ENV_LOOKUP_OPEN = _lazy(lambda: re.compile(
+    r"^(?:os\s*\.\s*)?(?:getenv\s*\(|environ\s*\.\s*get\s*\(|environ\s*\[)\s*"))
+_ENV_VAR_NAME = _lazy(lambda: re.compile(r"^[A-Z][A-Z0-9_]*$"))
+# 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Cut 2: `ENV_FILE_KEY = re.compile(r"^[A-Z_]{2,}=", re.M)`
+# came back as `re.compile(r"<REDACTED>", re.M)`. The literals of a regex call are patterns, not
+# credentials.
+_REGEX_CALL = _lazy(lambda: re.compile(
+    r"^(?:re|regex)\s*\.\s*(?:compile|match|search|fullmatch|sub|subn|findall|finditer|split)\s*\("))
+
+
+def _redact_literals_in(expr, key=None):
     """`expr` with every quoted literal of six or more characters emptied, or None when there is
     nothing to empty — in which case the caller must leave the expression alone rather than
     replace it wholesale."""
     if not _CODE_EXPRESSION.match(expr):
         return None
+    if _REGEX_CALL.match(expr):
+        return expr
+    env_open = _ENV_LOOKUP_OPEN.match(expr)
+    canonical_key = re.sub(r"[^a-z0-9]+", "", _bare_key(key).lower()) if key else ""
     out, hit = [], False
     last = 0
     for m in _STRING_LITERAL.finditer(expr):
         if len(m.group(2)) < 6:
+            continue
+        if env_open and m.start() == env_open.end() and _ENV_VAR_NAME.match(m.group(2)):
+            continue
+        # 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Cut 3: `"output_tokens": usage.get("output_tokens",
+        # 0),` came back as `usage.get("<REDACTED>", 0)`. A literal equal to the key's own name is
+        # the key repeated as a lookup, unless it is a default credential such as "password".
+        if (canonical_key and re.sub(r"[^a-z0-9]+", "", m.group(2).lower()) == canonical_key
+                and not _is_a_default_credential(m.group(2))):
             continue
         hit = True
         out.append(expr[last:m.start()])
@@ -3249,7 +3280,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     _call = lambda chunk: ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
-        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", chunk)
+        else f"{m.group(1)}{_redact_literals_in(m.group(2), _full_key_at(m)) or PLACEHOLDER}", chunk)
     _bare = lambda chunk: ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
@@ -3276,8 +3307,8 @@ def scrub(text, windowed=True, *, _unmask=True):
         # `_redact_literals_in` rewrites the value instead, what it returns already CONTAINS that
         # tail -- appending it again duplicated the bracket, which the same idempotence relation
         # that found the original bug caught in the fix for it within the hour.
-        else f"{m.group(1)}{_redact_literals_in(m.group(2))}"
-        if _redact_literals_in(m.group(2))
+        else f"{m.group(1)}{_redact_literals_in(m.group(2), _full_key_at(m))}"
+        if _redact_literals_in(m.group(2), _full_key_at(m))
         else f"{m.group(1)}{PLACEHOLDER}"
              f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
 
