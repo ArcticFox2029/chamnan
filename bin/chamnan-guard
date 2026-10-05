@@ -339,7 +339,7 @@ def scan_bytecode(root):
         if not path.lower().endswith((".pyc", ".pyo")):
             continue
         try:
-            blob = subprocess.run(["git", "-C", str(root), "show", ":" + path],
+            blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob", ":" + path],
                                   capture_output=True, stdin=subprocess.DEVNULL,
                                   timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
