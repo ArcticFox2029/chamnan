@@ -30,6 +30,8 @@ Never imports or executes the code it reads.
 import ast
 import codecs
 import fnmatch
+import hashlib
+import json
 import os
 import subprocess
 import warnings
@@ -2518,6 +2520,52 @@ def _built_by():
     return f" Built by chamnan {v}." if v else ""
 
 
+def scrub_map_text(text, root):
+    """🎯 [2026-10-05] (R91 acc5, 2026-10-05) Scrub `text` section by section, reusing a cache.
+
+    The whole-text scrub cost 5.8-7.0 s of the 11.2 s map refresh (R172). Content-defined chunking
+    reuses every chunk an edit did not touch; MAP.md's `## ` sections are its natural content
+    boundaries (896 on the Lumin-App workspace, median 217 characters); scrubbing them one by one
+    was byte-equal to the whole-text scrub on the real 583,753-character file. A section boundary
+    is a generated heading line, so no credential can span it. The cache lives in logs/ because it
+    is derived, rebuilt on any miss, and must never be committed. Check 423.
+    """
+    parts = re.split(r"(?=\n## )", text)
+    wsdir = ws.workspace(root)
+    if not Path(wsdir).is_dir():
+        return "".join(redact.scrub(p) for p in parts)
+    import recall  # lazy: only a workspace has a cache, and recall's fingerprint is the one key
+    ident = recall.scrubber_id()
+    if ident == "unknown":
+        return "".join(redact.scrub(p) for p in parts)
+    path = Path(wsdir) / "logs" / "map_scrub_cache.json"
+    old = {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (isinstance(data, dict) and data.get("scrubber") == ident
+                and isinstance(data.get("parts"), dict)):
+            old = data["parts"]
+    except (OSError, ValueError, RecursionError):
+        old = {}
+    fresh = {}
+    out = []
+    for p in parts:
+        key = hashlib.sha1(p.encode("utf-8")).hexdigest()
+        got = old.get(key)
+        if not isinstance(got, str):
+            got = redact.scrub(p)
+        fresh[key] = got
+        out.append(got)
+    # `--preview` and CHAMNAN_READ_ONLY promise no writes; the cache is skipped, not the scrub.
+    if not ws.read_only():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            ws.atomic_write_text(path, json.dumps({"scrubber": ident, "parts": fresh}))
+        except OSError:
+            pass  # a failed write only costs a full scrub next time
+    return "".join(out)
+
+
 def _render(files, root):
     total_chars = sum(f["chars"] for f in files)
     lines = [
@@ -2693,4 +2741,4 @@ def _render(files, root):
     # emoji in comments — it changes **0 of 392,293 characters**. What it would change is what
     # nobody wrote on purpose. ZWJ, ZWNJ and the bidi MARKS are deliberately not in that table; see
     # `redact._TERMINAL_SAFE`, which argues that case at length and is right.
-    return redact.for_a_terminal(redact.scrub(text))
+    return redact.for_a_terminal(scrub_map_text(text, root))

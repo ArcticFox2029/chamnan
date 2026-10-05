@@ -1,0 +1,494 @@
+"""`.chamnan/tools/index.json` — the registry `chamnan-promote` writes and chamnan_session_start.py reads.
+
+Extracted out of `bin/chamnan-promote` so a second writer (`chamnan-candidates promote`, which
+installs a tool skeleton from a confirmed candidate rather than copying an existing script) reuses
+the exact same read/append/format logic instead of a second, slightly different copy of it. Two
+JSON-append implementations drifting apart is exactly the kind of bug this repo has been burned by
+before with concurrent writers of a shared file — see `main_app_concurrent_file_writes.md` in the
+repo this plugin is developed against, though that specific failure mode (two threads writing at
+once) does not apply here, since every caller is a short-lived CLI invocation, never long-running.
+
+The schema is deliberately small: `name`, `desc`, `added` (ISO timestamp), `origin` (where the
+content came from — a file path for a promoted script, `"candidate:<slug>"` for one generated from
+a detected sequence), `runs` (a usage counter `record_call()` increments on every matched Bash
+call and `usage()` reads back for `chamnan-report`'s Usage section), `interrupted` and
+`stderr_seen` (Stage 10's two honest signals, below).
+
+**There is no exit code to track, and this module does not pretend otherwise.** Confirmed against
+another installed plugin's own comment stating the exact fact twice over: a Bash `tool_response`
+carries only `stdout`, `stderr` and `interrupted` — never a numeric status. `record_call()` counts
+the two signals that ARE real: `interrupted` (the call was killed or timed out — an unambiguous
+fact) and `stderr_seen` (the call wrote to stderr at all — a WEAK signal, since plenty of correct
+commands write progress or warnings there too). Neither is reported as "the tool failed"; both are
+reported as exactly what they are, and a human reading a flag decides what it means. This is the
+same discipline Stage 8's promotion classifier already applies to itself: state the real signal and
+its limits, never invent a confidence number to paper over not having one.
+"""
+import json
+import pathlib
+from datetime import datetime
+
+import redact
+import workspace as ws
+
+# Three of the same signal in a row is worth a look; matches REPEAT_AT elsewhere in this plugin
+# (workflows.py, chamnan_scratch_watch.py) rather than inventing a fourth threshold value to justify.
+FLAG_AT = 3
+
+# 🐛 [2026-09-04] `stderr_seen` no longer raises the flag, and this is the measurement that took it
+# out. `runs` and `stderr_seen` were EQUAL for every tool in a real workspace:
+#
+#     session_block_size.py   runs=4  stderr_seen=4
+#     extract_findings.py     runs=5  stderr_seen=5
+#     silent_probe.py         runs=1  stderr_seen=1   <- its entire body is print("ok")
+#
+# A script whose only statement writes one line to stdout cannot produce stderr, and it was counted
+# anyway. So in at least one shipped harness the `stderr` field of a Bash `tool_response` is never
+# empty -- it appears to carry the host's own trailing notice, not the command's output -- and the
+# counter is a constant, not a signal. Every promoted tool crossed the threshold on its third run
+# and was reported as "worth a look" for behaving correctly.
+#
+# The docstring above called it "a WEAK signal". Weak would be survivable. A constant is worse: it
+# fires on everything, which trains a reader to ignore the notice, which costs the `interrupted`
+# signal beside it -- and that one IS real, because a killed or timed-out call is an unambiguous
+# fact the harness genuinely reports.
+#
+# It is still COUNTED, and still printed by chamnan-report, because the number is evidence about
+# the harness and someone should be able to see it. It just cannot raise an alarm on its own.
+
+
+def path(root):
+    from workspace import workspace
+    return workspace(root) / "tools" / "index.json"
+
+
+def load(root):
+    """The index, or [] — never a shape a reader has to check for itself.
+
+    🐛 This returned whatever the file happened to parse to, and five readers here index it as a
+    list of dicts. `index.json` holding `{}` — a hand-edit, a bad merge, a half-written file — made
+    `usage()` iterate the dict's KEYS and then subscript a string, so `chamnan-report` died with a
+    TypeError instead of reporting. Three sibling readers of other stores already guard their shape
+    and this one did not, which is this repository's recurring defect: the same rule applied to some
+    members of a set (R1 agent 4).
+
+    Entries that are not dicts are dropped rather than taking the file down with them: a list with
+    one bad row is still nine good tools, and losing the file loses the run counters too.
+
+    🐛 [2026-09-06] And an entry with NO `name` is dropped too, which is the same rule one level
+    down. The dict guard above was added and the field it exists to protect was not: `usage()` still
+    did `e["name"]`, and `[{"runs": 5}]` — a hand-edit, a bad merge, a half-written file, the same
+    causes the dict guard names — took `chamnan-report` down with a KeyError instead of reporting.
+    Five readers here subscript that field. Filtered ONCE, here, rather than guarded at each of the
+    five, because guarding five call sites is how this repository keeps arriving back at the same
+    defect: the rule applied to some members of a set and not the others.
+    """
+    # 🐛 [2026-09-09] Opened with no containment check at all, while five DIRECTORY stores got
+    # exactly this guard on 2026-09-08 and the three single-FILE stores beside them did not. A
+    # workspace travels with a clone, so `tools/index.json` arriving as a symlink to `~/.ssh/id_rsa` is
+    # chosen by whoever wrote the repository, not by the person reading it — and its content lands
+    # in the injected block. The set was "stores this reads"; the fix reached the members that
+    # happened to be directories. (R3 agent 2, 2026-09-09, reproduced.)
+    import workspace as _ws
+    if not _ws.inside(path(root), root):
+        return []
+    try:
+        loaded = json.loads(path(root).read_text(encoding="utf-8-sig"))
+    except (UnicodeDecodeError, OSError, json.JSONDecodeError, RecursionError):
+        return []
+    # The `[]` above is honest for a file that is absent or empty. It is a LIE for a file that has
+    # content this parser cannot read, and `refuses_to_be_overwritten` below is what stops that lie
+    # from being written back. See its docstring.
+    if not isinstance(loaded, list):
+        return []
+    return [e for e in loaded if isinstance(e, dict) and isinstance(e.get("name"), str)
+            and e["name"]]
+
+
+
+def refuses_to_be_overwritten(root):
+    """Why this index must not be replaced, or "" when replacing it is safe.
+
+    🐛 [2026-09-07] `load()` returns `[]` for a file it cannot parse, and `[]` is exactly what it
+    returns for a registry that never existed — so the two are indistinguishable to every caller.
+    The next `chamnan-promote` then writes its one new entry over the top and every previously
+    registered tool, with its run counters, is gone. Silently and permanently.
+
+    An unresolved `<<<<<<< HEAD` is the ordinary way to arrive there: `index.json` is committed, two
+    branches registering different tools conflict in it, and a merge left half-finished is a file
+    with content that is not JSON. Reported independently by two rounds (R9, 2026-09-07, R10 agent 2) and
+    unfixed both times.
+
+    The guard already existed one file away. `lib/state.py` refuses to render a mid-merge STATE.md
+    rather than injecting both sides, using `memory.unresolved_conflict`; this is the same question
+    asked about a different file, and the answer has to be the same. What differs is the
+    consequence: STATE.md's is a bad injection, this one's is data destruction.
+
+    Deliberately narrow. A file that is missing, empty, or holds valid JSON of the wrong shape is
+    NOT protected — those are the cases `load()`'s `[]` describes correctly, and refusing them would
+    make a fresh workspace unable to register its first tool.
+    """
+    import memory
+    p = path(root)
+    try:
+        raw = p.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    if not raw.strip():
+        return ""
+    if memory.unresolved_conflict(raw):
+        return (f"{p.name} is mid-merge and both sides are still in it; resolving the conflict is "
+                f"the only thing that can tell chamnan which tools this workspace has")
+    try:
+        json.loads(raw)
+    except (json.JSONDecodeError, RecursionError):
+        return (f"{p.name} has content that is not valid JSON, so the tools registered in it "
+                f"cannot be read; overwriting it would discard them")
+    return ""
+
+
+def _save(root, entries):
+    """🐛 A plain `write_text`, so a SIGKILL between truncate and flush left the registry a
+    truncated file — which `load()` degrades to `[]`, the same value it returns for a file that
+    never existed. Reproduced with a real SIGKILL mid-write: a healthy five-tool registry became
+    empty, silently and permanently, and the next registration wrote a one-entry file over it.
+
+    This module was MISSED when every other writer was routed through `ws.atomic_write_text`, and
+    the commit that did that work said the class was closed. It was not; `tools_index.py` is not in
+    `grep -rl atomic_write_text lib hooks bin`. Two rounds of the same disease — a fix applied to
+    the members of a set somebody enumerated, and not to the one they forgot.
+
+    It also makes `register`'s stated reasoning true. That function proceeds without the lock on the
+    grounds that "the file is written atomically either way", which was simply false until now.
+    """
+    # RAISES on failure, unlike most callers of atomic_write_text. That helper is best-effort by
+    # default because a workspace on a read-only checkout must still let a session start — but a
+    # registration is a thing the user asked for, and `chamnan-promote` rolls back the copied file
+    # when the index write fails. Swallowing it left the executable installed, announced, and
+    # unregistered. Caught by the read-only-index test, which exists for exactly that.
+    # Checked HERE, at the one place every write goes through, rather than in `register` and
+    # `remove` and `record_call` separately — which is the shape of fix this repository has had to
+    # un-forget eight times.
+    # 🐛 [2026-09-12] `chamnan-promote._origin_for` learned on 2026-09-04 not to write an absolute
+    # path into this file, because it is tracked and committed and a home directory in it publishes
+    # a username to everyone who clones. The WRITER was fixed and the records already on disk were
+    # not: `session_block_size.py` in this repository still read
+    # `/private/tmp/claude-506/-Users-<name>-…` eight days later, and went into a commit today.
+    #
+    # A fix on the writer only holds for entries written after it. This is the one place every write
+    # passes, which is where the same file says a rule belongs, so the sanitisation is here and old
+    # records are cleaned by the next save rather than waiting for somebody to notice them again.
+    for _e in entries:
+        _o = _e.get("origin", "")
+        if isinstance(_o, str) and _o and (_o.startswith("/") or (len(_o) > 1 and _o[1] == ":")):
+            try:
+                _e["origin"] = (pathlib.Path(_o).resolve()
+                                .relative_to(pathlib.Path(root).resolve()).as_posix())
+            except (OSError, ValueError):
+                _e["origin"] = pathlib.PurePath(_o).name
+
+    why = refuses_to_be_overwritten(root)
+    if why:
+        raise OSError(why)
+    if not ws.atomic_write_text(path(root),
+                                json.dumps(entries, indent=1, ensure_ascii=False) + "\n"):
+        # The shared helper, not a second sentence: it is the one place that knows to say
+        # "CHAMNAN_READ_ONLY is set" rather than leaving the caller to guess at permissions.
+        # `chamnan-promote` and `chamnan-candidates promote` both surface this message.
+        raise OSError(ws.write_failure_text(path(root)))
+
+
+def register(root, entry):
+    """Append one entry and write the index back. `entry` must have `name`; every other field is
+    optional and defaults sensibly. Returns the full, updated list."""
+    # 🐛 `record_call` wraps its read-modify-write in `ws.exclusive`; `register` and `remove` did
+    # the same read-modify-write with no lock at all. A lock only one of three writers holds
+    # serialises nothing: reproduced by racing a promotion against `record_call`, the freshly
+    # registered tool was written and then overwritten by the other writer's snapshot. The file
+    # existed on disk and the registry had no record of it, so the session-start tool list,
+    # `chamnan-report` and `match_call` would never see it again. `record_call` fires from a
+    # PostToolUse hook on every Bash call, which is exactly the window a promotion runs in.
+    # The lockfile lives beside the index, and `register` is usually what CREATES the index — so
+    # without this the very first call cannot take a lock, `exclusive` yields False, and the
+    # registration is skipped. Found by the suite the moment the lock went in.
+    try:
+        path(root).parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    with ws.exclusive(path(root)) as held:
+        if not held:
+            # 🐛 [2026-09-07] This used to fall through and write UNLOCKED, on the reasoning that
+            # "the file is written atomically either way" — which is the exact misconception
+            # `record_call`'s own docstring names and rejects three functions away: an atomic write
+            # stops a reader seeing a torn file and says nothing about which of two writers' snapshot
+            # wins. So the one writer that was hardened LAST reintroduced the race the other two were
+            # hardened against, and `record_call` fires from a PostToolUse hook on every Bash call —
+            # which is exactly the window a promotion runs in (R5, 2026-09-07).
+            #
+            # `remove()` already answers this correctly by raising, and `TimeoutError` is an
+            # `OSError`, so `chamnan-promote`'s existing handler catches it, deletes the executable
+            # it had already copied, and says nothing was left behind. A promotion that fails
+            # cleanly and can be retried beats one that silently loses the registration and leaves
+            # the file on disk — which is the outcome the old comment was trying to avoid and
+            # produced instead.
+            raise TimeoutError(
+                f"could not lock {path(root).name}; another process is writing it")
+        return _register_locked(root, entry)
+
+
+def _register_locked(root, entry):
+    entries = load(root)
+    # \U0001f41b [2026-09-09] This appended unconditionally, with no look at whether an entry
+    # already carried this name — so `chamnan-promote` run a second time on the same tool wrote a
+    # SECOND entry with the same name. `record_call` resolves with `next(...)` and always finds the
+    # FIRST, so every later run credited the stale, superseded description while the entry holding
+    # the description the person had just typed sat at 0 runs forever. Measured on a fixture: two
+    # entries, the old one at 3 runs, the new one at 0. No error at any point.
+    #
+    # Reachable through the plugin's own advice — `chamnan-candidates` tells a user to run exactly
+    # that command for a tool already sitting in `.chamnan/tools/` (R10 agent 3, 2026-09-09, finding 1).
+    #
+    # The counters are the tool's history and belong to the NAME, not to the registration, so they
+    # carry across; everything a person can retype is replaced. `entry` wins only where it says
+    # something, so a bare re-register does not blank a description that was already there.
+    _existing = next((e for e in entries if e.get("name") == entry["name"]), None)
+    if _existing is not None:
+        for _field in ("desc", "added", "origin"):
+            _value = entry.get(_field)
+            if _value:
+                _existing[_field] = redact.scrub(_value) if _field == "desc" else _value
+        _save(root, entries)
+        return entries
+    entries.append({
+        "name": entry["name"],
+        # The description is free text a person typed at `chamnan-promote --desc`, and it
+        # lands in `.chamnan/tools/index.json`, which is committed. `chamnan-promote --list`
+        # already scrubs this same field on the way OUT (bin/chamnan-promote), which is what made
+        # the gap invisible: the value looked handled everywhere anyone looked. R8 agent 2.
+        "desc": redact.scrub(entry.get("desc", "")),
+        "added": entry.get("added", ""),
+        "origin": entry.get("origin", ""),
+        "runs": entry.get("runs", 0),
+        "interrupted": entry.get("interrupted", 0),
+        "stderr_seen": entry.get("stderr_seen", 0),
+        "last_run": entry.get("last_run", ""),
+    })
+    _save(root, entries)
+    return entries
+
+
+def match_call(root, command):
+    """The registered tool NAME a Bash command string invokes, or None. A plain substring check
+    against `.chamnan/tools/<name>` for every registered entry -- honest about being exactly that:
+    it will miss a tool invoked through an alias or a wrapper, and that is the right failure
+    direction. A false negative costs one unflagged failure; a false positive would blame the wrong
+    tool for something it never ran."""
+    entries = load(root)
+    if not entries or not command:
+        return None
+    for e in entries:
+        needle = f".chamnan/tools/{e['name']}"
+        if needle in command:
+            return e["name"]
+    return None
+
+
+# Only words that carry no subject. An earlier version also dropped `runs`, `lines`, `file`,
+# `check` and `test` as "generic", and those are exactly the words a tool in THIS workspace is
+# about — it stopped matching `duplicate_runs.py` against a description of finding duplicated runs
+# of lines. A stopword list tuned for English prose is the wrong list for a directory of small
+# tools; what is generic here is grammar, not vocabulary.
+_STOPWORDS = frozenset("""
+    the a an and or of to in for on with is are was were be been it its this that these those
+    from by at as not no if then than so such into over under out up down
+    python3 python sys os json pathlib import def return true false none null
+""".split())
+
+
+def _meaningful(text):
+    """The words in `text` that could identify what a script is FOR."""
+    import re as _re
+    words = _re.findall(r"[a-z][a-z0-9_-]{2,}", (text or "").lower())
+    return {w for w in words if w not in _STOPWORDS}
+
+
+def likely_already_done(root, text, floor=3):
+    """A registered tool that looks like it already does what `text` describes, or None.
+
+    \U0001f41b [2026-09-10] The repeat detector fires on the third near-identical scratch script
+    and says "save yours and promote it". It never asked the question that would have helped:
+    *does one of these already exist?* On the night this was written it fired three times and the
+    answer was yes all three times — one of them `archive_report.py`, whose job the operator was
+    doing by hand, badly enough to leave four reports uncitable.
+
+    `match_call` above answers a different question — which registered tool a command INVOKES — by
+    literal path substring. That cannot see a script somebody is about to write instead.
+
+    Conservative on purpose, and in the same direction `match_call`'s own docstring argues for: a
+    false negative costs one missed nudge, a false positive sends somebody to read the wrong tool
+    and teaches them to ignore the line. So it needs `floor` distinctive words in common, it takes
+    the single best match rather than a list, and the caller phrases it as a question.
+    """
+    want = _meaningful(text)
+    if len(want) < floor:
+        return None
+    best, best_score = None, 0
+    for e in load(root):
+        have = _meaningful(f"{e.get('name', '')} {e.get('desc', '')}")
+        score = len(want & have)
+        if score > best_score:
+            best, best_score = e, score
+    if best is None or best_score < floor:
+        return None
+    return best.get("name"), best.get("desc", "")
+
+
+def record_call(root, name, interrupted=False, stderr_nonempty=False):
+    """Increment `runs`, and `interrupted`/`stderr_seen` when the call showed that signal, for the
+    entry named `name`. Returns (entry, just_flagged) -- `just_flagged` is True exactly once, on
+    the call that FIRST reaches FLAG_AT on `interrupted` -- `stderr_seen` is counted but cannot
+    raise the flag, for the reason measured at FLAG_AT above -- so a caller can print a notice on the
+    crossing and stay silent on every repeat after it, the same restraint every other notice in
+    this plugin already uses."""
+    # The whole read-modify-write under one lock, not just the write. An atomic write alone does
+    # not prevent a lost update -- both processes read the same `runs`, both add one, and one of
+    # the two increments is gone. Measured before this, 8 processes x 50 calls against one index:
+    # 187 of 400 recorded, 53% lost. Silent, and it stays wrong forever, because the number is a
+    # running total and nothing recomputes it.
+    #
+    # This is a SHARED registry, so pointer.py's answer to the same problem -- one file per session,
+    # no lock at all -- is not available: every session has to see the same list of tools.
+    with ws.exclusive(path(root)) as held:
+        # A background counter, so a dropped increment is the cheap outcome and a lost update is
+        # not: this fires from a PostToolUse hook on every Bash call, and writing an unserialised
+        # snapshot back would revert whatever a concurrent `register` or `remove` had just done.
+        # Same choice `workflows.record()` makes, for the same reason. Measured under contention:
+        # 10-12.5% of increments were being lost every trial, which is what proceeding cost.
+        if not held:
+            return None, False
+        entries = load(root)
+        entry = next((e for e in entries if e["name"] == name), None)
+        if entry is None:
+            return None, False
+        entry["runs"] = entry.get("runs", 0) + 1
+        # 🐛 Two developers each adding one call on their own branch both write `runs: 5 -> 6` --
+        # the same line, the same text, no conflict marker -- and `git merge` takes either side
+        # cleanly. Seven real calls land recorded as six, forever, because nothing recomputes a
+        # running total. Unequal deltas (5->6 vs 5->8) already conflict on their own; only the
+        # equal-delta case was silent. A microsecond timestamp on every call makes two
+        # independently-recorded increments differ almost always even when `runs` lands on the
+        # same number, which turns the silent case into the same human-visible merge conflict the
+        # unequal-delta case already gets -- cheaper than a custom git merge driver, which would
+        # need a `.gitattributes` entry AND a per-clone `git config` write outside this workspace.
+        entry["last_run"] = datetime.now().astimezone().isoformat(timespec="microseconds")
+        was_flaggable = entry.get("interrupted", 0) >= FLAG_AT
+        if interrupted:
+            entry["interrupted"] = entry.get("interrupted", 0) + 1
+        if stderr_nonempty:
+            entry["stderr_seen"] = entry.get("stderr_seen", 0) + 1
+        now_flaggable = entry.get("interrupted", 0) >= FLAG_AT
+        _save(root, entries)
+    return entry, (now_flaggable and not was_flaggable)
+
+
+def signals(root):
+    """`{name: (runs, interrupted, stderr_seen)}` — the two fields `usage()` leaves behind.
+
+    🐛 [2026-09-08] `record_call()` has been maintaining `interrupted` and `stderr_seen` since
+    Stage 10, this module's docstring calls them "the two honest signals", and `usage()` — the one
+    function anything reads this file back with — returns `(name, runs)` and drops both. Measured
+    on this repository: `extract_findings.py` wrote to stderr on all ten of its recorded runs and
+    `chamnan-report` said "10 runs", so noticing it meant knowing `tools/index.json` exists and
+    computing the ratio by hand (R7 agent 5, 2026-09-08).
+
+    A separate function rather than a wider `usage()`: that one's two-tuple shape is asserted in
+    the suite and read by a caller that wants exactly it, and widening a return type to add a field
+    one caller needs is how a signature ends up meaning two things.
+    """
+    return {e["name"]: (e.get("runs", 0), e.get("interrupted", 0), e.get("stderr_seen", 0))
+            for e in load(root)}
+
+
+def missing_files(root):
+    """Names in the index whose tool FILE is not in `tools/` — registered, and read by nothing.
+
+    A registration and a file are two separate things, and `chamnan-candidates demote` is the only
+    path that removes both. Delete `.chamnan/tools/some-tool.py` by hand and the entry stays, with
+    its run counter, describing a file that is gone.
+
+    \U0001f41b [2026-09-10] THREE readers of this index answer a person, and only two of them
+    filtered these out. The SessionStart hook drops them, `chamnan-promote --list` prints
+    `← no such file in tools/; ignored by sessions` and counts them in its summary — and
+    `chamnan-report`'s "Promoted tools" section printed them as ordinary rows at `0 runs`,
+    indistinguishable from a real tool nobody uses and therefore worth demoting. Two of its other
+    counters had the same gap. The root `CLAUDE.md` names that command as how to answer "is chamnan
+    worth keeping", so a phantom row there is the expensive kind of wrong (R1 agent 5, 2026-09-10, finding 5).
+
+    The predicate lives HERE rather than being copied to a third caller: this module owns
+    `index.json`, so it is the one place that can answer what an entry refers to. `ws.inside` is
+    part of the question, not decoration — a name that escapes the workspace is not a tool of ours
+    however real the file it names.
+    """
+    return {str(e.get("name")) for e in load(root)
+            if real_name(root, e.get("name")) is None}
+
+
+def real_name(root, name):
+    """`name` in its validated form when a tool file by that name is really in `tools/`, else None.
+
+    The one predicate behind three callers that each used to carry their own copy — the SessionStart
+    hook's `_real_tool`, `chamnan-promote --list`, and `missing_files` above. They agreed, which is
+    the only reason nothing had gone wrong yet; the report that found this saw one reader missing the
+    check and not that the check existed three times (R1 agent 5, 2026-09-10, finding 5).
+
+    Three things, and every caller needs all three:
+
+      * the entry names something that can BE a filename — `safe_tool_name` refuses a path-shaped
+        or device-shaped name, and a name stays valid in the index after the file is gone;
+      * the file is there;
+      * and it is inside the workspace, so a name that escapes is not a tool of ours however real
+        the file it points at.
+
+    Returns the VALIDATED name rather than True: the hook writes it back over the raw field before
+    printing, and a predicate that answered yes/no would leave that caller normalising by hand.
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    try:
+        safe = ws.safe_tool_name(name)
+        if safe is None:
+            return None
+        f = path(root).parent / safe
+        return safe if (f.is_file() and ws.inside(f, root)) else None
+    except (OSError, ValueError):
+        return None
+
+
+def usage(root):
+    """(name, runs) for every registered tool, in registration order — the read side of the `runs`
+    counter `record_call()` writes on every matched Bash call. Stage 11's whole job here: this
+    field has been counting since Stage 10 shipped and nothing has printed it until now."""
+    return [(e["name"], e.get("runs", 0)) for e in load(root)]
+
+
+def remove(root, name):
+    """Delete one entry from the index (the tool FILE itself is a separate deletion the caller does
+    — this module only ever owns index.json). Returns the removed entry, or None if there was no
+    such name. Used by `chamnan-candidates demote` to undo a promotion."""
+    # The third writer of this file. `record_call` fires from a PostToolUse hook on every Bash
+    # call, so a demotion racing it lost either the removal or the run counter, silently.
+    with ws.exclusive(path(root)) as held:
+        # Refused, not attempted anyway, and this is the opposite call from `register`'s. Removing
+        # is destructive and the failure is not symmetric: an unserialised remove writes back a
+        # snapshot taken before a concurrent writer's change, so a tool the user had just DEMOTED
+        # comes back. Reproduced in 2 of 5 trials under contention — a command that reports success
+        # while undoing itself. Raised rather than returned as None, because None already means
+        # "no such tool" and a caller that cannot tell the two apart prints the wrong sentence.
+        if not held:
+            raise TimeoutError(f"could not lock {path(root).name}; another process is writing it")
+        entries = load(root)
+        entry = next((e for e in entries if e["name"] == name), None)
+        if entry is None:
+            return None
+        _save(root, [e for e in entries if e["name"] != name])
+        return entry
