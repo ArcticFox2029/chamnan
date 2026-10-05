@@ -240,10 +240,20 @@ def _age(seconds, now):
     #
     # The noon anchor is what makes the calendar comparison correct rather than a second problem:
     # noon UTC falls on the same LOCAL date for every offset within ±12, which is why it was
-    # chosen. So `_ymd_to_ts` is deliberately left alone here — the future-date refusal and the
+    # chosen — and beyond +12 it does not, which the line below handles. So `_ymd_to_ts` is deliberately left alone here — the future-date refusal and the
     # ordering both rest on it, and a second date convention beside the first is the defect this
     # repository records more than any other.
-    days = (datetime.date.fromtimestamp(now) - datetime.date.fromtimestamp(seconds)).days
+    #
+    # 🐛 [2026-10-05] (R38 acc4, 2026-10-05) "within ±12" is not every offset: New Zealand in
+    # daylight time and Tonga are +13 and Kiritimati +14, where noon UTC is already tomorrow, so a
+    # stamped date read a day late and a record written yesterday said "today". A noon-UTC anchor
+    # is a written date, so its calendar date is read in UTC — the date the person wrote; an mtime
+    # is still read in local time. Check 413.
+    if float(seconds) % 86400 == 43200:
+        written = datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).date()
+    else:
+        written = datetime.date.fromtimestamp(seconds)
+    days = (datetime.date.fromtimestamp(now) - written).days
     if days <= 0:
         return "today"
     if days == 1:
