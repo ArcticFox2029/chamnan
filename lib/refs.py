@@ -545,6 +545,7 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
     """
     found, unjudged, how = [], 0, {"exact": 0, "lexical": 0}
     dynamic = 0
+    unreadable_dirs = 0
     root_real = os.path.realpath(str(root))
     ext_lang = line_comments = None
 
@@ -552,8 +553,9 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
         # Without this a directory the walk cannot open is simply ABSENT from the result, and the
         # caller counts what it got as what is there -- the false all-clear this module's own
         # `unjudged` count exists to prevent, one level further out.
-        nonlocal unjudged
-        unjudged += 1
+        # Counted apart from unparseable files (R53 acc1, 2026-10-05): a locked tree is not one bad file.
+        nonlocal unreadable_dirs
+        unreadable_dirs += 1
 
     for base, dirs, names in os.walk(str(root), onerror=_unreadable):
         dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
@@ -586,7 +588,11 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
                     continue
                 with open(p, "r", encoding="utf-8", errors="replace") as fh:
                     body = fh.read()
-                if ext == ".py" and _DYNAMIC.search(body):
+                # 🎯 [2026-10-05] (R46 acc4, 2026-10-05) `_DYNAMIC` cannot match without one of these literals, so
+                # testing for them first is exact; run on every file it was half of a lookup's time (616 ms of
+                # 1.16 s over 308 files here). Check 410.
+                if ext == ".py" and ("getattr(" in body or "import_module(" in body
+                                     or "__import__(" in body) and _DYNAMIC.search(body):
                     dynamic += 1
                 # 🎯 [2026-09-23] Both answers below look for the identifier SPELLED OUT: the parser
                 # finds `Name`/`Attribute`/`arg` nodes whose id is this string, and the lexical pass
@@ -647,4 +653,5 @@ def find(root, symbol, skip=("__pycache__", ".git", "node_modules", ".venv", "si
     # caller's optional `seen` dict.
     if seen is not None:
         seen["dynamic"] = dynamic
+        seen["unreadable_dirs"] = unreadable_dirs
     return sorted(found), unjudged, how

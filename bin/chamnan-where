@@ -67,6 +67,7 @@ def main(argv):
     root = ws.find_root() or Path(os.getcwd())
     seen = {}
     hits, unjudged, how = refs.find(root, symbol, seen=seen)
+    dirs = seen.get("unreadable_dirs", 0)
     # Which method reached the answer is part of the answer, and it is said whether or not anything
     # was found: "no use, and every file was read by a parser" and "no use, and 400 files were read
     # by a scanner that cannot see through a heredoc" are different claims.
@@ -84,6 +85,8 @@ def main(argv):
         print(f"chamnan: no use of `{symbol}` under {Path(root).name}/. {scope}")
         if unjudged:
             print(f"  {unjudged} file(s) could not be judged, so this is not a proof of absence.")
+        if dirs:
+            print(f"  {dirs} director(ies) could not be read, so anything inside them was not judged — this is not a proof of absence.")
         # R177: a sparse checkout lacks files outside its set, so a use may sit where nothing was read.
         if ws.is_sparse(root):
             print("  This checkout is sparse: files outside it were not read, so this is not a proof of absence.")
@@ -105,6 +108,8 @@ def main(argv):
     _dynamic_note()
     if unjudged:
         print(f"  ({unjudged} file(s) too large or unparseable — not judged, not absent)")
+    if dirs:
+        print(f"  ({dirs} director(ies) could not be read — anything inside them is not judged, not absent)")
     return 0
 
 
