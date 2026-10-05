@@ -263,6 +263,13 @@ def _is_shallow(root):
             gitdir = Path(target[len("gitdir:"):].strip())
             if not gitdir.is_absolute():
                 gitdir = Path(root) / gitdir
+            # 🐛 [2026-10-05] (R160 acc4, 2026-10-05) git keeps `shallow` in the COMMON dir, not in
+            # `.git/worktrees/<name>`, so a linked worktree of a `--depth 1` clone read as not
+            # shallow and "Last edited" named the first files alphabetically again (R282). The
+            # sibling copy in `workspace.is_sparse` already followed `commondir`. Check 427.
+            marker = gitdir / "commondir"
+            if marker.is_file():
+                gitdir = gitdir / marker.read_text(encoding="utf-8", errors="replace").strip()
             return (gitdir / "shallow").is_file()
         return (dot_git / "shallow").is_file()
     except (OSError, ValueError):
