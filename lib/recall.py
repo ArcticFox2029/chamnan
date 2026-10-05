@@ -25,6 +25,7 @@ already corrupted text twice by splitting it as though it did -- a 3-character k
 and a food keyword resolved ชีสเค้ก to เค้ก. A query that is not ASCII is not tokenised: it is
 looked for whole, which is slower per term and cannot be wrong in that way.
 """
+import hashlib
 import math
 import os
 import re
@@ -67,6 +68,25 @@ _ASCII_ONLY = re.compile(r"\A[\x00-\x7f]*\Z")
 # not half-reuse entries whose terms were computed the old way.
 # v3 = blurbs unwrap paired emphasis (R254).
 TERMS_VERSION = 3
+
+_SCRUBBER_ID = None
+
+
+def scrubber_id():
+    """Short fingerprint of the redactor that scrubs entries, cached after the first read.
+
+    🐛 [2026-10-05] (R73 acc4, 2026-10-05) The index stores scrubbed text and terms, so an entry is
+    only reusable if the same redactor scrubbed it; a redactor upgrade that catches more must not
+    leave behind what the old one let through. Returns "unknown" if the file cannot be read.
+    """
+    global _SCRUBBER_ID
+    if _SCRUBBER_ID is None:
+        try:
+            with open(redact.__file__, "rb") as fh:
+                _SCRUBBER_ID = hashlib.sha1(fh.read()).hexdigest()[:12]
+        except OSError:
+            return "unknown"
+    return _SCRUBBER_ID
 
 
 def _ascii(text):
@@ -521,7 +541,8 @@ def build(ws, previous=None):
     the closing loop below ever puts it on); a tool or symbol entry carries no `ig` key at all.
     """
     prev_by_path = {}
-    if isinstance(previous, dict) and previous.get("terms") != TERMS_VERSION:
+    if isinstance(previous, dict) and (previous.get("terms") != TERMS_VERSION
+                                       or previous.get("scrubber") != scrubber_id()):
         previous = None
     if isinstance(previous, dict):
         for e in previous.get("entries", []) or []:
@@ -570,7 +591,8 @@ def build(ws, previous=None):
         if e.get("kind") in _STORE_KINDS:
             e["ig"] = {t: c for t, c in full.items() if t in common}
     return {"entries": entries, "newest": newest, "count": len(entries),
-            "ignored": sorted(common), "terms": TERMS_VERSION}
+            "ignored": sorted(common), "terms": TERMS_VERSION,
+            "scrubber": scrubber_id()}
 
 
 def stale_by(ws, index):
@@ -580,6 +602,8 @@ def stale_by(ws, index):
     is the difference between reporting staleness and paying for a rebuild to discover it.
     """
     newest = index.get("newest", 0) if isinstance(index, dict) else 0
+    # An index scrubbed by another redactor is stale in full (R73 acc4): every path counts.
+    all_stale = isinstance(index, dict) and index.get("scrubber") != scrubber_id()
     behind = 0
     for folder, _kind, _w in KINDS:
         for path in paths_for(ws, folder):
@@ -587,7 +611,7 @@ def stale_by(ws, index):
                 st = path.stat()
                 # The inode change time catches a rewrite whose mtime was restored afterward
                 # (R25 acc5, see `_entry`); on Windows it is the creation time, so it is skipped.
-                if st.st_mtime_ns > newest or (os.name != "nt" and st.st_ctime_ns > newest):
+                if all_stale or st.st_mtime_ns > newest or (os.name != "nt" and st.st_ctime_ns > newest):
                     behind += 1
             except OSError:
                 continue
