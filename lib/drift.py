@@ -30,6 +30,7 @@ import re
 import subprocess
 
 import host
+import rollup
 import workspace as ws
 
 # A path inside backticks, with at least one slash so a bare word is not mistaken for a file.
@@ -138,7 +139,7 @@ def notice(root, wsdir=None):
     🐛 [2026-09-22] (self-measured) Cached on HEAD. Uncached this cost 203 ms against a session
     start of 2,133 ms -- 10% more on every session, for an answer that is empty almost every time.
     The common case paying for the rare one is the cost this package exists to refuse. With the
-    cache the steady state is one `rev-parse`.
+    cache the steady state is one read of `.git/HEAD`.
 
     The limit, stated rather than hidden: a file MOVED without a commit is not noticed until the
     next commit. A repository in that state is already being told its index is stale by the map's
@@ -146,8 +147,9 @@ def notice(root, wsdir=None):
     """
     head = ""
     if wsdir is not None:
-        code, out = _git(root, ["rev-parse", "HEAD"])
-        head = out.strip() if code == 0 else ""
+        # 🐛 [2026-10-05] (R56 acc1, 2026-10-05) HEAD off the filesystem via rollup, one git spawn
+        # fewer per session start (93 ms measured, R71 acc4). Check 412.
+        head = rollup._head(root)
         if head:
             hit = _cached(wsdir, head)
             if hit is not None:
