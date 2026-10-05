@@ -4256,7 +4256,15 @@ def for_a_terminal(text):
     `_CHAT_TEMPLATE_SENTINEL` above.
     """
     text = _CHAT_TEMPLATE_SENTINEL.sub("<¦\\1¦>", text)
-    return text.translate(_TERMINAL_SAFE)
+    out = text.translate(_TERMINAL_SAFE)
+    # 🐛 [2026-10-05] (R148 acc4, 2026-10-05) Callers scrub first and strip second, so a credential
+    # split by an invisible or control character (U+200B, U+2060, U+FEFF, NUL...) was two harmless
+    # halves to the scrub and one complete, valid key once this deleted the splitter. Scrubbing again
+    # only when something was deleted closes every such caller at once, and costs nothing on text
+    # with no invisibles in it. Check 426.
+    if len(out) != len(text):
+        out = scrub(out)
+    return out
 
 
 def emit(*args, **kwargs):
