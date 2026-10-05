@@ -269,12 +269,13 @@ def _structure_the_value_did_not_open(match, value):
     return comma_tail
 
 
-_TOKENS_KEY = _lazy(lambda: re.compile(r"tokens['\"]?\s*(?::|=)\s*(?:[A-Za-z_][\w.]*\s*=\s*)?$", re.I))
+# 🐛 [2026-10-05] (R30 acc5, 2026-10-02) A budget is a count too: index_token_budget = 120000 was redacted. Check 419.
+_TOKENS_KEY = _lazy(lambda: re.compile(r"(?:tokens|budget)['\"]?\s*(?::|=)\s*(?:[A-Za-z_][\w.]*\s*=\s*)?$", re.I))
 _PLAIN_COUNT = _lazy(lambda: re.compile(r"[0-9]{1,12}(?:,|[}\]]+,?)?"))
 
 
 def _is_a_token_count(key_part, value):
-    """True for `<name>tokens = <1-12 plain digits>`: a usage count, never a credential."""
+    """True for `<name>tokens` or `<name>budget = <1-12 plain digits>`: a usage count, never a credential."""
     return bool(_TOKENS_KEY.search(key_part.rstrip()) and _PLAIN_COUNT.fullmatch(value))
 
 
@@ -892,6 +893,8 @@ _NOT_A_CREDENTIAL_NAME = _lazy(lambda: re.compile(
     # variable, not the variable's value -- the whole point of the indirection is that
     # the secret is NOT in the file. Redacting it destroys the one thing the line says
     # and hides nothing. Matches Yelp/detect-secrets#923 (R8 agent 9, 2026-09-08).
+    # The UI-text words of `_NAMES_UI_TEXT` (defined below).
+    r"|help|title|text|hint|description|desc|message|msg|placeholder|tooltip|caption|heading|prompt"
     r"|env|envvar|environ|variable|var|varname)$", re.I))
 
 CREDENTIALED_URL = _lazy(lambda: re.compile(
@@ -1398,12 +1401,17 @@ _CONFIG_ABOUT_A_SECRET = ("policy", "policies", "rotation", "days", "window", "l
 # `api_key_env = "MY_SECRET1"` was redacted, which destroyed the only thing the line said and hid
 # nothing. Matches Yelp/detect-secrets#923 (R8 agent 9, 2026-09-08).
 _NAMES_A_VARIABLE = ("env", "envvar", "environ", "variable", "var", "varname")
+# 🐛 [2026-10-05] (R30 acc5, 2026-10-02) A key ending in a UI-text word names the TEXT shown about
+# a secret, never the secret: `"login_secrets_help": "Enter the passphrase you were given…"` and
+# `msg_secrets_title = "Where your secrets are kept…"` were redacted. Check 419.
+_NAMES_UI_TEXT = ("help", "title", "text", "hint", "description", "desc", "message", "msg",
+                  "placeholder", "tooltip", "caption", "heading", "prompt")
 # Every tuple whose words must ALSO appear in `_NOT_A_CREDENTIAL_NAME`'s regex, which is defined
 # above this point and therefore spells them out rather than interpolating them. Named as one
 # thing so the check that asserts the two spellings agree cannot be extended for one tuple and
 # forgotten for the next -- which is what happened between these two on the day the second was
 # added, and is the defect this file carries more fixes for than any other.
-_SHARED_EXEMPTION_WORDS = _CONFIG_ABOUT_A_SECRET + _NAMES_A_VARIABLE
+_SHARED_EXEMPTION_WORDS = _CONFIG_ABOUT_A_SECRET + _NAMES_A_VARIABLE + _NAMES_UI_TEXT
 NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "url", "urls",
                    "uri", "uris", "endpoint", "endpoints", "host", "hostname", "domain",
                    "origin", "issuer", "audience",
@@ -1970,6 +1978,12 @@ def _is_a_code_reference(match):
     written = re.sub(r"^['\"]+|['\"\s:=]+$", "", _full_key_at(match).strip())
     key = written.lower()           # `_bare_key` lowercases, and the case is the whole point below
     letters = re.sub(r"[^A-Za-z]", "", written)
+    # 🐛 [2026-10-05] (R30 acc5, 2026-10-02) `SIGNING_KEY = PREFIX + "suffix"` lost `PREFIX`: an
+    # UPPER_CASE key reads as an `.env` line and an `.env` value never continues with ` + `.
+    # A bare name followed by a `+` and another operand is a concatenation in code. Check 419.
+    if (_CODE_NAME.match(value) and not any(ch.isdigit() for ch in value)
+            and re.match(r"[ \t]+\+[ \t]*(?:['\"]|[A-Za-z_(])", match.string[match.end():match.end() + 8])):
+        return True
     if not letters or letters.isupper() or not _CODE_NAME.match(value):
         return False
     spaced = re.search(r"\s=\s*$", match.group(1) or "") is not None
