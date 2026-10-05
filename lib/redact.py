@@ -125,6 +125,15 @@ _A_DOTTED_REFERENCE = _lazy(lambda: re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]{0,23}(?:\.[A-Za-z_][A-Za-z0-9_]{0,23})+\(?\)?$"))
 
 
+# 🐛 [2026-10-05] (R157 acc4, 2026-10-05) `${VAR}` and `$(cmd)` were already references, the
+# unbraced `$VAR` was not: `export API_TOKEN=$CI_JOB_TOKEN` and `password=$DB_PASS` came out as
+# `<REDACTED>`, hiding where the value lives while hiding nothing. cmd's `%VAR%` and PowerShell's
+# `$env:VAR` are the same claim. Upper-case names only for `$` and `%`, the environment-variable
+# convention, so a literal password that merely starts with `$` stays on the redacted side. Check 428.
+_A_SHELL_VARIABLE = _lazy(lambda: re.compile(
+    r"^(?:\$[A-Z_][A-Z0-9_]{0,63}|%[A-Z_][A-Z0-9_]{0,63}%|\$env:[A-Za-z_][A-Za-z0-9_]{0,63})[,;)\]}\"']*$"))
+
+
 def _names_where_it_lives(value):
     """True when the value names WHERE the secret is kept rather than being the secret.
 
@@ -144,7 +153,7 @@ def _names_where_it_lives(value):
     value = (value or "").strip().rstrip(",;")
     if len(value) > 64:
         return False
-    if value[:2] in ("$(", "${"):
+    if value[:2] in ("$(", "${") or _A_SHELL_VARIABLE.match(value):
         return True
     # A generic, a call or a subscript may open right after the path and the unquoted rule captures
     # only as far as the next space -- `z.infer<typeof schema>` arrives here as `z.infer<typeof`.
@@ -183,7 +192,7 @@ def _is_a_plain_word(value):
     if _A_DOTTED_REFERENCE.match(value):
         return True
     # `$(cmd)` and `${VAR}` are the shell's own indirection, the same claim as the dotted path.
-    if value[:2] in ("$(", "${"):
+    if value[:2] in ("$(", "${") or _A_SHELL_VARIABLE.match(value):
         return True
     # 🐛 [2026-09-13] R12.26: the prose guard was ASCII-only, so an ordinary translated word
     # beside a credential label was treated as the value itself. The R7 external corpus caught
