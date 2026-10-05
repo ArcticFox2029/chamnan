@@ -329,7 +329,7 @@ def scan_bytecode(root):
         return {}
     try:
         names = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false", "diff",
-                                "--cached", "--name-only", "--diff-filter=AM", "-z"],
+                                "--cached", "--no-textconv", "--name-only", "--diff-filter=AM", "-z"],
                                capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return {}
