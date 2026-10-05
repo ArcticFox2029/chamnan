@@ -50,6 +50,9 @@ print = redact.emit_prescrubbed  # noqa: A001
 # pattern was copied in verbatim; the gate's one-question-one-pattern sweep named the pair. The cut
 # now comes from `canonical.segments`, so the two cannot disagree about where a command ends.
 _INTERPRETERS = {"nohup", "caffeinate", "exec", "command", "time", "env", "xargs", "sudo"}
+_SHELL_TOOLS = ("Bash", "PowerShell")
+# `git.exe` is how the same program is often spelled from PowerShell or cmd.
+_GIT_NAMES = ("git", "git.exe")
 
 
 def _is_commit(command):
@@ -61,7 +64,7 @@ def _is_commit(command):
             words = segment.split()
         while words and (Path(words[0]).name in _INTERPRETERS or "=" in words[0]):
             words = words[1:]
-        if not words or Path(words[0]).name != "git":
+        if not words or Path(words[0]).name.lower() not in _GIT_NAMES:
             continue
         # The subcommand is the first word after `git` that is not a flag and not the value of
         # one: `git -C <dir> commit` is the shape this repository uses constantly.
@@ -85,7 +88,11 @@ def main():
         payload = payload if isinstance(payload, dict) else {}
     except (ValueError, RecursionError, OSError):
         return 0
-    if (payload.get("tool_name") or "") != "Bash":
+    # 🐛 [2026-10-05] (R89 acc5, 2026-10-05) Bash alone left a commit made through Claude Code's
+    # PowerShell tool on native Windows unguarded: the same staged credential drew a warning as Bash
+    # and nothing as PowerShell. Both tools carry the command in `tool_input.command`
+    # (anthropics/claude-code #83647).
+    if (payload.get("tool_name") or "") not in _SHELL_TOOLS:
         return 0
     command = str((payload.get("tool_input") or {}).get("command") or "")
     if not _is_commit(command):
