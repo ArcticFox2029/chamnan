@@ -50922,6 +50922,314 @@ check("the guard does not print the credential it found", _val421 not in _dirty4
 _clean421 = _repo421("just an ordinary sentence")
 check("a staged .pyc with ordinary literals draws no warning",
       "settings.cpython-39.pyc" not in _clean421, saw=_clean421[-300:])
+# ---- 422_the_commit_guard_sees_a_powershell_commit.py
+# ------------------ the commit guard sees a commit made through the PowerShell tool
+# 🐛 [2026-10-05] (R89 acc5, 2026-10-05) On native Windows Claude Code can run shell commands through
+# a `PowerShell` tool instead of `Bash`, with the command in the same `tool_input.command` field
+# (anthropics/claude-code #83647). The commit guard was registered on `Bash` alone and returned at
+# its own tool-name check, so the same staged credential drew 298 bytes of warning as a Bash
+# `git commit` and nothing as a PowerShell one. This pins that hooks.json routes PowerShell to the
+# guard, that the hook warns on it, that `git.exe commit` (a Windows spelling) is a commit, and that
+# a non-shell tool is still ignored.
+import json as _json422
+import random as _rnd422
+import re as _re422
+import string as _st422
+import subprocess as _sp422
+import sys as _sys422
+import tempfile as _tf422
+from pathlib import Path as _P422
+
+_hooks422 = _json422.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_matchers422 = [g.get("matcher", "") for g in _hooks422["hooks"].get("PreToolUse", [])
+                if any("chamnan_commit_guard.py" in h["command"] for h in g["hooks"])]
+check("hooks.json routes the PowerShell tool to the commit guard",
+      any(_re422.fullmatch(m, "PowerShell") for m in _matchers422)
+      and any(_re422.fullmatch(m, "Bash") for m in _matchers422), saw=_matchers422)
+
+_hook422 = ROOT / "hooks" / "chamnan_commit_guard.py"
+_d422 = _P422(_tf422.mkdtemp())
+_g422 = lambda *a: _sp422.run(["git", "-C", str(_d422), *a], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+_g422("init", "-q")
+_g422("config", "user.email", "t@t")
+_g422("config", "user.name", "t")
+(_d422 / ".chamnan").mkdir()
+_r422 = _rnd422.Random(422)
+_val422 = "gh" + "p_" + "".join(_r422.choice(_st422.ascii_letters + _st422.digits) for _ in range(36))
+(_d422 / "s.py").write_text(f'TOKEN = "{_val422}"\n', encoding="utf-8")
+_g422("add", "s.py")
+
+
+def _warn422(tool, command="git commit -m x"):
+    _p = _json422.dumps({"tool_name": tool, "tool_input": {"command": command},
+                         "cwd": str(_d422), "session_id": "t422"})
+    _r = _sp422.run([_sys422.executable, str(_hook422)], input=_p, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=120)
+    return (_r.stdout or "") + (_r.stderr or "")
+
+
+_bash422, _ps422, _write422 = _warn422("Bash"), _warn422("PowerShell"), _warn422("Write")
+check("a staged credential committed through PowerShell is warned about, as through Bash",
+      bool(_ps422.strip()) and bool(_bash422.strip()), saw=(len(_bash422), len(_ps422)))
+check("...without printing the credential", _val422 not in _ps422 + _bash422)
+check("a tool that runs no shell command is still ignored", not _write422.strip(), saw=_write422[-200:])
+
+_spec422 = __import__("importlib.util").util.spec_from_file_location("_cg422", _hook422)
+_cg422 = __import__("importlib.util").util.module_from_spec(_spec422)
+_spec422.loader.exec_module(_cg422)
+check("`git.exe commit` is a commit; `git.exe status` is not",
+      _cg422._is_commit("git.exe commit -m x") and not _cg422._is_commit("git.exe status"))
+# ---- 423_the_map_rescrubs_only_the_sections_that_changed.py
+# ------------------ the map re-scrubs only the sections that changed, and the result is byte-equal
+# 🎯 [2026-10-05] (R91 acc5, 2026-10-05) chamnan-map scrubbed the whole rendered MAP.md on every
+# write: 583,753 characters in 5.8-7.0 s on this workspace, most of the 11.2 s refresh R172 left
+# open. Content-defined chunking (LBFS, FastCDC) reuses every chunk an edit did not touch; MAP.md
+# already has content boundaries, its `## ` sections (896, median 217 characters), and scrubbing
+# them one by one was byte-equal to the whole-text scrub on the real file. This pins that the
+# section scrub equals the whole scrub (credentials in several sections, a multi-line key block, a
+# line ending in a secret word at a section's end), that a second render reuses unchanged sections,
+# and that a different redactor fingerprint reuses nothing.
+import importlib as _il423
+import json as _json423
+import random as _rnd423
+import string as _st423
+import subprocess as _sp423
+import tempfile as _tf423
+import time as _t423
+from pathlib import Path as _P423
+
+_mapper423 = _il423.import_module("mapper")
+_redact423 = _il423.import_module("redact")
+_ws423 = _il423.import_module("workspace")
+_r423 = _rnd423.Random(423)
+
+
+def _tok423(prefix, n):
+    return prefix + "".join(_r423.choice(_st423.ascii_letters + _st423.digits) for _ in range(n))
+
+
+_creds423 = [_tok423("gh" + "p_", 36), _tok423("sk" + "-", 48), _tok423("xox" + "b-", 30)]
+_pem423 = ("-----BEGIN " + "PRIVATE KEY-----\n" + "\n".join(_tok423("", 64) for _ in range(4))
+           + "\n-----END " + "PRIVATE KEY-----")
+_parts423 = ["# Architecture map — fixture\n\nGenerated by chamnan.\n"]
+for _i423 in range(300):
+    _body423 = f"\n## `src/mod_{_i423}.py`\nA module that does thing {_i423}.\n- `f{_i423}(x)` — returns x\n"
+    if _i423 == 7:
+        _body423 += f"token = \"{_creds423[0]}\"\n"
+    if _i423 == 150:
+        _body423 += _pem423 + "\n"
+    if _i423 == 151:
+        _body423 += "settings api_key:\n"
+    if _i423 == 299:
+        _body423 += f"SLACK = {_creds423[2]}\nOPENAI = {_creds423[1]}\n"
+    _parts423.append(_body423)
+_text423 = "".join(_parts423)
+
+_d423 = _P423(_tf423.mkdtemp())
+_sp423.run(["git", "-C", str(_d423), "init", "-q"], capture_output=True)
+(_d423 / ".chamnan" / "logs").mkdir(parents=True)
+
+_whole423 = _redact423.scrub(_text423)
+_first423 = _mapper423.scrub_map_text(_text423, _d423)
+check("the section-by-section scrub is byte-equal to the whole-text scrub", _first423 == _whole423,
+      saw=next((i for i, (a, b) in enumerate(zip(_first423, _whole423)) if a != b), "lengths differ"))
+check("...and no credential survives it", not any(c in _first423 for c in _creds423)
+      and "BEGIN PRIVATE KEY-----\n" + _pem423.split("\n")[1] not in _first423)
+
+_cache423 = _d423 / ".chamnan" / "logs" / "map_scrub_cache.json"
+check("the scrubbed sections are cached in the workspace's logs/", _cache423.is_file())
+
+# One section edited: only it is scrubbed again. Counted, not timed, so load cannot flake it.
+_calls423 = []
+_orig423 = _redact423.scrub
+
+
+def _counting423(text, *a, **k):
+    _calls423.append(len(text))
+    return _orig423(text, *a, **k)
+
+
+_edited423 = _text423.replace("thing 42.", "thing forty-two.")
+_redact423.scrub = _counting423
+try:
+    _second423 = _mapper423.scrub_map_text(_edited423, _d423)
+finally:
+    _redact423.scrub = _orig423
+check("after a one-section edit only that section is scrubbed again",
+      len(_calls423) == 1, saw=_calls423[:5])
+check("...and the result is still byte-equal to a whole-text scrub",
+      _second423 == _orig423(_edited423))
+
+# A different redactor must not reuse what the old one produced.
+_data423 = _json423.loads(_cache423.read_text(encoding="utf-8"))
+_data423["scrubber"] = "000000000000"
+_cache423.write_text(_json423.dumps(_data423), encoding="utf-8")
+_calls423.clear()
+_redact423.scrub = _counting423
+try:
+    _mapper423.scrub_map_text(_edited423, _d423)
+finally:
+    _redact423.scrub = _orig423
+check("a cache written by a different redactor is not reused", len(_calls423) > 100,
+      saw=len(_calls423))
+
+# Without a workspace the function still scrubs, and writes nothing.
+_bare423 = _P423(_tf423.mkdtemp())
+check("a root with no workspace still gets a byte-equal scrub",
+      _mapper423.scrub_map_text(_text423, _bare423) == _whole423
+      and not (_bare423 / ".chamnan").exists())
+
+# Read-only runs (`--preview`, CHAMNAN_READ_ONLY) still scrub but write no cache.
+import os as _os423
+_ro423 = _P423(_tf423.mkdtemp())
+_sp423.run(["git", "-C", str(_ro423), "init", "-q"], capture_output=True)
+(_ro423 / ".chamnan" / "logs").mkdir(parents=True)
+_os423.environ[_ws423.READ_ONLY_ENV] = "1"
+try:
+    _roout423 = _mapper423.scrub_map_text(_text423, _ro423)
+finally:
+    _os423.environ.pop(_ws423.READ_ONLY_ENV, None)
+check("under CHAMNAN_READ_ONLY the map is still scrubbed and no cache is written",
+      _roout423 == _whole423 and not (_ro423 / ".chamnan" / "logs" / "map_scrub_cache.json").exists())
+
+# A fresh workspace keeps the cache out of git: it is as large as the map.
+_ig423 = _P423(_tf423.mkdtemp())
+_sp423.run(["git", "-C", str(_ig423), "init", "-q"], capture_output=True)
+_ws423.ensure(_ig423)
+_ign423 = _sp423.run(["git", "-C", str(_ig423), "check-ignore", "-q", ".chamnan/logs/map_scrub_cache.json"],
+                     capture_output=True)
+check("a fresh workspace's .gitignore covers the scrub cache", _ign423.returncode == 0,
+      saw=_ign423.returncode)
+# ---- 424_a_capped_read_never_ends_in_half_a_character.py
+# ------------------ a capped read never ends in half a character
+# 🐛 [2026-10-05] (R106 acc5, 2026-10-05) `tree.read_capped` read `limit` bytes and decoded them with
+# errors="replace", so a cap that fell inside a multi-byte character left U+FFFD at the end of the
+# preview: 133 of 199 caps over Thai text did. UTF-8 carries its own boundary state (RFC 3629), and
+# an incremental decoder holds back an incomplete tail instead of replacing it. This pins that no
+# cap ends in a replacement character, that the text is a true prefix, and that a real invalid byte
+# inside the text is still replaced.
+import codecs as _cd424
+import importlib as _il424
+import tempfile as _tf424
+from pathlib import Path as _P424
+
+_tree424 = _il424.import_module("tree")
+_d424 = _P424(_tf424.mkdtemp())
+_thai424 = _d424 / "thai.md"
+_full424 = "สวัสดีครับ 🙂 naïve " * 60
+_thai424.write_text(_full424, encoding="utf-8")
+_bad424 = [n for n in range(1, 400) if _tree424.read_capped(_thai424, limit=n).endswith("�")]
+check("no cap inside a multi-byte character leaves U+FFFD at the end", not _bad424,
+      saw=f"{len(_bad424)} of 399 caps, first {_bad424[:5]}")
+_notprefix424 = [n for n in range(1, 400) if not _full424.startswith(_tree424.read_capped(_thai424, limit=n))]
+check("...and every capped read is a true prefix of the text", not _notprefix424, saw=_notprefix424[:5])
+_raw424 = _d424 / "raw.txt"
+_raw424.write_bytes(b"ok \xff here")
+check("an invalid byte inside the text is still replaced, not dropped",
+      _tree424.read_capped(_raw424) == "ok � here", saw=repr(_tree424.read_capped(_raw424)))
+_bom424 = _d424 / "bom.txt"
+_bom424.write_bytes(_cd424.BOM_UTF8 + "สวัสดี".encode("utf-8"))
+check("a UTF-8 BOM is still dropped", _tree424.read_capped(_bom424) == "สวัสดี",
+      saw=repr(_tree424.read_capped(_bom424)))
+# ---- 425_a_commit_guard_that_runs_out_of_time_says_so.py
+# ------------------ a commit guard that runs out of time says so instead of passing silently
+# 🐛 [2026-10-05] (R144 acc4, 2026-10-05) The redactor reads about 220 KB a second, so a staged 1.6 MB
+# minified bundle took the guard 7.6 s and a 3.2 MB one 14.6 s. The hook gives the guard 20 s and
+# caught the timeout in the same `except Exception: return 0` as every other failure, so a commit
+# with a bundle past ~4 MB was not scanned and nothing said so. GitHub's code search documents the
+# same trap: a hard envelope that users read as complete. This pins that a timeout prints one line
+# naming the command to run by hand, that the commit is still never blocked, and that an ordinary
+# clean commit stays silent.
+import contextlib as _cl425
+import importlib.util as _ilu425
+import io as _io425
+import json as _json425
+import subprocess as _sp425
+import sys as _sys425
+import tempfile as _tf425
+from pathlib import Path as _P425
+
+_spec425 = _ilu425.spec_from_file_location("_cg425", ROOT / "hooks" / "chamnan_commit_guard.py")
+_cg425 = _ilu425.module_from_spec(_spec425)
+_spec425.loader.exec_module(_cg425)
+
+_d425 = _P425(_tf425.mkdtemp())
+_g425 = lambda *a: _sp425.run(["git", "-C", str(_d425), *a], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+_g425("init", "-q")
+_g425("config", "user.email", "t@t")
+_g425("config", "user.name", "t")
+(_d425 / ".chamnan").mkdir()
+(_d425 / "app.py").write_text("print(1)\n", encoding="utf-8")
+_g425("add", "app.py")
+
+
+def _run425(timeout):
+    _payload = _json425.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"},
+                               "cwd": str(_d425), "session_id": "t425"})
+    _err = _io425.StringIO()
+    _old_in, _old_t = _sys425.stdin, getattr(_cg425, "GUARD_TIMEOUT", None)
+    _sys425.stdin = _io425.StringIO(_payload)
+    _cg425.GUARD_TIMEOUT = timeout
+    try:
+        with _cl425.redirect_stderr(_err), _cl425.redirect_stdout(_io425.StringIO()):
+            _rc = _cg425.main()
+    finally:
+        _sys425.stdin = _old_in
+        if _old_t is not None:
+            _cg425.GUARD_TIMEOUT = _old_t
+    return _rc, _err.getvalue()
+
+
+check("the guard's time limit is a named constant a test can lower",
+      isinstance(getattr(_cg425, "GUARD_TIMEOUT", None), (int, float)),
+      saw=getattr(_cg425, "GUARD_TIMEOUT", "missing"))
+_rc425, _out425 = _run425(0.001)
+check("a guard that runs out of time says so in one line, naming the command to run by hand",
+      "chamnan-guard" in _out425 and ("did not finish" in _out425 or "time" in _out425.lower()),
+      saw=_out425[-300:])
+check("...and the commit is still never blocked", _rc425 == 0, saw=_rc425)
+_rc425b, _out425b = _run425(60)
+check("an ordinary clean commit with time to spare stays silent", _out425b.strip() == "" and _rc425b == 0,
+      saw=_out425b[-300:])
+# ---- 426_stripping_invisibles_never_reassembles_a_credential.py
+# ------------------ stripping invisible characters never reassembles a credential the scrub missed
+# 🐛 [2026-10-05] (R148 acc4, 2026-10-05) Every outward path runs `for_a_terminal(scrub(text))`. A
+# credential split by an invisible character (U+200B, U+2060, U+FEFF) is not a credential to the
+# scrub, so both halves were kept; `for_a_terminal` then deleted the invisible character and printed
+# the complete, valid key into MAP.md, a command's output and a hook's context. dlpscan documents
+# zero-width insertion defeating every regex pattern until invisibles are stripped first. This pins
+# that no character `for_a_terminal` deletes can rejoin a key, through both the map path and emit,
+# and that text with nothing to hide is only stripped, not otherwise changed.
+import contextlib as _cl426
+import importlib as _il426
+import io as _io426
+import random as _rnd426
+import string as _st426
+
+_redact426 = _il426.import_module("redact")
+_r426 = _rnd426.Random(426)
+_key426 = "gh" + "p_" + "".join(_r426.choice(_st426.ascii_letters + _st426.digits) for _ in range(36))
+_deleted426 = sorted(chr(c) for c, v in _redact426._TERMINAL_SAFE.items() if v is None)
+check("the terminal pass deletes some characters (the population is not empty)", len(_deleted426) > 5,
+      saw=len(_deleted426))
+_leaks426 = []
+for _ch426 in _deleted426:
+    for _shape426 in ("{k}", "token: {k}", "api_key = '{k}'"):
+        _v426 = _shape426.format(k=_key426[:10] + _ch426 + _key426[10:])
+        _map426 = _redact426.for_a_terminal(_redact426.scrub(_v426))
+        _buf426 = _io426.StringIO()
+        with _cl426.redirect_stdout(_buf426):
+            _redact426.emit(_v426)
+        if _key426 in _map426 or _key426 in _buf426.getvalue():
+            _leaks426.append((hex(ord(_ch426)), _shape426))
+check("no deleted invisible character rejoins a credential on the map path or through emit",
+      not _leaks426, saw=_leaks426[:6])
+_plain426 = "a sentence​ with an invisible character and nothing secret"
+check("text with nothing secret is only stripped",
+      _redact426.for_a_terminal(_plain426) == _plain426.translate(_redact426._TERMINAL_SAFE),
+      saw=repr(_redact426.for_a_terminal(_plain426)))
 # ---- 42_every_subprocess_this_package_starts_is_bounded.py
 # ------------------------------------------- fourteen of fifteen, and the fifteenth waits forever
 # 🐛 [2026-09-10] Every `subprocess.run` in this package passes `timeout=` except one:
@@ -51196,6 +51504,9 @@ _DISPOSABLE45 = frozenset({
     # Age-based deletion is the CORRECT outcome for this one: a digest that survives becomes the
     # standing nag its own comment says it must not be.
     "repeat_digest.json",
+    # Derived by mapper.scrub_map_text and rewritten whole on every map build, so it never grows past
+    # one map's worth; losing it to an age sweep costs one full scrub (R91 acc5, 2026-10-05).
+    "map_scrub_cache.json",
 })
 
 _t_files45 = []

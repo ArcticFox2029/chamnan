@@ -2541,7 +2541,7 @@ def scrub_map_text(text, root):
     path = Path(wsdir) / "logs" / "map_scrub_cache.json"
     old = {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         if (isinstance(data, dict) and data.get("scrubber") == ident
                 and isinstance(data.get("parts"), dict)):
             old = data["parts"]
@@ -2560,9 +2560,10 @@ def scrub_map_text(text, root):
     if not ws.read_only():
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            ws.atomic_write_text(path, json.dumps({"scrubber": ident, "parts": fresh}))
         except OSError:
-            pass  # a failed write only costs a full scrub next time
+            return "".join(out)  # no logs/ to write into: the scrub is done, only the reuse is lost
+        # Returns False rather than raising; a failed write only costs a full scrub next time.
+        ws.atomic_write_text(path, json.dumps({"scrubber": ident, "parts": fresh}))
     return "".join(out)
 
 
