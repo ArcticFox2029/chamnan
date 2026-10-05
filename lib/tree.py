@@ -478,13 +478,27 @@ def index_census(root):
         seen = Counter(key(x) for x in tracked)
         return sorted(x for x in tracked if seen[key(x)] > 1)
 
+    # 🐛 [2026-10-05] (R9 acc4, 2026-10-05) `srс/main.py` with a Cyrillic `с` beside `src/main.py`
+    # was listed with no warning while case and normalisation collisions were counted here. A path
+    # whose look-alike skeleton equals another's while its real spelling differs is named. The table
+    # is the redactor's own `fold_confusables` (Cyrillic and Greek letters that render as Latin), so
+    # ordinary Thai, Russian or accented names with no Latin twin are never reported. Check 420.
+    import redact as _redact
+    _spellings = {}
+    for _p in tracked:
+        _nfc = unicodedata.normalize("NFC", _p)
+        _spellings.setdefault(_redact.fold_confusables(_nfc), set()).add(_nfc)
+    _confusable = sorted(p for p in tracked
+                         if len(_spellings[_redact.fold_confusables(unicodedata.normalize("NFC", p))]) > 1)
+
     return {"tracked": len(tracked),
             "absent": sorted(absent),
             "unreadable": sorted(unreadable),
             "symlink_as_file": sorted(symlink_as_file),
             "submodules": sorted(gitlinks),
             "case_collisions": _groups(str.casefold),
-            "nfc_collisions": _groups(lambda s: unicodedata.normalize("NFC", s))}
+            "nfc_collisions": _groups(lambda s: unicodedata.normalize("NFC", s)),
+            "confusable_collisions": _confusable}
 
 
 def vcs_dirs(root):

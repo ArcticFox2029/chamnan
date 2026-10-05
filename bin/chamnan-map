@@ -1254,6 +1254,10 @@ def main(argv):
         if _census["nfc_collisions"]:
             _gaps.append(f"{len(_census['nfc_collisions'])} path(s) differing only by unicode "
                          f"normalisation")
+        if _census.get("confusable_collisions"):
+            _gaps.append(f"{len(_census['confusable_collisions'])} path(s) that look identical to "
+                         f"another but are not (look-alike letters, e.g. "
+                         f"{mdblock.as_quoted(_census['confusable_collisions'][0], 44)})")
         if _gaps:
             print(f"  git's index knows {_census['tracked']:,} path(s); this index walked the "
                   f"disk — " + "; ".join(_gaps))
