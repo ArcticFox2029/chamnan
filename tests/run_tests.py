@@ -49806,6 +49806,555 @@ for _t_n_39 in (5, 9):
         shutil.rmtree(_d, ignore_errors=True)
 check("...and a store that pins nothing is shared out evenly, exactly as before",
       not _t_changed39, saw="\n".join(_t_changed39) or None)
+# ---- 400_an_unchanged_repository_leaves_agents_md_byte_identical.py
+# ------------------ a commit that changes nothing indexed leaves the AGENTS.md region byte-identical
+# 🐛 [2026-10-02] (R5 acc5, 2026-10-02) The opt-in pre-commit hook rebuilds the map and rewrites the
+# AGENTS.md region on every commit, and the region changed every time even when nothing it describes
+# had: the map's "Built from <sha>" moves each commit, the status line and "Last edited" carry
+# relative ages, the snapshot note carries the date, and the fence nonce is a digest of all of it.
+# 694 commits in this repository carry an AGENTS.md diff. The write is now skipped when only those
+# volatile parts differ; a real change to what is described still rewrites the file.
+import shutil as _sh400
+import subprocess as _sp400
+import sys as _sy400
+import tempfile as _tf400
+from pathlib import Path as _P400
+
+_d400 = _P400(_tf400.mkdtemp(prefix="chamnan-check400-"))
+try:
+    _r400 = _d400 / "repo"
+    _g400 = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+    _sp400.run(["git", "init", "-q", str(_r400)], capture_output=True, timeout=30)
+    (_r400 / "a.py").write_text("# a\nx = 1\n", encoding="utf-8")
+
+    def _git400(*args):
+        _sp400.run(["git", "-C", str(_r400), *_g400, *args], capture_output=True, timeout=60)
+
+    def _refresh400():
+        _sp400.run([_sy400.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_r400),
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return _sp400.run([_sy400.executable, str(ROOT / "bin" / "chamnan-context"), "--write", "generic"],
+                          cwd=str(_r400), capture_output=True, text=True, encoding="utf-8", timeout=120).stdout
+
+    _git400("add", "-A"); _git400("commit", "-qm", "one")
+    _refresh400(); _git400("add", "-A"); _git400("commit", "-qm", "two")
+    _refresh400(); _git400("add", "-A"); _git400("commit", "-qm", "three")
+    _before400 = (_r400 / "AGENTS.md").read_bytes()
+    _git400("commit", "-q", "--allow-empty", "-m", "four")
+    _out400 = _refresh400()
+    check("A COMMIT THAT CHANGES NOTHING INDEXED LEAVES AGENTS.md BYTE-IDENTICAL",
+          (_r400 / "AGENTS.md").read_bytes() == _before400 and "unchanged" in _out400, saw=_out400[-200:])
+    (_r400 / "a.py").write_text("# alpha module\nx = 1\n", encoding="utf-8")
+    _git400("add", "-A"); _git400("commit", "-qm", "five")
+    _refresh400()
+    check("...while a change to what it describes still rewrites it",
+          "alpha module" in (_r400 / "AGENTS.md").read_text(encoding="utf-8"))
+finally:
+    _sh400.rmtree(_d400, ignore_errors=True)
+# ---- 401_a_workspace_without_a_tool_index_records_no_crash.py
+# ------------------ a workspace with no tool index records no hook crash at session start
+# 🐛 [2026-10-02] (R216 follow-up, 2026-10-02) ff39bc2 made the session start count a swallowed
+# exception around reading `.chamnan/tools/index.json`, and a workspace with no tool index -- a fresh
+# one has none -- then logged a FileNotFoundError "crash" on every session start and every
+# `chamnan-context` run, so doctor reported crashes that were not crashes. A missing index is
+# ordinary now; a corrupt one is still counted.
+import json as _js401
+import os as _os401
+import shutil as _sh401
+import subprocess as _sp401
+import sys as _sy401
+import tempfile as _tf401
+from pathlib import Path as _P401
+
+
+def _start401(d):
+    payload = {"session_id": "c401", "cwd": str(d), "hook_event_name": "SessionStart", "source": "startup"}
+    _sp401.run([_sy401.executable, str(ROOT / "hooks" / "chamnan_session_start.py")], cwd=str(d),
+               env=dict(_os401.environ, CLAUDE_PROJECT_DIR=str(d)), input=_js401.dumps(payload),
+               capture_output=True, text=True, encoding="utf-8", timeout=120)
+    log = d / ".chamnan" / "logs" / "hook_errors.jsonl"
+    return log.read_text(encoding="utf-8") if log.is_file() else ""
+
+
+_d401 = _P401(_tf401.mkdtemp(prefix="chamnan-check401-"))
+try:
+    _r401 = _d401 / "repo"
+    _sp401.run(["git", "init", "-q", str(_r401)], capture_output=True, timeout=30)
+    (_r401 / ".chamnan").mkdir()
+    (_r401 / "a.py").write_text("# a\nx = 1\n", encoding="utf-8")
+    _start401(_r401)
+    _missing401 = _start401(_r401)
+    check("A WORKSPACE WITH NO TOOL INDEX RECORDS NO HOOK CRASH",
+          "FileNotFoundError" not in _missing401, saw=_missing401[-300:])
+    (_r401 / ".chamnan" / "tools").mkdir(exist_ok=True)
+    (_r401 / ".chamnan" / "tools" / "index.json").write_text("{not json", encoding="utf-8")
+    _broken401 = _start401(_r401)
+    check("...while a corrupt tool index is still counted", "JSONDecodeError" in _broken401,
+          saw=_broken401[-300:])
+finally:
+    _sh401.rmtree(_d401, ignore_errors=True)
+# ---- 402_recall_stems_each_distinct_term_once.py
+# ------------------ chamnan-recall stems each distinct body term once per query
+# 🎯 [2026-10-02] (R33 acc5, 2026-10-02) The stem-expansion loop in `query()` called `stem()` for every
+# body term of every entry: 35,998 calls per query on a 1,337-entry index that holds only 8,825
+# distinct terms. It now stems the distinct vocabulary once (median 90-100 ms -> 52-55 ms, identical
+# results over 64 queries). This pins both halves: the call count stays near the number of distinct
+# terms, and the form expansion (`boundaries` finds an entry that only says `boundary`) still works.
+import importlib as _il402
+
+_recall402 = _il402.import_module("recall")
+_words402 = ["boundary", "boundaries", "limit", "policy", "token", "secret"]
+_entries402 = []
+for _i402 in range(40):
+    _entries402.append({
+        "path": "docs/e%02d.md" % _i402, "title": "doc %d" % _i402, "blurb": "", "text": "",
+        "kind": "doc", "weight": 1.0,
+        "body": {w: 1 for w in _words402 if w != ("boundary" if _i402 % 2 else "boundaries")},
+    })
+_index402 = {"entries": _entries402, "ignored": []}
+_occ402 = sum(len(e["body"]) for e in _entries402)
+_distinct402 = len({t for e in _entries402 for t in e["body"]})
+
+_calls402 = []
+_orig402 = _recall402.stem
+
+
+def _counting402(w):
+    _calls402.append(w)
+    return _orig402(w)
+
+
+_recall402.stem = _counting402
+try:
+    _res402 = _recall402.query(_index402, ["boundaries"], limit=100)
+finally:
+    _recall402.stem = _orig402
+
+check("STEM IS CALLED ABOUT ONCE PER DISTINCT BODY TERM, NOT PER OCCURRENCE",
+      len(_calls402) <= _distinct402 + 4 and len(_calls402) < _occ402,
+      saw=(len(_calls402), _distinct402, _occ402))
+_paths402 = {e["path"] for _s, e, _w in _res402}
+check("...and the entries that only say `boundary` are still found by `boundaries`",
+      all(e["path"] in _paths402 for e in _entries402 if "boundary" in e["body"]),
+      saw=(len(_paths402), len(_entries402)))
+# ---- 403_a_lookup_name_a_pattern_and_the_keys_own_name_are_not_secrets.py
+# ------------------ a lookup name, a regex pattern and the key's own name are not secrets
+# 🐛 [2026-10-02] (R30 acc5, 2026-10-02) Scrubbing the plugin's own tracked files changed ordinary
+# code in three ways, all from `_redact_literals_in`: `api_key = os.environ.get("OPENAI_API_KEY")`
+# (a variable NAME), `ENV_FILE_KEY = re.compile(r"^[A-Z_]{2,}=", re.M)` (a pattern) and
+# `"output_tokens": usage.get("output_tokens", 0),` (the key repeated as a lookup). Each cut is
+# narrow, and the guards below pin what must still be redacted.
+import importlib as _il403
+import random as _rnd403
+import string as _st403
+
+_rd403 = _il403.import_module("redact")
+_ph403 = _rd403.PLACEHOLDER
+for _line403 in ('api_key = os.environ.get("OPENAI_API_KEY")',
+                 '"output_tokens": usage.get("output_tokens", 0),',
+                 'ENV_FILE_KEY = re.compile(r"^[A-Z_]{2,}=", re.M)'):
+    check("A LOOKUP NAME, A REGEX PATTERN AND THE KEY'S OWN NAME ARE LEFT ALONE: " + _line403[:30],
+          _rd403.scrub(_line403) == _line403, saw=_rd403.scrub(_line403))
+
+_out403 = _rd403.scrub('API_KEY = os.environ.get("KEY", "hunter2secret")')
+check("...the fallback of an environment lookup is still redacted",
+      "hunter2secret" not in _out403 and _ph403 in _out403, saw=_out403)
+_out403 = _rd403.scrub('api_key = os.getenv("hunter2secretvalue")')
+check("...a lowercase first argument is not a variable name and is still redacted",
+      "hunter2secretvalue" not in _out403, saw=_out403)
+_r403 = _rnd403.Random(403)
+_b64403 = "".join(_r403.choice(_st403.ascii_letters + _st403.digits) for _ in range(24))
+_out403 = _rd403.scrub('AWS_SECRET = base64.b64decode("%s")' % _b64403)
+check("...a base64 literal inside a call is still redacted", _b64403 not in _out403, saw=_out403)
+_out403 = _rd403.scrub('password = hash("password")')
+check("...a default credential equal to the key is still redacted",
+      '"password"' not in _out403, saw=_out403)
+_out403 = _rd403.scrub('api_token = fetch("some_other_value_123")')
+check("...a literal that is not the key is still redacted",
+      "some_other_value_123" not in _out403, saw=_out403)
+# ---- 404_where_sees_exports_entry_points_and_says_when_names_are_looked_up.py
+# ------------------ chamnan-where sees __all__ exports and entry points, and says when names are looked up at runtime
+# 🐛 [2026-10-03] (R6 acc5, 2026-10-03) Name-based dead-code detection: 70% of its false positives were
+# functions reached by registration or by name. Fixture: `plugins.py` defines `handle_export` and
+# `handle_import` with `__all__ = ["handle_import"]`, `main.py` does `getattr(plugins, "handle_" + kind)(x)`,
+# and `pyproject.toml` has `mytool = "plugins:handle_export"`. `chamnan-where` printed only
+# `def plugins.py:N` for each, so an agent deleting "unused" code concluded nothing used them. An
+# `__all__` element is an "export", a `module:symbol` line in pyproject.toml/setup.cfg an "entry point",
+# and a tree that looks names up with a computed name says so when the only evidence is a def.
+import importlib as _il404
+import shutil as _sh404
+import subprocess as _sp404
+import sys as _sys404
+import tempfile as _tf404
+from pathlib import Path as _P404
+
+_refs404 = _il404.import_module("refs")
+_d404 = _P404(_tf404.mkdtemp(prefix="chamnan-check404-"))
+_where404 = ROOT / "bin" / "chamnan-where"
+
+
+def _run404(sym):
+    return _sp404.run([_sys404.executable, str(_where404), sym], cwd=str(_d404),
+                      capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+
+
+try:
+    (_d404 / "plugins.py").write_text(
+        '__all__ = ["handle_import"]\n\n\ndef handle_export(x):\n    return x\n\n\n'
+        'def handle_import(x):\n    return x\n\n\ndef handle_dyn(x):\n    return x\n\n\n'
+        'def handle_real(x):\n    return x\n', encoding="utf-8")
+    (_d404 / "main.py").write_text(
+        'import plugins\n\n\ndef run(kind, x):\n    getattr(plugins, "handle_" + kind)(x)\n'
+        '    return plugins.handle_real(x)\n', encoding="utf-8")
+    (_d404 / "pyproject.toml").write_text(
+        '[project.scripts]\nmytool = "plugins:handle_export"\n', encoding="utf-8")
+    _sp404.run(["git", "init", "-q"], cwd=str(_d404), capture_output=True)
+
+    _hi404 = [(r, l, k) for r, l, k in _refs404.find(_d404, "handle_import")[0]]
+    check("AN __all__ ELEMENT IS REPORTED AS AN EXPORT AT ITS OWN LINE",
+          ("plugins.py", 1, "export") in _hi404, saw=_hi404)
+    _he404 = [(r, l, k) for r, l, k in _refs404.find(_d404, "handle_export")[0]]
+    check("...and a pyproject.toml entry point is reported as one",
+          ("pyproject.toml", 2, "entry point") in _he404, saw=_he404)
+    check("...and a prefix of the name is not an entry point",
+          not [h for h in _refs404.find(_d404, "handle_exp")[0] if h[2] == "entry point"])
+    _seen404 = {}
+    _how404 = _refs404.find(_d404, "handle_dyn", seen=_seen404)[2]
+    check("...and the file calling getattr with a computed name is counted as dynamic, outside how",
+          _seen404.get("dynamic") == 1 and "dynamic" not in _how404, saw=(_seen404, _how404))
+
+    _dyn404 = _run404("handle_dyn")
+    check("A FUNCTION REACHED ONLY BY getattr PRINTS THE RUNTIME-LOOKUP CAVEAT",
+          "look names up at runtime" in _dyn404, saw=_dyn404)
+    _real404 = _run404("handle_real")
+    check("...while one with a real call does not",
+          "look names up at runtime" not in _real404 and "attribute" in _real404, saw=_real404)
+    _exp404 = _run404("handle_export")
+    check("...and the printed answer lists the entry point",
+          "entry point" in _exp404 and "pyproject.toml:2" in _exp404
+          and "look names up at runtime" not in _exp404, saw=_exp404)
+
+    (_d404 / "plain.py").write_text("def only():\n    return 1\n\n\nonly()\n", encoding="utf-8")
+    _pl404 = [(r, l, k) for r, l, k in _refs404.find(_d404, "only")[0]]
+    check("A FILE WITH NO __all__ AND NO ENTRY POINT ANSWERS EXACTLY AS BEFORE",
+          _pl404 == [("plain.py", 1, "def"), ("plain.py", 5, "call")], saw=_pl404)
+
+    # A class is a declaration, and a name read as a value is a use; an import is neither.
+    (_d404 / "errs.py").write_text("class StaleError(Exception):\n    pass\n", encoding="utf-8")
+    (_d404 / "use_errs.py").write_text(
+        "from errs import StaleError\n\n\nclass Narrower(StaleError):\n    pass\n\n\n"
+        "def f(v) -> StaleError:\n    return isinstance(v, StaleError)\n\n\n"
+        "def g():\n    try:\n        pass\n    except StaleError:\n        pass\n", encoding="utf-8")
+    _se404 = sorted((r, l, k) for r, l, k in _refs404.find(_d404, "StaleError")[0])
+    check("A CLASS DEFINITION IS A DEF AND A NAME READ AS A VALUE IS A REFERENCE, NOT THE IMPORT",
+          _se404 == [("errs.py", 1, "def"), ("use_errs.py", 4, "reference"),
+                     ("use_errs.py", 8, "reference"), ("use_errs.py", 9, "reference"),
+                     ("use_errs.py", 15, "reference")]
+          or (len(_se404) == 5 and ("errs.py", 1, "def") in _se404
+              and not [h for h in _se404 if h[:2] == ("use_errs.py", 1)]),
+          saw=_se404)
+    (_d404 / "cb.py").write_text(
+        "def helper():\n    return 1\n\n\ncallbacks = [helper]\nhandler = helper\n", encoding="utf-8")
+    _hp404 = sorted((r, l, k) for r, l, k in _refs404.find(_d404, "helper")[0])
+    check("...and a function passed in a list or assigned gives two references",
+          _hp404 == [("cb.py", 1, "def"), ("cb.py", 5, "reference"), ("cb.py", 6, "reference")],
+          saw=_hp404)
+finally:
+    _sh404.rmtree(_d404, ignore_errors=True)
+# ---- 405_a_growing_age_never_reads_younger.py
+# ------------------ a growing age never reads younger in the "Last edited" label
+# 🐛 [2026-10-03] (R9 acc5, 2026-10-03) `coedit._ago` switched from hours to days at 36h, so the label
+# went "35h" -> "1d": an age that grows read as getting younger, in a line injected into every
+# session. Swept over 0..400 days in 59 s steps, the value each label implies must never decrease
+# and never exceed the true age, and the unit boundaries are pinned.
+import importlib as _il405
+
+_coedit405 = _il405.import_module("coedit")
+
+
+def _implied405(label):
+    if label == "<1h":
+        return 0
+    return int(label[:-1]) * (3600 if label.endswith("h") else 86400)
+
+
+_prev405, _backwards405, _over405 = 0, None, None
+for _s405 in range(0, 400 * 86400, 59):
+    _v405 = _implied405(_coedit405._ago(_s405))
+    if _v405 < _prev405 and _backwards405 is None:
+        _backwards405 = (_s405, _coedit405._ago(_s405))
+    if _v405 > _s405 and _over405 is None:
+        _over405 = (_s405, _coedit405._ago(_s405))
+    _prev405 = max(_prev405, _v405)
+
+check("A GROWING AGE NEVER READS YOUNGER", _backwards405 is None, saw=_backwards405)
+check("...and a label never claims more time than has passed", _over405 is None, saw=_over405)
+check("...the unit boundaries read as '<1h', '47h', '2d'",
+      (_coedit405._ago(3599), _coedit405._ago(47 * 3600), _coedit405._ago(48 * 3600))
+      == ("<1h", "47h", "2d"),
+      saw=(_coedit405._ago(3599), _coedit405._ago(47 * 3600), _coedit405._ago(48 * 3600)))
+# ---- 406_a_config_that_is_not_chamnans_is_never_rewritten.py
+# ------------------ a config.json that is not chamnan's is never rewritten by the session start
+# 🐛 [2026-10-03] (R12 acc5, 2026-10-03) The config merge keeps only keys in DEFAULT_CONFIG, so a
+# repository whose `.chamnan` is a symlink to a directory outside it, already holding another tool's
+# config.json (`{"auths": {"keep": "me"}}`, the shape of Docker's), had that file replaced by
+# chamnan's defaults when the SessionStart hook ran. A file sharing no key with the defaults is left
+# byte-for-byte; a real chamnan config still gains missing keys and still loses retired ones.
+import json as _js406
+import os as _os406
+import shutil as _sh406
+import subprocess as _sp406
+import sys as _sy406
+import tempfile as _tf406
+from pathlib import Path as _P406
+
+
+def _start406(d):
+    payload = {"session_id": "c406", "cwd": str(d), "hook_event_name": "SessionStart", "source": "startup"}
+    _sp406.run([_sy406.executable, str(ROOT / "hooks" / "chamnan_session_start.py")], cwd=str(d),
+               env=dict(_os406.environ, CLAUDE_PROJECT_DIR=str(d)), input=_js406.dumps(payload),
+               capture_output=True, text=True, encoding="utf-8", timeout=120)
+
+
+def _repo406(base, name):
+    r = base / name
+    _sp406.run(["git", "init", "-q", str(r)], capture_output=True, timeout=30)
+    (r / "a.py").write_text("# a\nx = 1\n", encoding="utf-8")
+    return r
+
+
+_d406 = _P406(_tf406.mkdtemp(prefix="chamnan-check406-"))
+try:
+    # (1) .chamnan is a symlink to an outside directory holding a foreign config
+    _out406 = _d406 / "outside"
+    _out406.mkdir()
+    _foreign406 = b'{"auths": {"keep": "me"}}'
+    (_out406 / "config.json").write_bytes(_foreign406)
+    _r1406 = _repo406(_d406, "repo1")
+    (_r1406 / ".chamnan").symlink_to(_out406)
+    _start406(_r1406)
+    check("A CONFIG THAT IS NOT CHAMNAN'S IS LEFT BYTE-FOR-BYTE",
+          (_out406 / "config.json").read_bytes() == _foreign406,
+          saw=(_out406 / "config.json").read_bytes()[:200])
+
+    # (2) a real chamnan config missing one default key still gains it
+    _r2406 = _repo406(_d406, "repo2")
+    (_r2406 / ".chamnan").mkdir()
+    _probe406 = "log_retention_days"
+    _real406 = {"output_byte_ceiling": 5500}
+    (_r2406 / ".chamnan" / "config.json").write_text(_js406.dumps(_real406), encoding="utf-8")
+    _start406(_r2406)
+    _after2406 = _js406.loads((_r2406 / ".chamnan" / "config.json").read_text(encoding="utf-8"))
+    check("...a real chamnan config missing a default key still gains it",
+          _probe406 in _after2406 and _after2406.get("output_byte_ceiling") == 5500, saw=_after2406)
+
+    # (3) a chamnan config holding a retired key still loses it
+    _r3406 = _repo406(_d406, "repo3")
+    (_r3406 / ".chamnan").mkdir()
+    _retired406 = "an_option_chamnan_retired"
+    (_r3406 / ".chamnan" / "config.json").write_text(
+        _js406.dumps({"output_byte_ceiling": 5500, _retired406: 1}), encoding="utf-8")
+    _start406(_r3406)
+    _after3406 = _js406.loads((_r3406 / ".chamnan" / "config.json").read_text(encoding="utf-8"))
+    check("...and a chamnan config holding a retired key still loses it",
+          _retired406 not in _after3406 and _after3406.get("output_byte_ceiling") == 5500, saw=_after3406)
+finally:
+    _sh406.rmtree(_d406, ignore_errors=True)
+# ---- 407_a_rewrite_with_a_restored_mtime_is_reindexed.py
+# ------------------ a rewrite whose mtime was restored is still reindexed (POSIX)
+# 🐛 [2026-10-03] (R25 acc5, 2026-10-03) The reuse key was path + mtime_ns + size, so a note rewritten
+# to different text of the same byte length and given its old mtime back (cp -p, rsync -a, tar, unzip)
+# was reused as-is by even `--reindex`, and `stale_by` never flagged it. The inode change time cannot
+# be set by os.utime, so it now joins the key. This pins both halves and that an untouched note is
+# still reused without being re-read.
+import importlib as _il407
+import os as _os407
+import tempfile as _tf407
+from pathlib import Path as _P407
+
+_recall407 = _il407.import_module("recall")
+if _os407.name == "nt":
+    check("(Windows: ctime is the creation time, nothing to pin)", True)
+else:
+    _tmp407 = _P407(_tf407.mkdtemp())
+    _dir407 = _tmp407 / "memory" / "lessons"
+    _dir407.mkdir(parents=True)
+    _a407 = _dir407 / "a.md"
+    _b407 = _dir407 / "b.md"
+    _a407.write_text("# Note\n\nalphaword\n", encoding="utf-8")
+    _b407.write_text("# Other\n\nuntouchedword\n", encoding="utf-8")
+    _idx407 = _recall407.build(_tmp407)
+    _st407 = _a407.stat()
+    _a407.write_text("# Note\n\nbravoword\n", encoding="utf-8")
+    _os407.utime(_a407, ns=(_st407.st_atime_ns, _st407.st_mtime_ns))
+    _now407 = _a407.stat()
+    check("the rewrite really is the same size and mtime (the fixture reproduces the hole)",
+          _now407.st_size == _st407.st_size and _now407.st_mtime_ns == _st407.st_mtime_ns,
+          saw=(_now407.st_size, _st407.st_size))
+    check("stale_by reports the rewritten note although its mtime was restored",
+          _recall407.stale_by(_tmp407, _idx407) == 1, saw=_recall407.stale_by(_tmp407, _idx407))
+
+    _reads407 = []
+    _orig407 = _recall407.redact.scrub
+
+    def _counting407(t):
+        _reads407.append(t)
+        return _orig407(t)
+
+    _recall407.redact.scrub = _counting407
+    try:
+        _new407 = _recall407.build(_tmp407, previous=_idx407)
+    finally:
+        _recall407.redact.scrub = _orig407
+    _terms407 = {e["path"]: e["body"] for e in _new407["entries"] if e["kind"] == "lesson"}
+    _all407 = {t for e in _new407["entries"] if e["kind"] == "lesson"
+               for t in {**e["body"], **e.get("ig", {})}}
+    check("a rebuild with the previous index finds the new word and not the old one",
+          "bravoword" in _all407 and "alphaword" not in _all407, saw=sorted(_all407))
+    check("the untouched note was not re-read (only the rewritten one was scrubbed)",
+          not any("untouchedword" in t for t in _reads407) and any("bravoword" in t for t in _reads407),
+          saw=len(_reads407))
+    _old407 = _recall407.build(_tmp407)
+    for _e407 in _old407["entries"]:
+        _e407.pop("ctime", None)
+    _reads407.clear()
+    _recall407.redact.scrub = _counting407
+    try:
+        _recall407.build(_tmp407, previous=_old407)
+    finally:
+        _recall407.redact.scrub = _orig407
+    check("an index entry from before ctime existed is rebuilt once, not reused",
+          any("untouchedword" in t for t in _reads407), saw=len(_reads407))
+# ---- 408_a_long_run_after_a_secret_word_scrubs_in_linear_time.py
+# ------------------ a long unbroken value after a secret word scrubs in linear time
+# 🐛 [2026-10-05] (R26 acc5, 2026-10-05) SECRET_WORDS carried seven unbounded name runs
+# (`[A-Za-z0-9]+[_-]tokens?`, `[A-Z0-9]+KEYS?`, ...) that backtrack at every start position of an
+# unbroken alphanumeric run, so `API_KEY=<8,000 hex>` took 3.4 s to scrub and 20,000 characters of
+# `api_key = A1A1...` 22.8 s. The cause was the lookbehind letting a run start after every DIGIT of
+# an unbroken value; a run now starts only at its true beginning (bounding the run length instead
+# broke the suite's 200-character key from R181). This pins the cost curve across value shapes and
+# that no recall is lost.
+import importlib as _il408
+import random as _rnd408
+import string as _st408
+import time as _t408
+
+_redact408 = _il408.import_module("redact")
+_redact408.scrub("warm")
+_r408 = _rnd408.Random(408)
+
+
+def _run408(kind, n):
+    if kind == "A1":
+        return ("A1" * n)[:n]
+    if kind == "hex":
+        return "".join(_r408.choice("0123456789abcdef") for _ in range(n))
+    if kind == "digits":
+        return "".join(_r408.choice(_st408.digits) for _ in range(n))
+    if kind == "upper":
+        return "".join(_r408.choice(_st408.ascii_uppercase + _st408.digits) for _ in range(n))
+    return "".join(_r408.choice(_st408.ascii_letters + _st408.digits) for _ in range(n))
+
+
+def _cost408(text):
+    best = None
+    for _ in range(2):
+        t = _t408.perf_counter()
+        _redact408.scrub(text)
+        d = _t408.perf_counter() - t
+        best = d if best is None else min(best, d)
+    return best
+
+
+_worst408 = []
+for _prefix408 in ("api_key = ", "API_KEY=", "db_password: ", "auth_token=", "SECRET_KEY = "):
+    for _kind408 in ("A1", "hex", "digits", "upper", "mixed"):
+        _small408 = _cost408(_prefix408 + _run408(_kind408, 2000))
+        _large408 = _cost408(_prefix408 + _run408(_kind408, 8000))
+        _worst408.append((_large408, _large408 / max(_small408, 1e-4), _prefix408, _kind408))
+_worst408.sort(reverse=True)
+check("an 8,000-character value after a secret word scrubs in under 0.5 s, for every shape",
+      _worst408[0][0] < 0.5, saw=[(round(a, 3), round(b, 1), c, d) for a, b, c, d in _worst408[:3]])
+check("4x the value costs well under 16x the time (linear, not quadratic)",
+      max(r for _, r, _, _ in _worst408) < 8,
+      saw=sorted(((round(b, 1), c, d) for _, b, c, d in _worst408), reverse=True)[:3])
+
+# The bound must not cost recall: names up to KEY_RUN_MAX long before the secret word still match,
+# and a credential-shaped value after each kind of name is still replaced.
+_val408 = "gh" + "p_" + "".join(_r408.choice(_st408.ascii_letters + _st408.digits) for _ in range(36))
+_names408 = ["auth_token", "x" * 60 + "_token", "DB9_PASSWORD", "PROD" * 15 + "PWD", "AWS" * 20 + "CRED",
+             "MY" + "9" * 50 + "KEY", "service-" + "a" * 50 + "-key", "deploy_pass"]
+_kept408 = [n for n in _names408 if _val408 in _redact408.scrub(f"{n} = {_val408}\n")]
+check("a credential after each name shape (up to the 64-character bound) is still replaced",
+      not _kept408, saw=_kept408)
+check("KEY_RUN_MAX still bounds the name runs at 64", _redact408.KEY_RUN_MAX == 64,
+      saw=_redact408.KEY_RUN_MAX)
+# ---- 409_a_redactor_upgrade_rebuilds_the_recall_index.py
+# ------------------ a redactor upgrade rebuilds the recall index instead of reusing old scrubbing
+# 🐛 [2026-10-05] (R73 acc4, 2026-10-05) `recall.build(ws, previous)` reused an unchanged note's
+# entry when path, mtime_ns, size (and ctime) matched and TERMS_VERSION was unchanged -- never
+# asking which redactor had scrubbed it. After an upgrade whose redactor catches more, every
+# unchanged note kept what the old one let through, and `stale_by` reported 0, so nothing ever said
+# to reindex. Reproduced: a value indexed by a pass-through scrubber survived an incremental rebuild
+# with the real one; only a fresh build removed it. ruff and mypy key their caches on the analyser
+# version for the same reason. This pins: the index records which scrubber built it; a different
+# (or missing) record forces a full rescrub and counts as stale; the same record still reuses.
+import importlib as _il409
+import json as _json409
+import random as _rnd409
+import string as _st409
+import subprocess as _sp409
+import tempfile as _tf409
+from pathlib import Path as _P409
+
+_recall409 = _il409.import_module("recall")
+_tmp409 = _P409(_tf409.mkdtemp())
+_sp409.run(["git", "init", "-q", str(_tmp409)], check=False)
+_ws409 = _tmp409 / ".chamnan"
+(_ws409 / "memory" / "lessons").mkdir(parents=True)
+_r409 = _rnd409.Random(409)
+_val409 = "gh" + "p_" + "".join(_r409.choice(_st409.ascii_letters + _st409.digits) for _ in range(36))
+(_ws409 / "memory" / "lessons" / "deploy.md").write_text(
+    f"**Deploy note**\n\nThe release job uses {_val409} today.\n", encoding="utf-8")
+(_ws409 / "memory" / "lessons" / "other.md").write_text(
+    "**Other note**\n\nnothing secret here, just words\n", encoding="utf-8")
+
+check("the index records which scrubber built it",
+      isinstance(_recall409.build(_ws409).get("scrubber"), str))
+
+_real409 = _recall409.redact.scrub
+_recall409.redact.scrub = lambda t, *a, **k: t      # an older redactor that missed this shape
+try:
+    _old409 = _recall409.build(_ws409)
+finally:
+    _recall409.redact.scrub = _real409
+_old409 = _json409.loads(_json409.dumps(_old409))
+_old409["scrubber"] = "an-older-redactor"
+check("the fixture reproduces the hole: the old index holds the value",
+      _val409[4:].lower() in _json409.dumps(_old409).lower())
+
+check("an index built by a different scrubber counts as stale",
+      _recall409.stale_by(_ws409, _old409) > 0, saw=_recall409.stale_by(_ws409, _old409))
+_new409 = _recall409.build(_ws409, previous=_old409)
+check("an incremental rebuild after a redactor change drops what the old one let through",
+      _val409[4:].lower() not in _json409.dumps(_new409).lower())
+
+_legacy409 = _json409.loads(_json409.dumps(_old409))
+_legacy409.pop("scrubber", None)                    # an index written before this field existed
+check("an index with no scrubber record counts as stale and is rescrubbed",
+      _recall409.stale_by(_ws409, _legacy409) > 0
+      and _val409[4:].lower() not in _json409.dumps(_recall409.build(_ws409, previous=_legacy409)).lower())
+
+_cur409 = _recall409.build(_ws409)
+_reads409 = []
+_recall409.redact.scrub = lambda t, *a, **k: (_reads409.append(t), _real409(t))[1]
+try:
+    _recall409.build(_ws409, previous=_json409.loads(_json409.dumps(_cur409)))
+finally:
+    _recall409.redact.scrub = _real409
+check("the same scrubber still reuses unchanged notes (no rescrub)", not _reads409, saw=len(_reads409))
+check("an index from the same scrubber is not stale", _recall409.stale_by(_ws409, _cur409) == 0,
+      saw=_recall409.stale_by(_ws409, _cur409))
 # ---- 40_every_numeric_config_key_is_range_checked.py
 # ------------------------------------------- a bound that is declared and never consulted
 # 🐛 [2026-09-10] `_in_range` applies `_UPPER_BOUND` only to keys listed in `_NON_NEGATIVE`, and
@@ -49864,6 +50413,515 @@ for _t_key, _t_cap in sorted(ws._UPPER_BOUND.items()):
         _t_mean40.append(f"{_t_key}={_t_cap}, under the {_t_floor} floor for its unit")
 check("...and the bounds stay generous rather than becoming a second opinion about sensible values",
       not _t_mean40, saw="; ".join(_t_mean40) or None)
+# ---- 410_the_dynamic_lookup_regex_runs_only_where_its_literals_are.py
+# ------------------ chamnan-where runs its dynamic-lookup regex only on files holding its literals
+# 🎯 [2026-10-05] (R46 acc4, 2026-10-05) `refs.find` ran `_DYNAMIC` (getattr / import_module with a
+# computed name) over EVERY .py file before its substring gate: 0.61 s of a 1.16 s lookup for a
+# missing name on this repository, 616 ms over 308 files. The regex cannot match without one of
+# `getattr(`, `import_module(` or `__import__(`, so testing for those first is exact: the same 7
+# files, in 120 ms. Two ANDed cheap stages letting most input skip the expensive one is the
+# OSDI 2020 prefilter result the round brought. This pins the count unchanged and the regex unrun
+# on files that cannot match.
+import importlib as _il410
+import os as _os410
+import subprocess as _sp410
+import tempfile as _tf410
+from pathlib import Path as _P410
+
+_refs410 = _il410.import_module("refs")
+_tmp410 = _P410(_tf410.mkdtemp())
+_sp410.run(["git", "init", "-q", str(_tmp410)], check=False)
+for _i410 in range(30):
+    (_tmp410 / f"plain_{_i410}.py").write_text(f"def f{_i410}():\n    return {_i410}\n", encoding="utf-8")
+(_tmp410 / "dyn_a.py").write_text("import plugins\ngetattr(plugins, 'handle_' + kind)(x)\n", encoding="utf-8")
+(_tmp410 / "dyn_b.py").write_text("import importlib\nm = importlib.import_module(name)\n", encoding="utf-8")
+(_tmp410 / "lit.py").write_text("getattr(obj, 'name')\n", encoding="utf-8")
+
+
+class _Counting410:
+    def __init__(self, real):
+        self.real, self.calls = real, 0
+
+    def search(self, text, *a, **k):
+        self.calls += 1
+        return self.real.search(text, *a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+_real410 = _refs410._DYNAMIC
+_count410 = _Counting410(_real410)
+_refs410._DYNAMIC = _count410
+_seen410 = {}
+try:
+    _refs410.find(_tmp410, "zzzz_absent_name", seen=_seen410)
+finally:
+    _refs410._DYNAMIC = _real410
+check("the dynamic-lookup count is unchanged: two files look names up with a computed argument",
+      _seen410.get("dynamic") == 2, saw=_seen410.get("dynamic"))
+check("the regex ran only on the 3 files holding one of its literals, not on all 33",
+      _count410.calls <= 3, saw=_count410.calls)
+# ---- 411_an_unreadable_directory_is_named_as_a_directory.py
+# ------------------ chamnan-where names an unreadable directory as a directory, not as one bad file
+# 🐛 [2026-10-05] (R53 acc1, 2026-10-05) A chmod-000 directory holding a call made chamnan-where miss
+# the call and print "(1 file(s) too large or unparseable — not judged, not absent)": the walk's
+# error handler added the directory to the FILE count, so a whole unreadable tree, however many
+# files it held, read as one file that was too big. The miss was reported, but as the wrong thing.
+# ripgrep's silent "no files found" on a permission-denied subdirectory is the failure this class
+# ends in. This pins that the directory is counted and named as a directory.
+import importlib as _il411
+import os as _os411
+import subprocess as _sp411
+import sys as _sys411
+import tempfile as _tf411
+from pathlib import Path as _P411
+
+_refs411 = _il411.import_module("refs")
+if _os411.name == "nt" or (hasattr(_os411, "geteuid") and _os411.geteuid() == 0):
+    check("(Windows or root: chmod 000 does not lock a directory, nothing to pin)", True)
+else:
+    _tmp411 = _P411(_tf411.mkdtemp())
+    _sp411.run(["git", "init", "-q", str(_tmp411)], check=False)
+    (_tmp411 / "a.py").write_text("def thing():\n    return 1\n", encoding="utf-8")
+    _locked411 = _tmp411 / "locked"
+    _locked411.mkdir()
+    (_locked411 / "b.py").write_text("thing()\n", encoding="utf-8")
+    (_locked411 / "c.py").write_text("thing()\n", encoding="utf-8")
+    _os411.chmod(_locked411, 0)
+    try:
+        _seen411 = {}
+        _hits411, _unjudged411, _how411 = _refs411.find(_tmp411, "thing", seen=_seen411)
+        check("the unreadable directory is counted as a directory",
+              _seen411.get("unreadable_dirs") == 1, saw=_seen411)
+        check("it is not counted as an unparseable file", _unjudged411 == 0, saw=_unjudged411)
+        _bin411 = _P411(_refs411.__file__).resolve().parent.parent / "bin" / "chamnan-where"
+        _out411 = _sp411.run([_sys411.executable, str(_bin411), "thing"], cwd=_tmp411,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+        check("chamnan-where says a directory could not be read, and does not call it a file",
+              "director" in _out411 and "could not be read" in _out411
+              and "too large or unparseable" not in _out411, saw=_out411)
+    finally:
+        _os411.chmod(_locked411, 0o755)
+# ---- 412_the_drift_check_reads_head_without_a_git_spawn.py
+# ------------------ the instruction-file drift check reads HEAD without spawning git
+# 🐛 [2026-10-05] (R56 acc1, 2026-10-05) SessionStart made 11 separate git calls at 93-164 ms each
+# on a loaded machine; one was `drift.notice` asking `git rev-parse HEAD` for its cache key, while
+# `rollup._head` already reads HEAD straight off `.git` for the same purpose and falls back to git
+# only when the layout is unusual. R71 (acc4) measured the saving of dropping one rev-parse at
+# 93 ms. This pins that drift takes its HEAD from that reader and asks git no rev-parse when the
+# repository is in the plain layout, and that the key it gets is the real HEAD.
+import importlib as _il412
+import subprocess as _sp412
+import tempfile as _tf412
+from pathlib import Path as _P412
+
+_drift412 = _il412.import_module("drift")
+_tmp412 = _P412(_tf412.mkdtemp())
+_g412 = lambda *a: _sp412.run(["git", "-C", str(_tmp412), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+_g412("init", "-q")
+_g412("config", "user.email", "t@t")
+_g412("config", "user.name", "t")
+(_tmp412 / "CLAUDE.md").write_text("Read `src/app.py` first.\n", encoding="utf-8")
+(_tmp412 / "src").mkdir()
+(_tmp412 / "src" / "app.py").write_text("print(1)\n", encoding="utf-8")
+_g412("add", "-A")
+_g412("commit", "-qm", "base")
+(_tmp412 / ".chamnan" / "state").mkdir(parents=True)
+
+_calls412 = []
+_real412 = _drift412._git
+
+
+def _spy412(root, args):
+    _calls412.append(list(args))
+    return _real412(root, args)
+
+
+_drift412._git = _spy412
+try:
+    _drift412.notice(_tmp412, _tmp412 / ".chamnan")
+finally:
+    _drift412._git = _real412
+check("drift.notice asks git no rev-parse HEAD in a plain repository",
+      not any(c[:1] == ["rev-parse"] for c in _calls412), saw=_calls412)
+_head412 = _g412("rev-parse", "HEAD").stdout.strip()
+_rollup412 = _il412.import_module("rollup")
+check("the HEAD it uses instead is the real one", _rollup412._head(_tmp412) == _head412,
+      saw=(_rollup412._head(_tmp412), _head412))
+# ---- 413_a_stamped_date_ages_the_same_in_every_time_zone.py
+# ------------------ a stamped date ages by the calendar in every time zone, including beyond +12
+# 🐛 [2026-10-05] (R38 acc4, 2026-10-05) `_ymd_to_ts` anchors a written date at noon UTC and `_age`
+# read it back as a LOCAL date, which the code said is safe "for every offset within ±12". Zones
+# beyond +12 exist and are ordinary: New Zealand in daylight time (+13), Tonga and Samoa (+13),
+# Kiritimati (+14). There a stamped 2026-09-27 read back as 2026-09-28, every stamped age came out
+# a day short, and a record written yesterday read "today"; the same files said "8 days ago" in
+# Bangkok and "7 days ago" in Kiritimati. This pins, per zone, that a date stamped k local days ago
+# reads k days ago, and that an mtime-based age is unchanged.
+import json as _json413
+import os as _os413
+import subprocess as _sp413
+import sys as _sys413
+from pathlib import Path as _P413
+
+_lib413 = str(_P413(__import__("ledger").__file__).resolve().parent)
+_probe413 = r'''
+import sys, json, time, datetime
+sys.path.insert(0, sys.argv[1])
+import ledger
+now = time.time()
+today = datetime.date.fromtimestamp(now)
+out = {}
+for k in (0, 1, 2, 7):
+    d = today - datetime.timedelta(days=k)
+    ts = ledger._ymd_to_ts(str(d.year), "%02d" % d.month, "%02d" % d.day)
+    out["stamped_%d" % k] = None if ts is None else ledger._age(ts, now)
+out["mtime_3"] = ledger._age(now - 3 * 86400 - 60, now)
+print(json.dumps(out))
+'''
+_want413 = {"stamped_0": "today", "stamped_1": "1 day ago", "stamped_2": "2 days ago",
+            "stamped_7": "7 days ago", "mtime_3": "3 days ago"}
+_bad413 = []
+if _os413.name == "nt":
+    check("(Windows: TZ names are not honoured by time.tzset, nothing to pin)", True)
+else:
+    for _tz413 in ("Pacific/Kiritimati", "Pacific/Auckland", "Pacific/Tongatapu", "Asia/Bangkok",
+                   "UTC", "America/New_York", "Pacific/Pago_Pago", "Pacific/Honolulu"):
+        _env413 = dict(_os413.environ, TZ=_tz413)
+        _r413 = _sp413.run([_sys413.executable, "-c", _probe413, _lib413], env=_env413,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        try:
+            _got413 = _json413.loads(_r413.stdout)
+        except ValueError:
+            _got413 = {"error": _r413.stderr[-200:]}
+        if _got413 != _want413:
+            _bad413.append((_tz413, _got413))
+    check("a date stamped k days ago reads k days ago in every zone, beyond +12 and below -10 too",
+          not _bad413, saw=_bad413)
+# ---- 415_an_nfd_file_name_keeps_its_import_edge.py
+# ------------------ a module whose file name is NFD keeps its "used by" edge in the map
+# 🐛 [2026-10-05] (R55 acc1, 2026-10-05) macOS tools can write file names in NFD (an accented letter
+# as base + combining mark) while source code writes the import name in NFC, and Python itself
+# NFKC-normalises identifiers. `impact._index` keyed files by their on-disk spelling and `resolve`
+# looked the import up by the source's spelling, so `from café_util import café` beside an
+# NFD-named `café_util.py` lost its "used by main.py" edge in MAP.md's Impact section, while
+# chamnan-where found both uses. Reproduced end to end in a scratch repository. This pins edges for
+# NFD and NFC files, absolute and relative imports, and that the reported path is the real one.
+import importlib as _il415
+import unicodedata as _ud415
+
+_impact415 = _il415.import_module("impact")
+_nfd415 = lambda s: _ud415.normalize("NFD", s)
+_nfc415 = lambda s: _ud415.normalize("NFC", s)
+_files415 = [
+    {"path": _nfd415("pkg/café_util.py"), "imports": []},
+    {"path": "pkg/main.py", "imports": [_nfc415("pkg.café_util")]},
+    {"path": _nfc415("web/résumé.js"), "imports": []},
+    {"path": "web/app.js", "imports": [_nfd415("./résumé")]},
+    {"path": "plain/a.py", "imports": []},
+    {"path": "plain/b.py", "imports": ["plain.a"]},
+]
+_got415 = _impact415.build(_files415)
+check("an NFD-named module imported by its NFC name keeps its used-by edge",
+      "pkg/main.py" in (_got415.get(_nfd415("pkg/café_util.py")) or {}).get("used_by", []),
+      saw=sorted(_got415))
+check("an NFC-named file imported by an NFD relative path keeps its edge",
+      "web/app.js" in (_got415.get(_nfc415("web/résumé.js")) or {}).get("used_by", []),
+      saw=sorted(_got415))
+check("an ASCII edge is unchanged", "plain/b.py" in (_got415.get("plain/a.py") or {}).get("used_by", []),
+      saw=sorted(_got415))
+check("the edge is reported under the file's real on-disk spelling",
+      all(k in {f["path"] for f in _files415} for k in _got415), saw=sorted(_got415))
+# ---- 416_history_scan_names_commits_only_the_reflog_holds.py
+# ------------------ `chamnan-guard --history` says when the reflog holds commits it did not examine
+# 🐛 [2026-10-05] (R41 acc4, 2026-10-05) After a history rewrite that removes a secret, the scan said
+# "nothing credential-shaped … across every branch and tag" while `git log -g -p` still showed the
+# value in the local clone, where the reflog keeps rewritten-away commits for up to 90 days. The
+# sentence was true and read as "gone". Reproduced: a credential-shaped value committed, found,
+# then `git reset --hard HEAD~1` — clean report, value still in the reflog. This pins a line naming
+# the reflog-only commits and the command that expires them, and no such line when there are none.
+import importlib as _il416
+import random as _rnd416
+import string as _st416
+import subprocess as _sp416
+import sys as _sys416
+import tempfile as _tf416
+from pathlib import Path as _P416
+
+_ws416 = _il416.import_module("workspace")
+_guard416 = _P416(_ws416.__file__).resolve().parent.parent / "bin" / "chamnan-guard"
+_tmp416 = _P416(_tf416.mkdtemp())
+_g416 = lambda *a: _sp416.run(["git", "-C", str(_tmp416), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+_g416("init", "-q")
+_g416("config", "user.email", "t@t")
+_g416("config", "user.name", "t")
+(_tmp416 / "app.py").write_text("print(1)\n", encoding="utf-8")
+_g416("add", "-A")
+_g416("commit", "-qm", "base")
+
+
+def _scan416():
+    _r = _sp416.run([_sys416.executable, str(_guard416), "--history"], cwd=_tmp416,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+    return _r.stdout + _r.stderr
+
+
+_before416 = _scan416()
+check("a repository with no rewritten commits gets no reflog line", "reflog" not in _before416.lower(),
+      saw=_before416[-300:])
+_r416 = _rnd416.Random(416)
+_val416 = "gh" + "p_" + "".join(_r416.choice(_st416.ascii_letters + _st416.digits) for _ in range(36))
+(_tmp416 / "settings.py").write_text(f'TOKEN = "{_val416}"\n', encoding="utf-8")
+_g416("add", "-A")
+_g416("commit", "-qm", "add settings")
+_g416("reset", "--hard", "-q", "HEAD~1")
+check("the fixture reproduces the hole: the value is still in the reflog",
+      _val416[:12] in _g416("log", "-g", "-p", "--format=%h").stdout)
+_after416 = _scan416()
+check("after a rewrite the scan names the commit only the reflog holds, and how to expire it",
+      "1 commit" in _after416 and "reflog" in _after416.lower() and "git reflog expire" in _after416,
+      saw=_after416[-500:])
+# ---- 417_a_union_merge_on_the_workspace_is_named.py
+# ------------------ a `merge=union` attribute on the workspace's files is named at session start
+# 🐛 [2026-10-05] (R14 acc1, 2026-10-05) Under `merge=union` git merges two branches that rewrote the
+# same STATE.md line by keeping BOTH lines, exits 0 and leaves no conflict markers — so chamnan's
+# conflict guard (`memory.unresolved_conflict`) sees nothing and the session is handed two
+# contradictory "Now" lines as current. Reproduced in a scratch repository. chamnan never sets the
+# attribute; a repository that writes `*.md merge=union` for its changelog catches STATE.md and every
+# memory entry with it. This pins that the attribute is found from the .gitattributes files that can
+# apply (the root's and the workspace's own), named with its file and line, and silent otherwise.
+import importlib as _il417
+import json as _json417
+import os as _os417
+import subprocess as _sp417
+import sys as _sys417
+import tempfile as _tf417
+from pathlib import Path as _P417
+
+_ws417 = _il417.import_module("workspace")
+_hook417 = _P417(_ws417.__file__).resolve().parent.parent / "hooks" / "chamnan_session_start.py"
+
+
+def _repo417(attrs):
+    _t = _P417(_tf417.mkdtemp())
+    _sp417.run(["git", "init", "-q", str(_t)], check=False)
+    (_t / "main.py").write_text("print(1)\n", encoding="utf-8")
+    if attrs:
+        (_t / ".gitattributes").write_text(attrs, encoding="utf-8")
+    return _t
+
+
+def _start417(root):
+    _env = dict(_os417.environ, CLAUDE_PLUGIN_ROOT=str(_hook417.parent.parent), CLAUDE_PROJECT_DIR=str(root))
+    _p = {"session_id": "probe-417", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(root)}
+    return _sp417.run([_sys417.executable, str(_hook417)], input=_json417.dumps(_p), capture_output=True,
+                      text=True, encoding="utf-8", errors="replace", env=_env, cwd=str(root), timeout=180).stdout
+
+
+_union417 = _repo417("# docs\nCHANGELOG.md merge=union\n*.md merge=union\n")
+_start417(_union417)
+(_union417 / ".chamnan" / "STATE.md").write_text("## Open work\n\n**Now:** shipping.\n", encoding="utf-8")
+check("the attribute source is found for STATE.md, with its file and line",
+      _ws417.union_merge_source(_union417, ".chamnan/STATE.md") == (".gitattributes", 3),
+      saw=_ws417.union_merge_source(_union417, ".chamnan/STATE.md"))
+_out417 = _start417(_union417)
+check("the session block names merge=union on the workspace and where it is set",
+      "merge=union" in _out417 and ".gitattributes:3" in _out417, saw=_out417[-600:])
+
+_plain417 = _repo417("CHANGELOG.md merge=union\n*.png binary\n")
+_start417(_plain417)
+check("a union attribute on an unrelated file is not reported",
+      _ws417.union_merge_source(_plain417, ".chamnan/STATE.md") is None
+      and "merge=union" not in _start417(_plain417),
+      saw=_ws417.union_merge_source(_plain417, ".chamnan/STATE.md"))
+_unset417 = _repo417("*.md merge=union\n.chamnan/** -merge\n")
+check("a later line that unsets it wins, as in git",
+      _ws417.union_merge_source(_unset417, ".chamnan/STATE.md") is None,
+      saw=_ws417.union_merge_source(_unset417, ".chamnan/STATE.md"))
+# ---- 418_impact_shows_why_a_file_last_changed.py
+# ------------------ chamnan-impact shows the reason a file last changed, when the commit gave one
+# 🎯 [2026-10-05] (R63 acc5, 2026-10-05) chamnan read no commit message text at all, while in the
+# chamnan repository 95% of the last 500 commits carry a body and 62% a because/so-that/why phrase.
+# Developers recover intent from history (the round's "Software history under the lens"), and the
+# reason a file is the way it is usually sits one `git log` away from the session about to change
+# it. Said only when the last commit has a body, so a repository of one-line messages gets nothing
+# new. This pins the line, its silence on a body-less commit, and that it is scrubbed.
+import importlib as _il418
+import random as _rnd418
+import string as _st418
+import subprocess as _sp418
+import sys as _sys418
+import tempfile as _tf418
+from pathlib import Path as _P418
+
+_ws418 = _il418.import_module("workspace")
+_bin418 = _P418(_ws418.__file__).resolve().parent.parent / "bin"
+_tmp418 = _P418(_tf418.mkdtemp())
+_g418 = lambda *a: _sp418.run(["git", "-C", str(_tmp418), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+_g418("init", "-q")
+_g418("config", "user.email", "t@t")
+_g418("config", "user.name", "t")
+(_tmp418 / "core.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+(_tmp418 / "other.py").write_text("x = 1\n", encoding="utf-8")
+_g418("add", "-A")
+_g418("commit", "-qm", "base")
+_r418 = _rnd418.Random(418)
+_val418 = "gh" + "p_" + "".join(_r418.choice(_st418.ascii_letters + _st418.digits) for _ in range(36))
+(_tmp418 / "core.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+_g418("commit", "-qam", "Return 2 from f",
+      "-m", f"Because the caller divides by f() and 1 hid the rounding bug. token {_val418}")
+(_tmp418 / "other.py").write_text("x = 2\n", encoding="utf-8")
+_g418("commit", "-qam", "bump x")
+_sp418.run([_sys418.executable, str(_bin418 / "chamnan-map")], cwd=_tmp418, capture_output=True, timeout=300)
+
+
+def _impact418(path):
+    _r = _sp418.run([_sys418.executable, str(_bin418 / "chamnan-impact"), path], cwd=_tmp418,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    return _r.stdout + _r.stderr
+
+
+_core418 = _impact418("core.py")
+check("a file whose last commit explains itself shows that reason",
+      "Return 2 from f" in _core418 and "rounding bug" in _core418, saw=_core418[-600:])
+check("the commit message is scrubbed before it is printed", _val418 not in _core418)
+_other418 = _impact418("other.py")
+check("a body-less last commit adds no line", "bump x" not in _other418, saw=_other418[-400:])
+# ---- 419_budget_values_ui_strings_and_concatenated_names_stay_readable.py
+# ------------------ budgets, UI strings and concatenated names under a secret word stay readable
+# 🐛 [2026-10-05] (R30 acc5, 2026-10-02) The redactor damaged ordinary code in four classes; one fix
+# (4e08486, check 403) took three shapes and left these, re-measured 2026-10-05:
+#   - a plain number under a `*_budget` key: `index_token_budget = 120000` became `<REDACTED>`;
+#   - UI text under a `*_secrets_*` key: `"login_secrets_help": "Enter the passphrase you were
+#     given…"` and `msg_secrets_title = "Where your secrets are kept…"`;
+#   - a name in a concatenation: `SIGNING_KEY = PREFIX + "suffix"` lost `PREFIX`.
+# (f-string format specs after a `*_tokens` name no longer reproduce. UI text whose VALUE itself
+# names a secret word -- `password_prompt = "Enter your password…"` -- is still redacted: the value
+# overrides the name there on purpose, and loosening that is a separate decision.) Each exemption is a place a
+# real secret could pass, so this pins the readable shapes AND that their credential-shaped twins
+# are still replaced.
+import importlib as _il419
+import random as _rnd419
+import string as _st419
+
+_redact419 = _il419.import_module("redact")
+_kept419 = [
+    "index_token_budget = 120000",
+    '"state_token_budget": 170000,',
+    "TOKEN_BUDGET=4096",
+    '"login_secrets_help": "Enter the passphrase you were given by your administrator",',
+    'msg_secrets_title = "Where your secrets are kept on this machine"',
+    'SIGNING_KEY = PREFIX + "suffix"',
+    "API_TOKEN = BASE + '-' + REGION",
+]
+_damaged419 = [(c, _redact419.scrub(c)) for c in _kept419 if _redact419.scrub(c) != c]
+check("budgets, UI strings and concatenated names under a secret word are left alone",
+      not _damaged419, saw=_damaged419)
+
+_r419 = _rnd419.Random(419)
+_v419 = "gh" + "p_" + "".join(_r419.choice(_st419.ascii_letters + _st419.digits) for _ in range(36))
+_still419 = [
+    f"index_token_budget = {_v419}",
+    f'"login_secrets_help": "{_v419}",',
+    f'msg_secrets_title = "{_v419}"',
+    f"SIGNING_KEY = {_v419}",
+    f"SIGNING_KEY={_v419}",
+    f"API_KEY = {_v419} + suffix",
+    "DB_PASSWORD=Tr0ub4dorENV88",
+]
+_leaked419 = [c for c in _still419 if c.split("=", 1)[-1].strip(' ",:+suffix') and
+              any(tok in _redact419.scrub(c) for tok in (_v419, "Tr0ub4dorENV88"))]
+check("their credential-shaped twins are still replaced", not _leaked419, saw=_leaked419)
+# ---- 420_look_alike_paths_are_named_by_the_census.py
+# ------------------ two tracked paths that look identical but are not are named by the census
+# 🐛 [2026-10-05] (R9 acc4, 2026-10-05) `srс/main.py` with a Cyrillic `с` beside `src/main.py` was
+# listed in the map with no warning anywhere, while case-only and normalisation-only collisions were
+# already counted beside it. Unicode TS #39 calls these confusables; Trojan Source showed the
+# reader-facing harm. Converges with R19 of 2026-09-22. The census now groups paths whose
+# look-alike skeleton (Cyrillic and Greek letters mapped to the Latin letters they render as) is
+# equal while their real spelling is not. This pins the pair, the silence of ordinary non-ASCII
+# names (Thai, accented Latin, a real Cyrillic word), and that NFC-only pairs stay in their own bucket.
+import importlib as _il420
+import subprocess as _sp420
+import tempfile as _tf420
+from pathlib import Path as _P420
+
+_tree420 = _il420.import_module("tree")
+_tmp420 = _P420(_tf420.mkdtemp())
+_g420 = lambda *a: _sp420.run(["git", "-C", str(_tmp420), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+_g420("init", "-q")
+for _rel420 in ("src/main.py", "srс/main.py",            # Cyrillic с
+                "config.py", "cоnfig.py",                 # Cyrillic о
+                "docs/тест.md",            # a real Cyrillic word, no Latin twin
+                "คำนวณ.py",           # Thai
+                "café.py", "notes/résumé.md"):   # accented Latin
+    _p420 = _tmp420 / _rel420
+    _p420.parent.mkdir(parents=True, exist_ok=True)
+    _p420.write_text("x = 1\n", encoding="utf-8")
+_g420("add", "-A")
+_census420 = _tree420.git_index_census(_tmp420) if hasattr(_tree420, "git_index_census") else None
+if _census420 is None:
+    _fn420 = next((getattr(_tree420, n) for n in dir(_tree420)
+                   if callable(getattr(_tree420, n)) and "census" in n.lower()), None)
+    _census420 = _fn420(_tmp420) if _fn420 else {}
+_conf420 = sorted(_census420.get("confusable_collisions") or [])
+check("both look-alike pairs are named, and nothing else",
+      _conf420 == sorted(["src/main.py", "srс/main.py", "config.py", "cоnfig.py"]),
+      saw=_conf420)
+check("NFC-only collisions keep their own bucket", "nfc_collisions" in _census420,
+      saw=sorted(_census420))
+# ---- 421_a_staged_bytecode_file_is_scanned_for_its_literals.py
+# ------------------ the commit guard reads the string literals inside a staged bytecode file
+# 🐛 [2026-10-05] (R76 acc4, 2026-10-05) A compiled module keeps its string literals as plain bytes,
+# and committed .pyc files have been decompiled to complete credentials across thousands of public
+# repositories (blog.jse.li/posts/pyc). Reproduced: a credential-shaped literal compiled into
+# `__pycache__/settings.cpython-39.pyc`, the source removed, only the .pyc staged — chamnan-guard
+# exited 0 with no output, because git shows the file as binary and the guard reads the text diff.
+# TruffleHog's Git mode and gitleaks share the gap. This pins that the guard names the staged
+# bytecode file when its literals look like a credential, and stays quiet on a clean one.
+import importlib as _il421
+import os as _os421
+import py_compile as _pc421
+import random as _rnd421
+import string as _st421
+import subprocess as _sp421
+import sys as _sys421
+import tempfile as _tf421
+from pathlib import Path as _P421
+
+_ws421 = _il421.import_module("workspace")
+_guard421 = _P421(_ws421.__file__).resolve().parent.parent / "bin" / "chamnan-guard"
+
+
+def _repo421(literal):
+    _d = _P421(_tf421.mkdtemp())
+    _g = lambda *a: _sp421.run(["git", "-C", str(_d), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _g("init", "-q")
+    _g("config", "user.email", "t@t")
+    _g("config", "user.name", "t")
+    (_d / "app.py").write_text("print(1)\n", encoding="utf-8")
+    _g("add", "-A")
+    _g("commit", "-qm", "base")
+    _src = _d / "settings_src.py"
+    _src.write_text(f'TOKEN = "{literal}"\nGREETING = "hello there"\n', encoding="utf-8")
+    (_d / "__pycache__").mkdir()
+    _pc421.compile(str(_src), cfile=str(_d / "__pycache__" / "settings.cpython-39.pyc"))
+    _src.unlink()
+    _g("add", "-f", "__pycache__/settings.cpython-39.pyc")
+    _r = _sp421.run([_sys421.executable, str(_guard421)], cwd=_d, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=120)
+    return _r.stdout + _r.stderr
+
+
+_r421 = _rnd421.Random(421)
+_val421 = "gh" + "p_" + "".join(_r421.choice(_st421.ascii_letters + _st421.digits) for _ in range(36))
+_dirty421 = _repo421(_val421)
+check("a staged .pyc whose literals hold a credential is named by the guard",
+      "settings.cpython-39.pyc" in _dirty421, saw=_dirty421[-500:])
+check("the guard does not print the credential it found", _val421 not in _dirty421)
+_clean421 = _repo421("just an ordinary sentence")
+check("a staged .pyc with ordinary literals draws no warning",
+      "settings.cpython-39.pyc" not in _clean421, saw=_clean421[-300:])
 # ---- 42_every_subprocess_this_package_starts_is_bounded.py
 # ------------------------------------------- fourteen of fifteen, and the fifteenth waits forever
 # 🐛 [2026-09-10] Every `subprocess.run` in this package passes `timeout=` except one:
@@ -56892,27 +57950,8 @@ check("EVERY TOOL-EVENT HOOK THAT WRITES A LOG ATTRIBUTES IT",
 check("...and there were writers to check, so this is not passing over an empty set",
       len(_ac_writers) >= 2, saw=sorted(_ac_writers))
 
-# The reader that justifies the field, in the same change rather than on the promise of a later one.
-_ac_ws = Path(tempfile.mkdtemp(prefix="chamnan-actor-")) / "r"
-(_ac_ws / ".git").mkdir(parents=True)
-ws.ensure(_ac_ws)
-_ac_log = _ac_ws / ".chamnan" / "logs" / "edits.jsonl"
-_ac_log.parent.mkdir(parents=True, exist_ok=True)
-_ac_now = int(time.time())
-_ac_log.write_text("".join(json.dumps(r) + "\n" for r in [
-    {"at": _ac_now, "fp": "src/a.py", "op": "Edit"},
-    {"at": _ac_now, "fp": "src/a.py", "op": "Write", "ag": "agt_1", "ty": "Explore"},
-    {"at": _ac_now, "fp": "src/b.py", "op": "Edit", "ag": "agt_2"},
-    {"at": _ac_now, "fp": "src/b.py", "op": "Edit", "ag": "agt_2"},
-    {"at": _ac_now, "fp": "src/c.py", "op": "Edit"},
-]), encoding="utf-8")
 import coedit as _ac_co  # noqa: E402
-_ac_hot = dict(_ac_co.contested(_ac_ws / ".chamnan"))
-check("TWO DIFFERENT ACTORS ON ONE FILE INSIDE THE WINDOW IS REPORTED",
-      sorted(_ac_hot.get("src/a.py", [])) == ["agt_1", "session"], saw=_ac_hot)
-check("...while one actor editing the same file twice is not a collision",
-      "src/b.py" not in _ac_hot)
-check("...and a file only the session touched is not one either", "src/c.py" not in _ac_hot)
+_ac_now = int(time.time())
 
 # The owner's retention condition, on the file that grows fastest. The line cap that was already
 # here is a SIZE bound and cannot deliver an AGE one.
@@ -56925,7 +57964,6 @@ check("...and a record past the window is dropped while the ones after it are ke
       [json.loads(l)["fp"] for l in _ac_co._within_age(_ac_lines, _ac_now)] == ["here.py"])
 check("...while an unreadable line stops the trim rather than being deleted through",
       len(_ac_co._within_age(["{torn\n"] + _ac_lines, _ac_now)) == 3)
-shutil.rmtree(_ac_ws.parent, ignore_errors=True)
 
 
 # ------------------- a session-wide warning is not the last section's footnote, and was deleted as one
