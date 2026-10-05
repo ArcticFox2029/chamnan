@@ -377,6 +377,29 @@ def _history_diff(root, limit):
     return out.stdout if out.returncode == 0 else None
 
 
+def _reflog_only_commits(root):
+    """How many commits only the reflog still reaches — not examined by `--history`. 0 when unknown.
+
+    🐛 [2026-10-05] (R41 acc4, 2026-10-05) After a rewrite that removes a secret, the scan said
+    "nothing credential-shaped … across every branch and tag" while `git log -g -p` still showed the
+    value: the reflog keeps rewritten-away commits in this clone for up to 90 days. The sentence was
+    true and read as "gone", so the count is said beside it. Check 416.
+    """
+    if not ws.git_can_speak_for(root):
+        return 0
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-list", "--count", "--reflog", "--not", "--all"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    try:
+        return int(out.stdout.strip()) if out.returncode == 0 else 0
+    except ValueError:
+        return 0
+
+
 def _is_commit_header(raw):
     """Is `raw` one of `git log -p`'s own `commit <sha>` header lines.
 
@@ -445,6 +468,10 @@ def main(argv):
             print("chamnan: not a git repository, or git cannot answer here.", file=sys.stderr)
             return 1
         hits = scan_history(hist)
+        _reflog_n = _reflog_only_commits(root)
+        _reflog_line = (f"  {_reflog_n} commit(s) reachable only from the reflog (rewritten or reset away) "
+                        f"were not examined and are still in this clone; `git reflog expire --expire=now "
+                        f"--all && git gc --prune=now` removes them.") if _reflog_n else ""
         if not hits:
             # 🐛 [2026-09-29] (R82 acc4, 2026-09-29) This used to name the CEILING
             # (`HISTORY_DEFAULT_COMMITS`), not what was actually examined — "the last 500 commits"
@@ -455,6 +482,8 @@ def main(argv):
                   f"(ceiling {HISTORY_DEFAULT_COMMITS}).")
             print("  That is the redactor's recall on this history, not a guarantee — see the "
                   "recall and touch-rate figures in the README for what it can and cannot find.")
+            if _reflog_line:
+                print(_reflog_line)
             return 0
         # 🐛 The first version listed every (commit, path) pair. On this repository that is 431
         # lines across 79 commits, and almost all of it is the redactor's OWN specimen credentials
@@ -493,6 +522,8 @@ def main(argv):
               "forks,", file=sys.stderr)
         print("  clones or caches, so the rewrite is the second step and never the whole fix.",
               file=sys.stderr)
+        if _reflog_line:
+            print(_reflog_line, file=sys.stderr)
         return 1
 
     # 🐛 [2026-09-15] R6.7. On Windows, CreateProcess searches the current directory before PATH, so
