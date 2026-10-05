@@ -155,21 +155,6 @@ def entries(root):
     return out
 
 
-def declared_versions(root):
-    """{name: [(env, version), ...]} across every environment.
-
-    A list per name rather than one value, because two environments legitimately run different
-    versions of the same thing — that is usually the entire reason somebody wrote this file. A
-    caller comparing a claim against this has to decide what a disagreement means; this only
-    reports what was declared where.
-    """
-    out = {}
-    for env in entries(root):
-        for name, version in env["versions"].items():
-            out.setdefault(name, []).append((env["name"], version))
-    return out
-
-
 def stale_environments(root, now=None, window_days=STALE_AFTER_DAYS, envs=None):
     """[(name, days_since_checked_or_None)] for entries whose `Checked:` date has gone cold, or
     that never had one. Empty when every entry is fresh.

@@ -52,11 +52,6 @@ def os_family():
     return "unknown"
 
 
-def is_windows():
-    """Windows needs a different answer often enough to be worth its own predicate."""
-    return os_family() == "windows"
-
-
 # Each agent: the env vars that prove it is RUNNING, the repository markers, the home markers.
 # A marker ending in "/" must be a directory; anything else must exist as a file or directory.
 _AGENTS = {

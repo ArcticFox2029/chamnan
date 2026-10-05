@@ -3789,14 +3789,6 @@ check("a constraint's text round-trips whole",
       parsed[0]["constraints"][0] == "RWO storage only — no ReadWriteMany PVCs")
 check("the checked date round-trips", parsed[0]["checked"] == "2026-08-27")
 
-# Two environments running different versions of the same thing is usually the entire reason
-# somebody wrote this file, so declared_versions keeps a list per name rather than one value.
-declared = envs.declared_versions(ev_root)
-check("DECLARED_VERSIONS KEEPS BOTH VALUES FOR ONE NAME",
-      sorted(declared["postgres"]) == [("production", "16"), ("uat", "13")])
-check("a version declared in only one environment has one entry",
-      declared["redis"] == [("production", "7.2")])
-
 # upsert REPLACES rather than appends: this file describes how things ARE, and two `## production`
 # headings would leave a reader no way to tell which is current.
 newer = envs.render_entry("production", "K8s 1.31", "postgres 17", ["RWO only"], "2026-08-27")
@@ -15188,7 +15180,6 @@ _rmtree(_slroot.parent, ignore_errors=True)
 # the author's laptop and fails in CI for a reason that is not a defect.
 check("this machine's OS resolves to a known family",
       host_mod.os_family() in ("macos", "linux", "windows"))
-check("is_windows agrees with os_family", host_mod.is_windows() == (host_mod.os_family() == "windows"))
 
 _hroot = Path(tempfile.mkdtemp())
 _hhome = Path(tempfile.mkdtemp())
