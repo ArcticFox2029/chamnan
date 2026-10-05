@@ -1898,6 +1898,17 @@ def main():
         _persistence = ledger.persistence_reminder(root, _git_snapshot)
         if _persistence:
             out.append(redact.scrub(_persistence) + "\n")
+        # 🐛 [2026-10-05] (R14 acc1, 2026-10-05) See `ws.union_merge_source`. Two small file reads, no spawn.
+        _union = None
+        for _rel in (".chamnan/STATE.md", ".chamnan/memory/rules/x.md"):
+            _union = ws.union_merge_source(root, _rel)
+            if _union:
+                break
+        if _union:
+            out.append(redact.scrub(
+                f"_⚠ `{_union[0]}:{_union[1]}` sets `merge=union` on chamnan's workspace: a merge keeps "
+                f"both sides of a changed line with no conflict markers, so a contradiction merged into "
+                f"STATE.md or memory cannot be detected. Add `.chamnan/** -merge` below that line._") + "\n")
 
         if cfg.get("ledger", True):
             # Always the first thing in the injection, and gated on nothing but the flag itself --

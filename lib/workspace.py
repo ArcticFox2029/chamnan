@@ -4337,6 +4337,70 @@ def git_status(root):
     return answer
 
 
+def union_merge_source(root, rel):
+    """Where a `merge=union` attribute reaches `rel`, or None.
+
+    Returns `(attributes_file_relative_to_root, line_number)` of the last line
+    that set `merge=union` for the repository-relative POSIX path `rel`, when
+    that is the final state of the `merge` attribute; None otherwise.
+
+    🐛 [2026-10-05] (R14 acc1, 2026-10-05) Under merge=union git keeps both
+    sides of a changed line with no conflict markers, so
+    `memory.unresolved_conflict` cannot see a merged-in contradiction in
+    STATE.md or a memory entry. chamnan never sets the attribute, but a
+    `*.md merge=union` written for a changelog catches the workspace. Check 417.
+
+    Reads only the .gitattributes files that can apply (root, then each
+    ancestor directory of `rel`, outer first, then .git/info/attributes).
+    No subprocess. Never raises.
+    """
+    try:
+        import fnmatch
+        base = str(root)
+        parts = [p for p in str(rel).split("/") if p]
+        sources = [""]
+        for i in range(1, len(parts)):
+            sources.append("/".join(parts[:i]))
+        files = []
+        for d in sources:
+            disp = (d + "/.gitattributes") if d else ".gitattributes"
+            files.append((os.path.join(base, *disp.split("/")), disp, d))
+        if os.path.isdir(os.path.join(base, ".git")):
+            files.append((os.path.join(base, ".git", "info", "attributes"),
+                          ".git/info/attributes", ""))
+        hit = None
+        for full, disp, d in files:
+            try:
+                with open(full, encoding="utf-8-sig") as fh:
+                    lines = fh.read().splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+            relpath = "/".join(parts[len(d.split("/")) if d else 0:])
+            name = parts[-1] if parts else ""
+            for n, line in enumerate(lines, 1):
+                tokens = line.split()
+                if not tokens or tokens[0].startswith("#"):
+                    continue
+                pat = tokens[0]
+                if "/" not in pat:
+                    ok = fnmatch.fnmatchcase(name, pat)
+                else:
+                    pat = pat.lstrip("/")
+                    ok = fnmatch.fnmatchcase(relpath, pat)
+                    if not ok and pat.endswith("/**"):
+                        ok = relpath.startswith(pat[:-2])
+                if not ok:
+                    continue
+                for attr in tokens[1:]:
+                    if attr == "merge=union":
+                        hit = (disp, n)
+                    elif attr in ("merge", "-merge", "!merge") or attr.startswith("merge="):
+                        hit = None
+        return hit
+    except Exception:
+        return None
+
+
 def git_folds_case(root):
     """git's own `core.ignorecase` for `root`. False when git cannot answer.
 
