@@ -23,6 +23,7 @@ a repeat one, which is why it is the walk that was fixed rather than a cache add
 Reading every file to hash it, for comparison, costs 0.08s on the same repository — so if an
 incremental index is ever built, this is the layer it should sit on, not a replacement for it.
 """
+import codecs
 import os
 import re
 from contextlib import contextmanager
@@ -726,5 +727,10 @@ def read_capped(path, limit=MAX_FILE_BYTES, encoding="utf-8-sig"):
     Bounded on the way IN, not after reading: `path.read_text()[:limit]` has already spent the
     memory and the seconds this exists to save.
     """
+    # 🐛 [2026-10-05] (R106 acc5, 2026-10-05) A cap inside a multi-byte character used to end the
+    # preview in U+FFFD (133 of 199 caps over Thai text). An incremental decoder with final=False
+    # holds back the incomplete tail instead of replacing it; bytes that are invalid mid-text are
+    # still replaced. Check 424.
     with open(path, "rb") as handle:
-        return handle.read(limit).decode(encoding, errors="replace")
+        data = handle.read(limit)
+    return codecs.getincrementaldecoder(encoding)(errors="replace").decode(data, final=False)
