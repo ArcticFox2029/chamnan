@@ -832,7 +832,7 @@ def scan_commands(root):
     if text is not None:
         try:
             data = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             data = None
         scripts = data.get("scripts") if isinstance(data, dict) else None
         if isinstance(scripts, dict):
