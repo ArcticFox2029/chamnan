@@ -314,6 +314,46 @@ def scan(diff):
     return found
 
 
+def scan_bytecode(root):
+    """`{path: count}` of staged .pyc/.pyo files whose literal strings the redactor would rewrite.
+
+    🐛 [2026-10-05] (R76 acc4, 2026-10-05) A compiled module keeps its string literals as plain
+    bytes, and committed .pyc files have been decompiled to complete credentials across thousands
+    of public repositories. git shows a staged .pyc as binary, so `scan(diff)` never saw it:
+    reproduced, a credential compiled into `__pycache__/settings.cpython-39.pyc` and staged alone
+    passed with exit 0 and no output. TruffleHog's Git mode and gitleaks share the gap. Printable
+    runs of 8+ characters are read out of the staged blob and asked of the redactor one by one.
+    Check 421.
+    """
+    if not ws.git_can_speak_for(root):
+        return {}
+    try:
+        names = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false", "diff",
+                                "--cached", "--name-only", "--diff-filter=AM", "-z"],
+                               capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    found = {}
+    for raw in names.stdout.split(b"\0"):
+        path = raw.decode("utf-8", "replace")
+        if not path.lower().endswith((".pyc", ".pyo")):
+            continue
+        try:
+            blob = subprocess.run(["git", "-C", str(root), "show", ":" + path],
+                                  capture_output=True, stdin=subprocess.DEVNULL,
+                                  timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        hits = 0
+        for run in re.findall(rb"[\x20-\x7e]{8,}", blob[:5_000_000]):
+            text = run.decode("ascii")
+            if redact.scrub(text) != text:
+                hits += 1
+        if hits:
+            found[path] = hits
+    return found
+
+
 def scan_mcp_changes(diff):
     """`{path: [line numbers]}` for staged lines that add or alter MCP capability.
 
@@ -574,9 +614,10 @@ def main(argv):
         return 0
 
     found = scan(diff)
+    bytecode_found = scan_bytecode(root)
     mcp_found = scan_mcp_changes(diff)
     supply_found = scan_supply_changes(diff)
-    if not found and not mcp_found and not supply_found:
+    if not found and not mcp_found and not supply_found and not bytecode_found:
         _say(f"scanned {len(diff.encode('utf-8', 'replace')):,} byte(s) of staged diff — "
              f"nothing credential-shaped, no new MCP capability, no supply-chain change.")
         return 0
@@ -598,6 +639,15 @@ def main(argv):
             print(f"    +{len(found) - 6} more file(s)", file=sys.stderr)
         print("  Nothing is printed from those lines on purpose — reading them out would copy the "
               "secret into this terminal and its transcript.", file=sys.stderr)
+
+    if bytecode_found:
+        print(f"chamnan-guard: {len(bytecode_found)} staged compiled file(s) carry string literals "
+              f"that look like a leaked secret \u2014 a .pyc keeps its source's literals as plain bytes",
+              file=sys.stderr)
+        for _p in sorted(bytecode_found)[:6]:
+            print(f"    {mdblock.as_quoted(_p, 70)}  {bytecode_found[_p]} literal(s)", file=sys.stderr)
+        print("  Unstage it (`git rm --cached <file>`) and add `__pycache__/` and `*.pyc` to "
+              ".gitignore.", file=sys.stderr)
 
     if mcp_found:
         _n = sum(len(v) for v in mcp_found.values())
