@@ -49,6 +49,9 @@ print = redact.emit_prescrubbed  # noqa: A001
 # 🐛 [2026-09-24] (self-measured) "Reused rather than rewritten" above, and then the segment
 # pattern was copied in verbatim; the gate's one-question-one-pattern sweep named the pair. The cut
 # now comes from `canonical.segments`, so the two cannot disagree about where a command ends.
+# Seconds the guard may take before the hook gives up on it. A module constant so a check can
+# lower it; the host's own hook timeout is longer.
+GUARD_TIMEOUT = 20
 _INTERPRETERS = {"nohup", "caffeinate", "exec", "command", "time", "env", "xargs", "sudo"}
 _SHELL_TOOLS = ("Bash", "PowerShell")
 # `git.exe` is how the same program is often spelled from PowerShell or cmd.
@@ -107,7 +110,7 @@ def main():
         return 0
     try:
         # 🔴 Never fails the commit and never blocks it: a non-zero exit here, or a timeout, or a
-        # guard that is not there, all mean the same thing — say nothing and let the work happen.
+        # guard that is not there, all let the work happen. Only the timeout is said out loud (below).
         # \U0001F41B [2026-09-23] Read from stdout alone at first, and `chamnan-guard` writes its
         # warning to STDERR — so the hook ran, the guard found the staged key, and nothing was
         # shown. A false success made while wiring up the fix for false successes. Both streams
@@ -115,10 +118,17 @@ def main():
         # Imported here, not at module top: ~14 ms on every Bash call for a path that rarely runs (R373 acc5, 2026-10-01).
         import subprocess
         _r = subprocess.run([sys.executable, str(guard)], cwd=str(root), capture_output=True,
-                            text=True, encoding="utf-8", errors="replace", timeout=20,
+                            text=True, encoding="utf-8", errors="replace", timeout=GUARD_TIMEOUT,
                             env=dict(os.environ))
         out = ((_r.stdout or "") + (_r.stderr or "")).strip()
-    except Exception:                                             # noqa: BLE001
+    except Exception as _err:                                     # noqa: BLE001
+        # 🐛 [2026-10-05] (R144 acc4, 2026-10-05) The redactor reads about 220 KB a second, so a
+        # staged minified bundle past ~4 MB ran the guard out of time and the commit passed
+        # unscanned with nothing said: a timeout and a clean scan looked identical. Check 425.
+        if type(_err).__name__ == "TimeoutExpired":
+            print(f"chamnan: the commit guard did not finish in {GUARD_TIMEOUT:g} s, so this commit "
+                  f"was not scanned. Run `chamnan-guard` by hand to check what is staged.",
+                  file=sys.stderr)
         return 0
     if out:
         print(out, file=sys.stderr)
