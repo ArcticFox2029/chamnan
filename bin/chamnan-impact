@@ -15,6 +15,7 @@ printed with every answer rather than left for the reader to assume.
 """
 import importlib.util
 import pathlib
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,6 +122,37 @@ def _churn_count(root, path):
     ranked = sorted(counts.values(), reverse=True)
     median = ranked[len(ranked) // 2]
     return n, sum(1 for v in ranked if v > n), n > median
+
+
+def _last_reason(root, path):
+    """`(short hash, subject, why)` for the last commit that touched `path`, when it has a body; else None.
+
+    🎯 [2026-10-05] (R63 acc5, 2026-10-05) chamnan read no commit message text, while 95% of the
+    last 500 commits in its own repository carry a body and 62% say why. The reason a file is the
+    way it is usually sits one `git log` away from the session about to change it. Only a commit
+    WITH a body is shown, so a repository of one-line messages gets nothing new. Check 418.
+    """
+    if not ws.git_can_speak_for(root):
+        return None
+    try:
+        out = subprocess.run(["git", "-C", str(root), "log", "-1", "--format=%h%x1f%s%x1f%b",
+                              "--", str(path)],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             stdin=subprocess.DEVNULL, timeout=10)
+    except ws.git_cannot_answer():
+        return None
+    if out.returncode != 0 or "\x1f" not in out.stdout:
+        return None
+    h, subject, body = (out.stdout.split("\x1f", 2) + ["", ""])[:3]
+    lines = [l.strip() for l in body.splitlines()
+             if l.strip() and not l.lower().startswith(
+                 ("co-authored-by:", "claude-session:", "signed-off-by:"))]
+    if not lines:
+        return None
+    why = " ".join(lines)
+    if len(why) > 200:
+        why = why[:199].rstrip() + "…"
+    return h.strip(), subject.strip(), why
 
 
 def main(argv):
@@ -245,6 +277,9 @@ def main(argv):
                 # that could not be answered rather than an answer of "no risk".
                 print(f"  and there is no such file in this repository, so this is not an "
                       f"all-clear — check the path")
+        _why = _last_reason(root, resolved or target) if on_disk else None
+        if _why:
+            print(f"  last change {_why[0]} {mdblock.as_quoted(_why[1], 90)} — {_why[2]}")
         return 0
 
     # Every name below comes out of the index, which is built from the repository. This is a
@@ -280,6 +315,9 @@ def main(argv):
     if _n:
         print(f"  changed   {_n} time(s) in the last {rollup.CHURN_WINDOW} commits — "
               f"{_above} file(s) in this repository changed more often")
+    _why = _last_reason(root, resolved or target)
+    if _why:
+        print(f"  last change {_why[0]} {mdblock.as_quoted(_why[1], 90)} — {_why[2]}")
 
     if history:
         print(f"\n  {len(history)} thread entr{'y' if len(history) == 1 else 'ies'} name this file:")
