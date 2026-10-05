@@ -685,11 +685,13 @@ _LATIN_SECRET_WORDS = (
     # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
     # the identifier family this module's own docstring says was already fixed once. The credential
     # spellings — access_token, auth_token, api_token, refresh_token — all carry one.
-    # 🐛 [2026-10-05] (R26 acc5, 2026-10-05) These name runs were unbounded, so `API_KEY=<8,000
-    # hex>` took 3.4 s to scrub: each start position in an unbroken alphanumeric run backtracked to
-    # its end. R181 bounded `_KEY_RUN` and left these seven; they now share KEY_RUN_MAX (R72 acc4
-    # measured the shape of the bound). Check 408 pins the cost curve and the recall.
-    r"|(?<![A-Za-z])[A-Za-z0-9]{1," + str(KEY_RUN_MAX) + r"}[_-]tokens?(?![A-Za-z])"
+    # 🐛 [2026-10-05] (R26 acc5, 2026-10-05) These runs started after any non-LETTER, so inside an
+    # unbroken alphanumeric value every digit was a new start and each start backtracked to the end
+    # of the run: `API_KEY=<8,000 hex>` took 3.4 s to scrub. A run now starts only at its true
+    # beginning (`(?<![A-Za-z0-9])`), which is one start per run and linear, and a name of any length
+    # still reaches its value (the suite's 200-character key from R181). Bounding the run length
+    # instead broke that key, and a second bounded alternative cost 1.46 s on 8,000 digits. Check 408.
+    r"|(?<![A-Za-z0-9])[A-Za-z0-9]+[_-]tokens?(?![A-Za-z])"
     # \U0001f41b [2026-09-11] ...and the same component on the OTHER side. `token` and `key`
     # require a neighbour, for the measured reason above -- but the rule only ever looked LEFT,
     # so `TOKEN_A=`, `TOKEN_B=`, `KEY_OLD=` and `TOKEN_PROD=` had no rule at all while
@@ -715,7 +717,7 @@ _LATIN_SECRET_WORDS = (
     # A leading component is what separates a credential from the statement — `ansible_ssh_pass`
     # from `    pass` — and it costs nothing on the secret side, because every real spelling of
     # this one carries a prefix (R1 agent 2, 2026-09-09).
-    r"|(?<![A-Za-z])[A-Za-z0-9]{1," + str(KEY_RUN_MAX) + r"}[_-]pass(?:words?)?(?![A-Za-z])"
+    r"|(?<![A-Za-z0-9])[A-Za-z0-9]+[_-]pass(?:words?)?(?![A-Za-z])"
     # \U0001f41b [2026-09-11] ...and the same word in SCREAMING_CASE, which the separator rule above
     # cannot reach and which the 2026-09-10 fix gave to `TOKEN` and `KEY` and not to this one.
     # `PASS=hunter2`, `DBPASS=`, `FTPPASS=` and `MYSQLPASS=` all passed through byte for byte, beside
@@ -731,15 +733,15 @@ _LATIN_SECRET_WORDS = (
     # in full: credential prefixes are an open set that grows with every vendor, English words ending
     # in "pass" are a closed one. `BYPASS=1` being destroyed is the same damage as `MONKEY_PATCH=1`.
     # Written as a lookahead on the WHOLE word, so `BYPASSKEY` is still caught rather than smuggled.
-    r"|(?-i:(?<![A-Za-z])(?!(?:BY|COM|ENCOM|OVER|SUR|TRES|UNDER|RE|OUT)PASS(?:ES)?(?![A-Z0-9]))"
-    r"[A-Z0-9]{0," + str(KEY_RUN_MAX) + r"}PASS(?:WORD)?S?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z0-9])(?!(?:BY|COM|ENCOM|OVER|SUR|TRES|UNDER|RE|OUT)PASS(?:ES)?(?![A-Z0-9]))"
+    r"[A-Z0-9]*PASS(?:WORD)?S?)(?![A-Za-z])"
     # `PWD` and `CRED` are the same omission one size down. Both are caught bare and after a
     # separator, and neither was reachable with a SCREAMING prefix run against it -- `DBPWD=` and
     # `APICRED=` beside `DB_PWD=` and `API_CRED=`, which were. A prefix is REQUIRED here, unlike
     # `PASS` above, because three and four letters land inside real words too easily to give up the
     # left boundary; `SACRED` is the one English word that ends in `CRED` and it is excluded by name.
-    r"|(?-i:(?<![A-Za-z])[A-Z0-9]{1," + str(KEY_RUN_MAX) + r"}PWDS?)(?![A-Za-z])"
-    r"|(?-i:(?<![A-Za-z])(?!SACRED(?![A-Z0-9]))[A-Z0-9]{1," + str(KEY_RUN_MAX) + r"}CREDS?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z0-9])[A-Z0-9]+PWDS?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z0-9])(?!SACRED(?![A-Z0-9]))[A-Z0-9]+CREDS?)(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
     # \U0001f41b [2026-09-11] `Pwd`, `Cred`, `Storepass` and `Keypass` were absent from this list
@@ -774,8 +776,8 @@ _LATIN_SECRET_WORDS = (
     # `(?!(?:MON|...)KEY)` it also refused `MONKEYKEY`, which is not a word in any dictionary and is
     # exactly the shape someone would reach for to get a name past a filter. `S?(?![A-Z0-9])` is
     # what makes it "this word IS monkey" rather than "this word starts with monkey".
-    r"|(?-i:(?<![A-Za-z])(?!(?:MON|DON|TUR|HOC|JOC|WHIS|LAC|MIC|MALAR)KEYS?(?![A-Z0-9]))"
-    r"[A-Z0-9]{1," + str(KEY_RUN_MAX) + r"}KEYS?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z0-9])(?!(?:MON|DON|TUR|HOC|JOC|WHIS|LAC|MIC|MALAR)KEYS?(?![A-Z0-9]))"
+    r"[A-Z0-9]+KEYS?)(?![A-Za-z])"
     # `key` as a whole COMPONENT of the name, not the four compound spellings that were listed by
     # hand. ssh_key, signing_key, encryption_key, master_key and db_key all passed through
     # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
@@ -789,7 +791,7 @@ _LATIN_SECRET_WORDS = (
     # component (api_key, ssh_key, AccountKey), so requiring one costs nothing on the secret side
     # and stops the single largest source of damage on the other. `password`, `secret` and
     # `credential` keep their bare form, because `password = "…"` really is one.
-    r"|(?<![A-Za-z])[A-Za-z0-9]{1," + str(KEY_RUN_MAX) + r"}[_-]keys?(?![A-Za-z])"
+    r"|(?<![A-Za-z0-9])[A-Za-z0-9]+[_-]keys?(?![A-Za-z])"
     r"|(?<![A-Za-z])keys?[_-][A-Za-z0-9]+(?![A-Za-z])"
     # ...and the same component written in CamelCase, where there is no separator to anchor on:
     # AccountKey, ApiKey, PrivateKey. `(?-i:...)` turns the surrounding re.I off for this branch
