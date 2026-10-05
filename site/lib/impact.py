@@ -21,6 +21,7 @@ time it did without it.
 import os
 import fnmatch
 import re
+import unicodedata
 
 from unicode_marks import mark_aware
 import sys
@@ -197,10 +198,12 @@ def _index(files):
     by_noext, noext_count, stem_count, by_stem = {}, {}, {}, {}
     for f in files:
         p = f["path"]
-        noext = p.rsplit(".", 1)[0]
+        # Keys are the NFC form; the value stored below stays the real on-disk path `p`.
+        nfc = unicodedata.normalize("NFC", p)
+        noext = nfc.rsplit(".", 1)[0]
         noext_count[noext] = noext_count.get(noext, 0) + 1
         by_noext[noext] = p
-        stem = Path(p).stem
+        stem = Path(nfc).stem
         stem_count[stem] = stem_count.get(stem, 0) + 1
         by_stem[stem] = p
     by_noext = {n: p for n, p in by_noext.items() if noext_count[n] == 1}
@@ -226,6 +229,12 @@ def resolve(name, importer, by_noext, by_stem, by_last_segment=None, roots=None)
     """
     if not name:
         return None
+    # 🐛 [2026-10-05] (R55 acc1, 2026-10-05) macOS tools can write a file name in NFD while the
+    # source writes the import in NFC (and Python NFKC-normalises identifiers), so an NFD-named
+    # module lost its used-by edge. Keys and names are compared in NFC; returned paths stay real.
+    # Check 415.
+    name = unicodedata.normalize("NFC", name)
+    importer = unicodedata.normalize("NFC", importer)
 
     # Relative paths, as JS, C, Ruby and Dart write them.
     if name.startswith((".", "/")) or "/" in name:
