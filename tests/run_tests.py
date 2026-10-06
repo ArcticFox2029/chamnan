@@ -52158,15 +52158,19 @@ import importlib as _il443
 import subprocess as _sp443
 import sys as _sys443
 
+# Asserted by what was COMPILED, not by a clock: 8.5 ms here would be over any fixed bound on a
+# slower CI runner, and a timing check that flakes teaches people to skip its failures (R60 acc4).
 _probe443 = ("import sys, time; sys.path.insert(0, %r); import redact; t = time.perf_counter(); "
              "redact.scrub('[chamnan] what this repository already records about app.py:\\n"
              "  lesson    memory/lessons/no-print.md \\u2014 Never print in app.py'); "
-             "print((time.perf_counter() - t) * 1000)") % str(ROOT / "lib")
-_ms443 = sorted(float(_sp443.run([_sys443.executable, "-c", _probe443], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=60).stdout.strip() or 999)
-                for _ in range(5))[2]
-check("a first scrub of a line naming no secret word takes under 10 ms (median of 5 fresh processes)",
-      _ms443 < 10, saw=round(_ms443, 1))
+             "ms = (time.perf_counter() - t) * 1000; "
+             "print(sum(1 for n in ('DELIMITED_AFTER_SECRET_WORD', 'XML_SECRET', '_LIST_OPEN', "
+             "'_BLOCK_KEY', '_OBJECT_VALUE') if getattr(redact, n)._real is not None), round(ms, 1))"
+             ) % str(ROOT / "lib")
+_res443 = _sp443.run([_sys443.executable, "-c", _probe443], capture_output=True, text=True,
+                     encoding="utf-8", errors="replace", timeout=60).stdout.split()
+check("a first scrub of a line naming no secret word compiles none of the five secret-word rules",
+      bool(_res443) and _res443[0] == "0", saw=_res443)
 _redact443 = _il443.import_module("redact")
 _diff443 = []
 _n443 = 0
