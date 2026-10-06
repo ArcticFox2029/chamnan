@@ -3212,6 +3212,7 @@ def scrub(text, windowed=True, *, _unmask=True):
             _with = scrub(_joined, windowed, _unmask=False)
             _without = scrub(text, windowed, _unmask=False)
             return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
+    text = _redact_yaml_anchor_targets(text)
     text = _redact_kubernetes_secret_data(text)
     for pattern in PATTERNS + [DELIMITED_AFTER_SECRET_WORD] + LATE_PREFIXES:
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
@@ -4204,6 +4205,54 @@ def _redact_kubeconfig_users(text):
             m = _KUBE_USER_SECRET.match(line)
             if m:
                 lines[i] = f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}"
+    return "\n".join(lines)
+
+
+# 🐛 [2026-10-06] (R57 acc5, 2026-10-06) Compose, GitHub Actions and GitLab CI expand YAML anchors, so
+# `x-defaults: &dbcred <value>` used as `DB_PASSWORD: *dbcred`, or as a `- *tok` item under `secrets:`,
+# IS the password -- and every name rule judged lines one at a time: the alias (a reference) was
+# replaced and the value at the anchor printed. An anchor whose alias sits under a secret-named key
+# has its scalar redacted where it is defined. A key naming a mechanism (`password_file`) does not
+# count. Check 446.
+_YAML_ALIAS_VALUE = _lazy(lambda: re.compile(r"^(\s*)(?:-\s+)?([^\s:#][^:#]*?)?\s*:?\s*\*([A-Za-z0-9_.-]+)\s*$"))
+_YAML_KEY_LINE = _lazy(lambda: re.compile(r"^(\s*)([^\s:#-][^:#]*?)\s*:\s*$"))
+_YAML_ANCHOR_SCALAR = _lazy(lambda: re.compile(r"(&([A-Za-z0-9_.-]+)\s+)(['\"]?)([^\s'\"#{}\[\]][^'\"#\n]*?)\3(\s*(?:#.*)?)$"))
+
+
+def _secret_named_yaml_key(key):
+    key = key.strip().strip("'\"")
+    return bool(key) and bool(_secret_word_hits(key)) and not _names_a_mechanism(key)
+
+
+def _redact_yaml_anchor_targets(text):
+    """Redact the scalar at an anchor whose alias a secret-named key reaches."""
+    if "&" not in text or "*" not in text:
+        return text
+    lines = text.split("\n")
+    wanted = set()
+    for i, line in enumerate(lines):
+        m = _YAML_ALIAS_VALUE.match(line)
+        if not m:
+            continue
+        key = m.group(2) if m.group(2) and not line.lstrip().startswith("-") else None
+        if key is None:
+            # A `- *name` item belongs to the nearest less-indented `key:` above it.
+            indent = len(m.group(1))
+            for j in range(i - 1, -1, -1):
+                k = _YAML_KEY_LINE.match(lines[j])
+                if k and len(k.group(1)) < indent + 1:
+                    key = k.group(2)
+                    break
+                if lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) < indent and not k:
+                    break
+        if key and _secret_named_yaml_key(key):
+            wanted.add(m.group(3))
+    if not wanted:
+        return text
+    for i, line in enumerate(lines):
+        m = _YAML_ANCHOR_SCALAR.search(line)
+        if m and m.group(2) in wanted:
+            lines[i] = line[:m.start(4)] + PLACEHOLDER + line[m.end(4):]
     return "\n".join(lines)
 
 

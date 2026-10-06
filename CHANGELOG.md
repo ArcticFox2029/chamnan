@@ -53,6 +53,9 @@ already reports the last released number while running newer code.
   module's; `%` and `!` lines are skipped. Outputs are never read, so an image or a printed
   credential in an output cell cannot reach the map. Non-Python notebooks stay undescribed, and a
   notebook over the 2 MB file limit is still skipped and counted as skipped.
+- **A secret behind a YAML anchor is redacted where it is defined.** `x-defaults: &dbcred <value>`
+  used as `DB_PASSWORD: *dbcred`, or as `- *tok` under `secrets:`, printed the value at the anchor
+  while replacing the alias. Compose, GitHub Actions and GitLab CI all expand these.
 
 ## What's new in 1.35.0
 
