@@ -1569,6 +1569,10 @@ EXT_LANG = {
     # Mapped to "js" rather than a new lang because that block IS JavaScript or TypeScript, and the
     # existing REGEX_RULES/LINE_COMMENT/FILE_DOC_MARKER entries for "js" already cover TS syntax.
     ".svelte": "js", ".vue": "js", ".astro": "js",
+    # 🎯 [2026-10-06] (owner's decision; R34 acc5, 2026-10-06) A notebook is Python held in JSON. Its code
+    # and markdown cells are what a reader needs; see _notebook_source, which builds that and never
+    # reads an output. Before this it was listed as unindexed source. Check 445.
+    ".ipynb": "py",
 }
 
 # 🐛 [2026-09-08] This was a hand-written `frozenset({".js", ".mjs", ".cjs", ".css", ".scss"})`
@@ -1703,6 +1707,44 @@ _SFC_SCRIPT = re.compile(r"<script\b[^>]*>(.*?)</script>", re.S | re.I)
 _ASTRO_FRONTMATTER = re.compile(r"\A\s*---\r?\n(.*?)\r?\n---", re.S)
 
 
+def _notebook_source(source):
+    """A Jupyter notebook's code and markdown cells as Python source. Outputs are never read.
+
+    Markdown cells become `#` comment lines, so the notebook's first markdown cell is the opening
+    comment the map describes it by. Cell magics and shell escapes (`%matplotlib`, `!pip`) are
+    commented out, so they do not break the parse of everything else in the cell. A notebook whose
+    kernel is not Python, or JSON that is not a notebook, gives "" -- nothing to describe rather
+    than another language's code read as Python.
+    """
+    try:
+        nb = json.loads(source)
+    except ValueError:
+        return ""
+    if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
+        return ""
+    meta = nb.get("metadata") if isinstance(nb.get("metadata"), dict) else {}
+    lang = ""
+    for key in ("language_info", "kernelspec"):
+        info = meta.get(key)
+        if isinstance(info, dict) and isinstance(info.get("name" if key == "language_info" else "language"), str):
+            lang = info.get("name" if key == "language_info" else "language").lower()
+            break
+    if lang and lang != "python":
+        return ""
+    out = []
+    for cell in nb["cells"]:
+        if not isinstance(cell, dict):
+            continue
+        src = cell.get("source")
+        text = "".join(src) if isinstance(src, list) else (src if isinstance(src, str) else "")
+        if cell.get("cell_type") == "markdown":
+            out += ["# " + ln if ln.strip() else "#" for ln in text.splitlines()]
+        elif cell.get("cell_type") == "code":
+            out += ["# " + ln if ln.lstrip().startswith(("%", "!")) else ln for ln in text.splitlines()]
+        out.append("")
+    return "\n".join(out)
+
+
 def _sfc_extraction_source(source, path):
     """What a Svelte/Vue/Astro single-file component actually has to offer a JS/TS reader: the one
     fenced block that is real code, not the markup around it.
@@ -1744,6 +1786,8 @@ def _extract_one(source, path, lang):
     """Dispatch to the right extractor. Separated from scan() so the caller can wrap exactly this
     in one try and keep a bad file from taking the run down with it."""
     if lang == "py":
+        if PurePosixPath(str(path)).suffix.lower() == ".ipynb":
+            source = _notebook_source(source)
         parsed = extract_python(source, path)
         if parsed[0] is None and not parsed[1]:
             # 🐛 [2026-10-01] (owner) The owner asked (2026-09-30) whether skipping the over-cap

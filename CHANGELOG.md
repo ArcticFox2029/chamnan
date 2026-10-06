@@ -48,6 +48,11 @@ already reports the last released number while running newer code.
 - **A typo gets a did-you-mean.** `chamnan-impact` given a path that does not exist names the
   closest file the index holds, and `chamnan-recall` with no match names the closest word from
   the stored titles. A query with nothing close gets the plain answer and no guess.
+- **Jupyter notebooks are indexed.** A notebook's code and markdown cells are read as Python —
+  the first markdown cell describes it, and its functions and classes are listed like any
+  module's; `%` and `!` lines are skipped. Outputs are never read, so an image or a printed
+  credential in an output cell cannot reach the map. Non-Python notebooks stay undescribed, and a
+  notebook over the 2 MB file limit is still skipped and counted as skipped.
 
 ## What's new in 1.35.0
 

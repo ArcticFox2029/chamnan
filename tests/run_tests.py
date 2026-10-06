@@ -5879,12 +5879,14 @@ for _pyf in list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py
 check("...and it consumes nothing extra anywhere in this repository's own source",
       _swallowed == 0)
 
-# Checked and NOT acted on: a secret in a Jupyter OUTPUT cell is not redacted, and does not need to
-# be — `.ipynb` is not in EXT_LANG, the mapper never reads one, and a repository containing a
-# notebook full of credentials produces a block with none of it. Recorded so the next round does not
-# re-open it as a finding.
-check("notebooks are not indexed, which is why the redactor never sees their outputs",
-      ".ipynb" not in getattr(__import__("mapper"), "EXT_LANG", {}))
+# A secret in a Jupyter OUTPUT cell still never reaches the index: since 2026-10-06 notebooks are
+# indexed from their code and markdown cells only, and `_notebook_source` never reads an output
+# (check 445 plants one end to end). Recorded so the next round does not re-open it as a finding.
+_nb_src = __import__("json").dumps({"cells": [{"cell_type": "code", "source": ["x = 1\n"],
+                                               "outputs": [{"text": ["OUTPUT-ONLY-TEXT\n"]}]}]})
+check("notebook outputs never reach the index: only code and markdown cells are read",
+      "OUTPUT-ONLY-TEXT" not in __import__("mapper")._notebook_source(_nb_src)
+      and "x = 1" in __import__("mapper")._notebook_source(_nb_src))
 
 
 # ------------------- the paper's two comparisons are not one comparison
@@ -9615,8 +9617,10 @@ _rmtree(_mc.parent, ignore_errors=True)
 # data — so a fifteen-notebook data-science repository reported "described 2/2 files (100%)" while
 # every line of its real content was invisible, and nothing said so. It is source this indexer
 # cannot parse, which is what Perl, R, Julia and Fortran already get (R9 agent 4, 2026-09-06).
-check("A NOTEBOOK IS UNINDEXED SOURCE, NOT PAYLOAD",
-      ".ipynb" in assets_mod.UNEXTRACTED_SOURCE)
+# 🎯 [2026-10-06] Indexed now, from its code and markdown cells (check 445) -- and so neither payload nor
+# unindexed source.
+check("A NOTEBOOK IS INDEXED SOURCE, NOT PAYLOAD",
+      ".ipynb" in mapper.EXT_LANG and ".ipynb" not in assets_mod.UNEXTRACTED_SOURCE)
 
 # 🐛 [2026-09-07] `MAX_CARRY_CHARS` was a raw character cap, the exact anti-pattern `lib/state.py`'s
 # docstring names two files away: "a flat character cap mis-prices any file that is not mostly Latin
