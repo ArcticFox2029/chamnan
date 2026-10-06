@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1340), and every one of these is on the
+[README](README.md#whats-new-in-1350), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -21,6 +21,57 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+## What's new in 1.35.0
+
+_Protection and context hold in the shapes text really arrives in — commands in shell history, infrastructure state, keys cut off mid-file, names typed in another Unicode form — and the steps that ran on every edit no longer cost seconds._
+
+### Fixed and improved
+
+- **A password given to a command is redacted.** `curl -u user:PASS`, `mysql -pPASS`, `sshpass -p`,
+  `docker`/`helm login -p`, `redis-cli -a`, `smbclient -U user%PASS`, `htpasswd -b` and
+  PowerShell's `ConvertTo-SecureString '…' -AsPlainText` — the shapes shell history and pasted
+  commands carry — were printed in full. Each rule is anchored to its command, so `ssh -p 2222`,
+  `mkdir -p` and `$VAR` references are left alone.
+- **A private key is redacted however it arrives.** A PEM block cut before its `END` line — what a
+  capped read, `head` or a truncated paste produces — had only its `BEGIN` line replaced and its
+  body printed; a PuTTY `.ppk` printed its private lines; a JSON Web Key printed `d`, `p`, `q`,
+  `dp`, `dq`, `qi` and `k`. All are redacted; public keys and certificates are untouched.
+- **Terraform plans and state are redacted.** A plan's input variables and a state's outputs are
+  stored as `"db_password": {"value": "…"}`, cleartext whether marked sensitive or not, and the
+  value under a secret-named object is now the value.
+- **A file is found however its name was typed.** A file created with a decomposed (NFD) name, as
+  APFS keeps it, was answered "nothing recorded" by `chamnan-impact` when typed in the ordinary
+  composed form; the file pointer and the history and memory joins had the same miss. Lookups now
+  compare both sides in NFC and answer with the spelling on disk.
+- **One quoted path outside the repository no longer silences the instruction-file drift check.**
+  The check asked git about every quoted path in one call, and git refuses the whole call for a
+  path like `/var/log/app/` or `../shared/conf.yml`, so the file read as current.
+- **The map refreshes quickly after a small edit**: only the sections an edit changed are
+  re-scrubbed — 5.9 s to 0.02 s on a 584,000-character map.
+- **A long value after a secret word scrubs in linear time.** Every secret-word name run is bounded
+  (8,000 characters of `key-`: 27 s to 0.94 s), and so is the prefix a header-style name may carry.
+- **The commit guard also guards commits made through the PowerShell tool**, scans every staged
+  file git calls binary — UTF-16 with or without a BOM, and the string literals of `.pyc` files —
+  says so when it runs out of time, names a partial clone when `--history` cannot read it, and
+  names the commits only the reflog still holds.
+- **Header-style names (`X-Api-Key:`) open the secret-list rules**, as recorded HTTP cassettes
+  write them; a secret split by a shell line continuation is redacted on both lines; stripping
+  invisible characters can no longer reassemble a credential; an uncaught traceback is scrubbed
+  before it reaches stderr; an unbraced shell variable after a secret word is kept as a reference.
+- **Non-ASCII commit text arrives intact** whatever `i18n.logOutputEncoding` says, and a capped
+  preview never ends in half a character.
+- **Locks record their host**, so another machine's live lock is not broken, and a lock says whose
+  it is in one write — on Windows without the WMI query `platform.node()` costs under Python 3.12+.
+- **Repeated advice is capped at two notices a session per kind**; `AGENTS.md` is no longer
+  rewritten by the pre-commit hook when nothing it describes changed; the hooks that run on every
+  Bash call no longer import `subprocess`; the session start reads `HEAD` off `.git`.
+- **The map honours AI-ignore files, lists the test and build commands a repository declares, and
+  keeps the summary of a file that declares a legacy encoding**; `chamnan-impact` shows why a file
+  last changed; `chamnan-where` sees `__all__`, entry points and Thai or differently normalised
+  identifiers.
+- **Shallow clones, sparse checkouts, linked worktrees of shallow clones and sync-client conflict
+  copies are recognised for what they are**, and git's "dubious ownership" refusal is named with its
+  fix.
 - **`chamnan-recall` finds a note whatever the case or accents.** Case-insensitive search held for
   English letters only: `CAFÉ` missed a note about the café, `ISTANBUL` missed İstanbul, a Greek
   word in capitals missed its lowercase form, and `straße` did not even find the note titled
