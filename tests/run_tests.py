@@ -51684,7 +51684,9 @@ _plain436 = ["ssh -p 2222 root@host", "mkdir -p build/out", "docker run -p 8080:
              "mysql -u root -p prod", "pg_dump -p 5433 shop", "curl -u admin https://x",
              "curl -u admin:$API_TOKEN https://x", "htpasswd -c .htpasswd admin",
              "$s = ConvertTo-SecureString $plain -AsPlainText -Force", "sshpass -f ~/.pw ssh h",
-             "redis-cli -a $REDIS_PASSWORD ping", "scp -P 2222 a.txt h:/tmp"]
+             "redis-cli -a $REDIS_PASSWORD ping", "scp -P 2222 a.txt h:/tmp",
+             "a flag to `curl -u`, `mysql -p`, `sshpass -p`, `docker login -p` or `redis-cli -a`.",
+             "pass `smbclient -U user%` then the password, or `mysql -p` alone (prompt)."]
 _changed436 = [p for p in _plain436 if _redact436.scrub(p) != p]
 check("...while ports, `mkdir -p`, an empty prompt flag and variable references stay as written",
       not _changed436, saw=_changed436)

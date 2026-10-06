@@ -27,17 +27,18 @@ _Protection and context hold in the shapes text really arrives in — commands i
 
 ### Fixed and improved
 
-- **A password given to a command is redacted.** `curl -u user:PASS`, `mysql -pPASS`, `sshpass -p`,
-  `docker`/`helm login -p`, `redis-cli -a`, `smbclient -U user%PASS`, `htpasswd -b` and
-  PowerShell's `ConvertTo-SecureString '…' -AsPlainText` — the shapes shell history and pasted
-  commands carry — were printed in full. Each rule is anchored to its command, so `ssh -p 2222`,
+- **A password given to a command is redacted.** A password after `curl -u user:`, attached to
+  `mysql -p`, after `sshpass -p`, `docker`/`helm login -p` or `redis-cli -a`, after the `%` of
+  `smbclient -U`, last on an `htpasswd -b` line, or quoted for PowerShell's
+  `ConvertTo-SecureString … -AsPlainText` — the shapes shell history and pasted commands carry —
+  was printed in full. Each rule is anchored to its command, so `ssh -p 2222`,
   `mkdir -p` and `$VAR` references are left alone.
 - **A private key is redacted however it arrives.** A PEM block cut before its `END` line — what a
   capped read, `head` or a truncated paste produces — had only its `BEGIN` line replaced and its
   body printed; a PuTTY `.ppk` printed its private lines; a JSON Web Key printed `d`, `p`, `q`,
   `dp`, `dq`, `qi` and `k`. All are redacted; public keys and certificates are untouched.
 - **Terraform plans and state are redacted.** A plan's input variables and a state's outputs are
-  stored as `"db_password": {"value": "…"}`, cleartext whether marked sensitive or not, and the
+  stored as a `"value"` member inside an object named `"db_password"`, cleartext whether marked sensitive or not, and the
   value under a secret-named object is now the value.
 - **A file is found however its name was typed.** A file created with a decomposed (NFD) name, as
   APFS keeps it, was answered "nothing recorded" by `chamnan-impact` when typed in the ordinary

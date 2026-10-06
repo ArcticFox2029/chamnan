@@ -4080,17 +4080,19 @@ def _list_element(raw):
 # `;`, `|` or `&` between them). A value that is a variable reference names where the password
 # lives and is kept. Check 436.
 _ONE_COMMAND = r"[^\n;|&]*?"
-_FLAG_VALUE = r"(['\"]?)(?P<v>[^\s'\"$%][^\s'\"]*)\1"
+# A value never starts with a backtick or closing punctuation: "`mysql -p`," in prose is a flag
+# being named, not given. (1.35.0 release CI: the plugin's own README read as a password.)
+_FLAG_VALUE = r"(['\"]?)(?P<v>[^\s'\"$%`,;)\]}][^\s'\"`]*)\1"
 # One lazy pattern each: `_Lazy` proxies attribute access, so a list of them still compiles on use.
 _COMMAND_CREDENTIALS = [_lazy(lambda p=p: re.compile(p)) for p in (
-    r"\bcurl\b" + _ONE_COMMAND + r"\s(?:-u|--user)(?:\s+|=)(['\"]?)[^\s:'\"]+:(?P<v>[^\s'\"$%][^\s'\"]*)\1",
+    r"\bcurl\b" + _ONE_COMMAND + r"\s(?:-u|--user)(?:\s+|=)(['\"]?)[^\s:'\"`]+:(?P<v>[^\s'\"$%`,;)\]}][^\s'\"`]*)\1",
     r"\b(?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck)\b" + _ONE_COMMAND
     + r"\s-p" + _FLAG_VALUE,
     r"\bsshpass\b" + _ONE_COMMAND + r"\s-p\s*" + _FLAG_VALUE,
     r"\b(?:docker|podman|buildah|skopeo|nerdctl|oras|helm(?:\s+registry)?)\s+login\b" + _ONE_COMMAND
     + r"\s-p(?:\s+|=)" + _FLAG_VALUE,
     r"\bredis-cli\b" + _ONE_COMMAND + r"\s-a\s+" + _FLAG_VALUE,
-    r"\bsmbclient\b" + _ONE_COMMAND + r"\s(?:-U|--user)(?:\s+|=)(['\"]?)[^\s%'\"]+%(?P<v>[^\s'\"]+)\1",
+    r"\bsmbclient\b" + _ONE_COMMAND + r"\s(?:-U|--user)(?:\s+|=)(['\"]?)[^\s%'\"`]+%(?P<v>[^\s'\"$%`,;)\]}][^\s'\"`]*)\1",
     # `-n` prints instead of writing a file, so the password is the second positional, not the third.
     r"\bhtpasswd\s+-(?=\w*b)(?=\w*n)\w+\s+\S+\s+" + _FLAG_VALUE,
     r"\bhtpasswd\s+-(?=\w*b)(?!\w*n)\w+\s+\S+\s+\S+\s+" + _FLAG_VALUE,
