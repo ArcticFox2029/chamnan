@@ -51291,6 +51291,58 @@ _lits428 = ["export API_TOKEN=" + _val428, "password=" + _val428, "set PASSWORD=
 _kept428 = [l for l in _lits428 if _val428 in _redact428.scrub(l) or _val428.lower() + "x9" in _redact428.scrub(l)]
 check("...while a literal value after the same names is still replaced, even one that starts with $",
       not _kept428, saw=_kept428)
+# ---- 429_a_file_git_calls_binary_is_still_scanned.py
+# ------------------ a staged file git calls binary is still scanned for credentials
+# 🐛 [2026-10-06] (R170 acc4, 2026-10-05) git decides "binary" by a NUL in the first 8,000 bytes, so a
+# UTF-16 SQL file and a text file with a binary header both show as `Bin` in the staged diff, and the
+# guard reads the text diff only. A credential staged in either drew no warning at all. The .pyc scan
+# (check 421) already read one kind of binary blob; this pins the set: UTF-16 text is decoded and
+# scanned, any other binary blob has its printable runs scanned, an ordinary image draws nothing,
+# and the credential is never printed.
+import importlib as _il429
+import random as _rnd429
+import string as _st429
+import subprocess as _sp429
+import sys as _sys429
+import tempfile as _tf429
+from pathlib import Path as _P429
+
+_ws429 = _il429.import_module("workspace")
+_guard429 = _P429(_ws429.__file__).resolve().parent.parent / "bin" / "chamnan-guard"
+_r429 = _rnd429.Random(429)
+_val429 = "gh" + "p_" + "".join(_r429.choice(_st429.ascii_letters + _st429.digits) for _ in range(36))
+
+
+def _guard_on429(files):
+    _d = _P429(_tf429.mkdtemp())
+    _g = lambda *a: _sp429.run(["git", "-C", str(_d), *a], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+    _g("init", "-q")
+    _g("config", "user.email", "t@t")
+    _g("config", "user.name", "t")
+    (_d / "a.txt").write_text("x\n", encoding="utf-8")
+    _g("add", "a.txt")
+    _g("commit", "-qm", "base")
+    for _name, _data in files.items():
+        (_d / _name).write_bytes(_data)
+        _g("add", _name)
+    _r = _sp429.run([_sys429.executable, str(_guard429)], cwd=_d, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=120)
+    return _r.stdout + _r.stderr
+
+
+_utf16429 = ("﻿INSERT INTO cfg VALUES ('token','" + _val429 + "');\n").encode("utf-16-le")
+_out429 = _guard_on429({"conf.sql": _utf16429})
+check("a credential in a staged UTF-16 file (git shows it as binary) is named", "conf.sql" in _out429,
+      saw=_out429[-300:])
+_nul429 = b"\x00\x01header" + ("\n# deploy token " + _val429 + "\n").encode()
+_out429b = _guard_on429({"blob.dat": _nul429})
+check("...and one in a staged file with a binary header", "blob.dat" in _out429b, saw=_out429b[-300:])
+check("...without printing the credential", _val429 not in _out429 + _out429b)
+_png429 = b"\x89PNG\r\n\x1a\n" + bytes(_r429.randrange(256) for _ in range(4000))
+_out429c = _guard_on429({"logo.png": _png429})
+check("an ordinary binary file with no credential draws no warning", "logo.png" not in _out429c,
+      saw=_out429c[-300:])
 # ---- 42_every_subprocess_this_package_starts_is_bounded.py
 # ------------------------------------------- fourteen of fifteen, and the fifteenth waits forever
 # 🐛 [2026-09-10] Every `subprocess.run` in this package passes `timeout=` except one:
@@ -51372,6 +51424,46 @@ for _t_f_42 in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").gl
             _t_silly42.append(f"{_t_f_42.name}: timeout={_t_v}")
 check("...and each bound is a number somebody would actually wait for",
       not _t_silly42, saw="\n".join(_t_silly42) or None)
+# ---- 430_history_in_a_partial_clone_names_the_cause.py
+# ------------------ guard --history in a partial clone names the cause and claims nothing scanned
+# 🐛 [2026-10-06] (R163 acc4, 2026-10-05) In a `--filter=blob:none` clone the historical blobs are not
+# on disk and chamnan forbids lazy fetching, so `git log -p` fails. The guard said "not a git
+# repository" about a repository. This pins that the message names a partial clone and how to fetch
+# the missing contents, and that it never reports the history as clean.
+import random as _rnd430
+import string as _st430
+import subprocess as _sp430
+import sys as _sys430
+import tempfile as _tf430
+from pathlib import Path as _P430
+
+_d430 = _P430(_tf430.mkdtemp())
+_g430 = lambda cwd, *a: _sp430.run(["git", "-C", str(cwd), *a], capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace")
+_src430 = _d430 / "src"
+_src430.mkdir()
+_g430(_src430, "init", "-q")
+for _k430, _v430 in (("user.email", "t@t"), ("user.name", "t"), ("uploadpack.allowFilter", "true"),
+                     ("uploadpack.allowAnySHA1InWant", "true")):
+    _g430(_src430, "config", _k430, _v430)
+_r430 = _rnd430.Random(430)
+_val430 = "gh" + "p_" + "".join(_r430.choice(_st430.ascii_letters + _st430.digits) for _ in range(36))
+(_src430 / "conf.py").write_text("TOKEN = '%s'\n" % _val430, encoding="utf-8")
+_g430(_src430, "add", "conf.py")
+_g430(_src430, "commit", "-qm", "add")
+(_src430 / "conf.py").write_text("TOKEN = 'gone'\n", encoding="utf-8")
+_g430(_src430, "commit", "-qam", "scrub")
+_sp430.run(["git", "clone", "-q", "--filter=blob:none", _src430.as_uri(), str(_d430 / "part")],
+           capture_output=True)
+(_d430 / "part" / ".chamnan").mkdir()
+_guard430 = ROOT / "bin" / "chamnan-guard"
+_out430 = _sp430.run([_sys430.executable, str(_guard430), "--history"], cwd=_d430 / "part",
+                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+_text430 = _out430.stdout + _out430.stderr
+check("guard --history in a partial clone names the partial clone and how to fetch what is missing",
+      "partial clone" in _text430 and ("backfill" in _text430 or "refetch" in _text430), saw=_text430[-300:])
+check("...and does not report the history as clean", "nothing credential-shaped" not in _text430,
+      saw=_text430[-200:])
 # ---- 43_a_new_skill_cannot_silently_conflict_with_an_installed_one.py
 # ------------------------------------- fifty random skill trees, and the answer is known for each
 # The person chamnan writes skill files for is not an engineer. If a captured `.md` duplicates or
@@ -51565,6 +51657,9 @@ _DISPOSABLE45 = frozenset({
     # Age-based deletion is the CORRECT outcome for this one: a digest that survives becomes the
     # standing nag its own comment says it must not be.
     "repeat_digest.json",
+    # Derived by mapper.scrub_map_text and rewritten whole on every map build, so it never grows past
+    # one map's worth; losing it to an age sweep costs one full scrub (R91 acc5, 2026-10-05).
+    "map_scrub_cache.json",
 })
 
 _t_files45 = []
