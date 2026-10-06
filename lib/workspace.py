@@ -1471,13 +1471,18 @@ def _own_host():
         try:
             # Not `os.uname()`: the suite refuses any shipped reference to an API Windows does not
             # have, guarded or not.
-            # 🐛 [2026-10-06] (1.35.0 release CI) Not `platform.node()` either: it runs the whole
-            # `platform.uname()`, which on Windows under Python 3.12+ is a WMI query, and the first
-            # call happened inside the lock window below. Sixty concurrent hooks on the Windows 3.13
+            # 🐛 [2026-10-06] (1.35.0 release CI) And not `platform.node()` on Windows: it runs the
+            # whole `platform.uname()`, which under Python 3.12+ is a WMI query, and the first call
+            # happened inside the lock window below. Sixty concurrent hooks on the Windows 3.13
             # runner lost 5 scratch.jsonl entries to LOCK_TIMEOUT; 3.8, which reads the version
-            # without WMI, passed. `socket.gethostname()` is the same value on every OS, cheaply.
-            import socket
-            name = socket.gethostname()
+            # without WMI, passed. `socket` would answer cheaply and is refused here: nothing this
+            # package ships imports a network module. Windows keeps its name in COMPUTERNAME;
+            # elsewhere `platform.node()` is `os.uname()` underneath and cheap.
+            if os.name == "nt":
+                name = os.environ.get("COMPUTERNAME", "")
+            else:
+                import platform
+                name = platform.node()
             name = str(name).replace("\r", "").replace("\n", "").strip()
         except Exception:
             name = ""
@@ -3497,7 +3502,8 @@ def _lock_holder_state(lock):
         return LOCK_HOLDER_UNKNOWN
     pid = int(lines[0].strip())
     recorded_host = lines[2].strip() if len(lines) > 2 else ""
-    if recorded_host and _own_host() and recorded_host != _own_host():
+    # Host names are case-insensitive, and COMPUTERNAME is upper case where the DNS name may not be.
+    if recorded_host and _own_host() and recorded_host.lower() != _own_host().lower():
         return LOCK_HOLDER_UNKNOWN
     if not _pid_is_alive(pid):
         return LOCK_HOLDER_DEAD
