@@ -4026,11 +4026,17 @@ def _is_a_header_row(fields):
 # the first element was redacted and the rest printed beside it. Measured on a three-element JSON
 # array of generic secrets: one redacted, two in the clear, with a `<REDACTED>` at the front of them
 # saying the line had been handled. A YAML block sequence was missed outright (R3 agent 2, 2026-09-08).
+# 🐛 [2026-10-06] (R13 acc4, 2026-10-06) Both list rules required the secret word to OPEN the name,
+# so an HTTP header name -- `X-Api-Key`, `X-Auth-Token`, the shape every recorded HTTP cassette
+# (VCR.py, pytest-recording) writes its headers in -- never matched, and the block-sequence value
+# under it was printed while `api_key:` with the same value was redacted. Hyphenated or underscored
+# segments may now come before the secret word. Check 433.
+_NAME_PREFIX = r"(?:[A-Za-z0-9]+[-_.])*"
 _LIST_OPEN = _lazy(lambda: re.compile(
-    r"(?<![\w-])(['\"]?)((?:" + SECRET_WORDS + r")" + _KEY_RUN + r")\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
+    r"(?<![\w-])(['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
 # A YAML block sequence: the key alone on its line, then indented `- item` lines under it.
 _BLOCK_KEY = _lazy(lambda: re.compile(
-    r"^(\s*['\"]?)((?:" + SECRET_WORDS + r")" + _KEY_RUN + r")(['\"]?\s*:\s*)$", re.I))
+    r"^(\s*['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")(['\"]?\s*:\s*)$", re.I))
 _BLOCK_ITEM = _lazy(lambda: re.compile(r"^(\s+-\s+)(['\"]?)(.+?)\2(\s*)$"))
 # A bare number in such a list is a port, a retry count or a length, not a credential. Redacting it
 # costs a reader information and hides nothing, and it is the one element type that is safe to keep.
