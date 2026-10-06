@@ -4038,6 +4038,14 @@ _LIST_OPEN = _lazy(lambda: re.compile(
 _BLOCK_KEY = _lazy(lambda: re.compile(
     r"^(\s*['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")(['\"]?\s*:\s*)$", re.I))
 _BLOCK_ITEM = _lazy(lambda: re.compile(r"^(\s+-\s+)(['\"]?)(.+?)\2(\s*)$"))
+# 🐛 [2026-10-06] (R22 acc4, 2026-10-06) Terraform writes a plan's input variables and a state's
+# outputs as `"db_password": {"value": "..."}` -- the name one level above the value -- and keeps
+# both in cleartext, `sensitive` or not. The assignment rules saw `"value": "..."` with no secret
+# word and printed it. The `"value"` member directly inside a secret-named object is the value.
+# Check 434.
+_OBJECT_VALUE = _lazy(lambda: re.compile(
+    r"(?<![\w-])(['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN
+    + r")\1(\s*:\s*\{[^{}]{0,400}?\"value\"\s*:\s*\")((?:[^\"\\\n]|\\.)+)\"", re.I))
 # A bare number in such a list is a port, a retry count or a length, not a credential. Redacting it
 # costs a reader information and hides nothing, and it is the one element type that is safe to keep.
 _JUST_A_NUMBER = _lazy(lambda: re.compile(r"[-+]?\d+(?:\.\d+)?"))
@@ -4068,6 +4076,10 @@ def _redact_secret_lists(text):
                 f"[{','.join(_list_element(x) for x in m.group(4).split(','))}]")
 
     text = _LIST_OPEN.sub(_inline, text)
+    # Only text that has a `"value"` member pays for compiling the pattern.
+    if '"value"' in text:
+        text = _OBJECT_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}"
+                                 f"{PLACEHOLDER}\"", text)
     # 🐛 [2026-09-08] This used `splitlines()`, which breaks on eight characters besides `\n`:
     # `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029. A value containing any of them was cut
     # in half, the tail read as a line that is not a `- item`, the block loop exited, and EVERY
