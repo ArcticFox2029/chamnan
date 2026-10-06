@@ -51640,7 +51640,7 @@ def _repo435(extra):
 
 _missed435 = {}
 for _extra435 in ("Logs go to `/var/log/app/`.", "Shared config is `../shared/conf.yml`.",
-                  "The venv is `/Users/someone/proj/.venv/`.", "See `docs/../tests/test_a.py`."):
+                  "The venv is `/opt/proj/.venv/`.", "See `docs/../tests/test_a.py`."):
     _gone435 = _drift435.gone_since(_repo435(_extra435), "CLAUDE.md")[0]
     if "tests/test_a.py" not in _gone435:
         _missed435[_extra435] = _gone435
