@@ -3424,6 +3424,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     text = _redact_command_credentials(text)
     text = _redact_key_encodings(text)
     text = _redact_kubeconfig_users(text)
+    text = _redact_api_client_auth(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -4097,7 +4098,13 @@ def _is_a_header_row(fields):
 # position -- walk to the end of any dotted run and back: 40,000 characters of `a.a.a…` took 205 s,
 # quadratic. Four segments of up to 32 characters cover every header name in real use
 # (`x-amz-security-token` is three) and keep each position's work constant.
-_NAME_PREFIX = r"(?:[A-Za-z0-9]{1,32}[-_.]){0,4}"
+# 🐛 [2026-10-06] (R83 acc5, 2026-10-06) Only SEPARATED segments were allowed, so a camelCase or
+# PascalCase name -- `adminPassword`, `sqlAdminPassword`, `DBPassword`, how an Azure parameters file
+# names every input -- never matched and its `{"value": ...}` printed in full. Up to four humps may
+# now come before the secret word, case-sensitively, so the word must START a hump: `bypass` is not
+# `pass`. Each hump's lowercase run is maximal, so this adds no backtracking. Check 449.
+_NAME_PREFIX = (r"(?:[A-Za-z0-9]{1,32}[-_.]){0,4}"
+                r"(?-i:[A-Za-z][a-z0-9]{0,31}(?:[A-Z][a-z0-9]{0,31}){0,3}(?=[A-Z]))?")
 _LIST_OPEN = _lazy(lambda: re.compile(
     r"(?<![\w-])(['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
 # A YAML block sequence: the key alone on its line, then indented `- item` lines under it.
@@ -4208,6 +4215,46 @@ def _redact_kubeconfig_users(text):
                 lines[i] = f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}"
     return "\n".join(lines)
 
+
+# 🐛 [2026-10-06] (R97 acc4, 2026-10-06) An API client stores its auth under generic names: Postman as
+# `"bearer": [{"key": "token", "value": "..."}]` or `"apikey": [{"key": "value", "value": "..."}]`,
+# Bruno -- whose `.bru` files are made to be committed -- as `token:` or `value:` inside an
+# `auth:bearer {` / `auth:apikey {` block. A bare `token` or `value` names nothing, so each printed
+# in full. Only inside an auth block of a named type are they the credential; a `{{variable}}` or a
+# `$` reference is left, as is the `key` member of an API key (it is the header name). Check 450.
+_AUTH_TYPES = r"(?:bearer|apikey|oauth1|oauth2|jwt|basic|digest|hawk|awsv4|ntlm|wsse|akamai|edgegrid|asap)"
+_POSTMAN_AUTH = _lazy(lambda: re.compile(r'"' + _AUTH_TYPES + r'"\s*:\s*\[[^\[\]]*\]', re.I))
+_POSTMAN_AUTH_PAIR = _lazy(lambda: re.compile(
+    r'("key"\s*:\s*"(?:token|value)"\s*,\s*"value"\s*:\s*")((?:[^"\\\n]|\\.)+)"'))
+_BRUNO_AUTH_OPEN = _lazy(lambda: re.compile(r"^auth:" + _AUTH_TYPES + r"\s*\{\s*$", re.I))
+_BRUNO_AUTH_FIELD = _lazy(lambda: re.compile(r"^(\s*(?:token|value)\s*:[ \t]*)(\S.*?)\s*$"))
+
+
+def _is_a_client_reference(value):
+    return value.startswith(("{{", "$"))
+
+
+def _redact_api_client_auth(text):
+    """Redact the token or key an API client's auth block keeps under a generic member name."""
+    if '"key"' in text:
+        text = _POSTMAN_AUTH.sub(lambda b: _POSTMAN_AUTH_PAIR.sub(
+            lambda m: m.group(0) if _is_a_client_reference(m.group(2))
+            else f'{m.group(1)}{PLACEHOLDER}"', b.group(0)), text)
+    if "auth:" not in text:
+        return text
+    lines = text.split("\n")
+    inside = False
+    for i, line in enumerate(lines):
+        if _BRUNO_AUTH_OPEN.match(line):
+            inside = True
+            continue
+        if inside and line.strip() == "}":
+            inside = False
+        if inside:
+            m = _BRUNO_AUTH_FIELD.match(line)
+            if m and not _is_a_client_reference(m.group(2)):
+                lines[i] = m.group(1) + PLACEHOLDER
+    return "\n".join(lines)
 
 # 🐛 [2026-10-06] (R57 acc5, 2026-10-06) Compose, GitHub Actions and GitLab CI expand YAML anchors, so
 # `x-defaults: &dbcred <value>` used as `DB_PASSWORD: *dbcred`, or as a `- *tok` item under `secrets:`,
@@ -4333,7 +4380,8 @@ def _redact_secret_lists(text):
         return text
     text = _LIST_OPEN.sub(_inline, text)
     # Only text that has a `"value"` member pays for compiling the pattern.
-    if '"value"' in text:
+    # Any casing: a .NET appsettings file writes `"Value"`. Check 449.
+    if '"value"' in text or '"Value"' in text or '"VALUE"' in text:
         text = _OBJECT_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}"
                                  f"{PLACEHOLDER}\"", text)
     # 🐛 [2026-09-08] This used `splitlines()`, which breaks on eight characters besides `\n`:

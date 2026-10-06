@@ -66,6 +66,15 @@ already reports the last released number while running newer code.
   chamnan's own voice, outside the fence that marks repository text; a file name is chosen by
   whoever wrote the clone, and agents have followed instructions hidden in one. The names now sit
   inside the fence.
+- **A camelCase secret name protects its value object.** An Azure parameters file names an input
+  like adminPassword and keeps it under a value member, and a .NET settings file capitalises that
+  member; both printed the value. A secret word that starts a camelCase or PascalCase hump now
+  counts, and so does the value member in any casing; a name that merely contains the letters of
+  one (a bypass mode) does not.
+- **An API client's saved token is redacted.** A Postman collection and a Bruno request file keep a
+  bearer token or an API key under the generic names token and value inside their auth block, and
+  both were printed. Inside an auth block of a named type they are now redacted; a variable
+  reference and the API key's header name are left as written.
 
 ## What's new in 1.35.0
 
