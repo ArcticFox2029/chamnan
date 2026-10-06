@@ -53,9 +53,15 @@ already reports the last released number while running newer code.
   module's; `%` and `!` lines are skipped. Outputs are never read, so an image or a printed
   credential in an output cell cannot reach the map. Non-Python notebooks stay undescribed, and a
   notebook over the 2 MB file limit is still skipped and counted as skipped.
-- **A secret behind a YAML anchor is redacted where it is defined.** `x-defaults: &dbcred <value>`
-  used as `DB_PASSWORD: *dbcred`, or as `- *tok` under `secrets:`, printed the value at the anchor
-  while replacing the alias. Compose, GitHub Actions and GitLab CI all expand these.
+- **A secret behind a YAML anchor is redacted where it is defined.** A value defined once under an
+  anchor and reached through an alias under a password key, or as an alias item in a `secrets`
+  list, printed in full at the anchor while the alias itself was replaced. Compose, GitHub
+  Actions and GitLab CI all expand these.
+- **A TOML or INI section that names a secret protects its values.** Under a header such as
+  secrets, credentials, api keys or tokens, a value that looks like a credential is redacted even
+  when its own key is an ordinary word; a password held in a TOML multi-line string is too.
+  Ordinary values under such a header (a user name, a host, a port) stay, and a keybindings
+  section is not treated as secret.
 - **File names reach the session as repository text.** The "Last edited" line named your files in
   chamnan's own voice, outside the fence that marks repository text; a file name is chosen by
   whoever wrote the clone, and agents have followed instructions hidden in one. The names now sit

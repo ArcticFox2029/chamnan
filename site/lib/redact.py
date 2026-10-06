@@ -3213,6 +3213,7 @@ def scrub(text, windowed=True, *, _unmask=True):
             _without = scrub(text, windowed, _unmask=False)
             return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
     text = _redact_yaml_anchor_targets(text)
+    text = _redact_secret_sections(text)
     text = _redact_kubernetes_secret_data(text)
     for pattern in PATTERNS + [DELIMITED_AFTER_SECRET_WORD] + LATE_PREFIXES:
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
@@ -4253,6 +4254,53 @@ def _redact_yaml_anchor_targets(text):
         m = _YAML_ANCHOR_SCALAR.search(line)
         if m and m.group(2) in wanted:
             lines[i] = line[:m.start(4)] + PLACEHOLDER + line[m.end(4):]
+    return "\n".join(lines)
+
+
+# 🐛 [2026-10-06] (R68 acc5, 2026-10-06) In TOML and INI the meaning often sits in the section header,
+# not the key: `[secrets]` then `prod = <value>`. Every name rule reads one line, so those values
+# printed in full, as did a password in a TOML multi-line string. Under a header that names a secret
+# (SECRET_WORDS, plus a bare `token`/`tokens`; never `keys`, which is keybindings), a value that
+# reads like a credential is redacted unless its key names a mechanism. Check 448.
+_INI_HEADER = _lazy(lambda: re.compile(r"^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:[#;].*)?$"))
+_INI_ASSIGN = _lazy(lambda: re.compile(
+    r"^(\s*([A-Za-z0-9_.\-\"']+)\s*[=:]\s*)(['\"]?)([^'\"\s#;][^'\"#;]*?)\3(\s*(?:[#;].*)?)$"))
+_MULTILINE_OPEN = _lazy(lambda: re.compile(r"^\s*([A-Za-z0-9_.\-\"']+)\s*=\s*(\"\"\"|''')\s*$"))
+
+
+def _header_names_a_secret(header):
+    last = header.strip().strip("'\"").rsplit(".", 1)[-1].lower()
+    return last in ("token", "tokens") or bool(_secret_word_hits(header))
+
+
+def _redact_secret_sections(text):
+    """Credential-shaped values under a secret-named TOML/INI header, and secret multi-line strings."""
+    if "[" not in text and '"""' not in text and "'''" not in text:
+        return text
+    lines = text.split("\n")
+    in_secret = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        h = _INI_HEADER.match(line)
+        if h:
+            in_secret = _header_names_a_secret(h.group(1))
+            i += 1
+            continue
+        ml = _MULTILINE_OPEN.match(line)
+        if ml and (_secret_named_yaml_key(ml.group(1)) or in_secret):
+            close, j = ml.group(2), i + 1
+            while j < len(lines) and close not in lines[j]:
+                if lines[j].strip():
+                    lines[j] = PLACEHOLDER
+                j += 1
+            i = j + 1
+            continue
+        if in_secret:
+            a = _INI_ASSIGN.match(line)
+            if a and not _names_a_mechanism(a.group(2).strip("'\"")) and _reads_like_a_credential(a.group(4)):
+                lines[i] = a.group(1) + a.group(3) + PLACEHOLDER + a.group(3) + a.group(5)
+        i += 1
     return "\n".join(lines)
 
 
