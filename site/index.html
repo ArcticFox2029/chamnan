@@ -986,7 +986,10 @@ function applyLang(code){
 const PRE = [
   // Measured 2026-09-07 through THIS page in a real browser, re-measured on each release with
   // `site/remeasure.py`, which takes the same listing, the same filters and the same modules
-  // without one. Last re-measured 2026-09-30 for 1.34.0, all fourteen via Python 3.12: source moved
+  // without one. Last re-measured 2026-10-06 for 1.35.0, all fourteen via Python 3.9: source moved
+  // on four by the repositories' own growth — yumiaura/myCat 719 to 725 KB, rust-lang/mdBook 1,197 to
+  // 1,199, django/django 2,210 to 2,211 (ratio 362 to 363), tokio-rs/tokio 3,496 to 3,506 (ratio 556
+  // to 557). Before that, 2026-09-30 for 1.34.0, all fourteen via Python 3.12: source moved
   // on one, tokio-rs/tokio 3,491 to 3,496 KB, its ratio 555 to 556. Before that, 2026-09-27 for
   // 1.33.0, all fourteen via Python 3.12 (1.32.0 was
   // deployed without a re-measure, so this covers both): source moved on three — chalk/chalk 56 to
@@ -1012,12 +1015,12 @@ const PRE = [
   ["pallets/flask","Python",576,6394,92],
   ["sinatra/sinatra","Ruby",663,6537,104],
   ["gin-gonic/gin","Go",674,6563,105],
-  ["yumiaura/myCat","Mixed",719,6415,115],
-  ["rust-lang/mdBook","Rust",1197,6470,190],
+  ["yumiaura/myCat","Mixed",725,6457,115],
+  ["rust-lang/mdBook","Rust",1199,6470,190],
   ["rails/rails","Ruby",1552,6438,247],
-  ["django/django","Python",2210,6245,362],
+  ["django/django","Python",2211,6245,363],
   ["torvalds/linux","C",3028,6603,470],
-  ["tokio-rs/tokio","Rust",3496,6441,556],
+  ["tokio-rs/tokio","Rust",3506,6441,557],
   ["vuejs/core","TypeScript",3799,6250,622],
 ];
 const kb = n => n >= 1024 ? (n/1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B";
