@@ -173,6 +173,22 @@ def main(argv):
 
     if not hits:
         print(f"chamnan: nothing in the stores matches {mdblock.as_quoted(' '.join(words), 60)}.")
+        # 🎯 [2026-10-06] (owner's decision; R44 claudeaccount2, R48 acc4) A misspelled word is the
+        # commonest reason for this answer. Suggested from the words of stored titles -- what a
+        # reader sees -- never from stemmed body terms, and only when one is close. Check 444.
+        import difflib
+        import re
+        _vocab = set()
+        for _e in (index.get("entries") or []):
+            if isinstance(_e, dict) and isinstance(_e.get("title"), str):
+                _vocab.update(w.lower() for w in re.findall(r"[^\W\d_]{3,}", _e["title"]))
+        _close = []
+        for _w in words:
+            if _w.lower() not in _vocab:
+                _close += [c for c in difflib.get_close_matches(_w.lower(), _vocab, n=1, cutoff=0.8)
+                           if c not in _close]
+        if _close:
+            print(f"  did you mean {', '.join(mdblock.as_quoted(_c, 40) for _c in _close[:3])}?")
         print("  That is an answer: what you are about to do is not recorded, so record it "
               "afterwards — `/chamnan:capture` for a procedure, `/chamnan:remember` for a rule.")
     else:

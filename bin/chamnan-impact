@@ -277,6 +277,21 @@ def main(argv):
                 # that could not be answered rather than an answer of "no risk".
                 print(f"  and there is no such file in this repository, so this is not an "
                       f"all-clear — check the path")
+                # 🎯 [2026-10-06] (owner's decision; R44 claudeaccount2, 2026-09-30) Named rather than
+                # left to the reader: difflib picked the intended file for 194 of 194 single-edit
+                # typos of a real repository's names. Full paths first, then bare names. Check 444.
+                import difflib
+                _known = list(impact_mod.parse_section(text))
+                _close = difflib.get_close_matches(target, _known, n=2, cutoff=0.8)
+                if not _close:
+                    _by_name = {}
+                    for _k in _known:
+                        _by_name.setdefault(_k.rsplit("/", 1)[-1], []).append(_k)
+                    for _n in difflib.get_close_matches(target.rsplit("/", 1)[-1], list(_by_name),
+                                                        n=2, cutoff=0.8):
+                        _close += _by_name[_n][:2]
+                if _close:
+                    print(f"  did you mean {', '.join(mdblock.as_quoted(_c, 100) for _c in _close[:2])}?")
         _why = _last_reason(root, resolved or target) if on_disk else None
         if _why:
             print(f"  last change {_why[0]} {mdblock.as_quoted(_why[1], 90)} — {_why[2]}")

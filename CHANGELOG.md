@@ -45,6 +45,9 @@ already reports the last released number while running newer code.
   word: 55 ms to 8.5 ms, the cost every per-call notice paid. The four rules built on the
   credential-word list are compiled only when a credential word is present; output is
   byte-identical on every file the plugin ships and on a 590,000-character map.
+- **A typo gets a did-you-mean.** `chamnan-impact` given a path that does not exist names the
+  closest file the index holds, and `chamnan-recall` with no match names the closest word from
+  the stored titles. A query with nothing close gets the plain answer and no guess.
 
 ## What's new in 1.35.0
 
