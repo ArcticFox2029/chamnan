@@ -1469,11 +1469,15 @@ def _own_host():
     """This machine's host name, computed once; "" when it cannot be determined."""
     if not _OWN_HOST:
         try:
-            # `platform.node()`, not `os.uname()`: the suite refuses any shipped reference to an
-            # API Windows does not have, guarded or not, and `platform` answers on every OS.
-            # Imported here, once per process, because only a lock writer needs it (~1 ms).
-            import platform
-            name = platform.node()
+            # Not `os.uname()`: the suite refuses any shipped reference to an API Windows does not
+            # have, guarded or not.
+            # 🐛 [2026-10-06] (1.35.0 release CI) Not `platform.node()` either: it runs the whole
+            # `platform.uname()`, which on Windows under Python 3.12+ is a WMI query, and the first
+            # call happened inside the lock window below. Sixty concurrent hooks on the Windows 3.13
+            # runner lost 5 scratch.jsonl entries to LOCK_TIMEOUT; 3.8, which reads the version
+            # without WMI, passed. `socket.gethostname()` is the same value on every OS, cheaply.
+            import socket
+            name = socket.gethostname()
             name = str(name).replace("\r", "").replace("\n", "").strip()
         except Exception:
             name = ""
@@ -3529,6 +3533,10 @@ def exclusive(path):
     # What the lock looked like last time we were refused. A change in it means somebody finished
     # and somebody else started -- the queue is moving, and this waiter's turn is coming.
     seen = None
+    # Built before the lock exists, so the window between creating the lock and saying whose it is
+    # is one write. Computed inside it, a slow first call (a host-name lookup, a process start time)
+    # left an empty lock in place for its whole duration while every waiter queued behind it.
+    body = f"{os.getpid()}\n{_own_process_started()}\n{_own_host()}\n".encode()
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -3550,7 +3558,7 @@ def exclusive(path):
             # waiter on another host read a live lock as DEAD after 0.25 s -- the PID does not
             # exist there -- and break it, so the host goes in the lock as a third line.
             try:
-                os.write(fd, f"{os.getpid()}\n{_own_process_started()}\n{_own_host()}\n".encode())
+                os.write(fd, body)
             except OSError:
                 pass
             break

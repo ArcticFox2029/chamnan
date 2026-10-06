@@ -51780,6 +51780,43 @@ check("...while a public key, a public JWK and the prose after a cut-off block s
       _redact438.scrub(_pub438) == _pub438 and _redact438.scrub(_pubjwk438) == _pubjwk438
       and "Run `make deploy` next." in _after438,
       saw=[_redact438.scrub(_pubjwk438)[:80], _after438[-60:]])
+# ---- 439_a_lock_says_whose_it_is_in_one_write.py
+# ------------------ a lock says whose it is in one write, never after a slow lookup
+# 🐛 [2026-10-06] (1.35.0 release CI) The lock body -- PID, process start time, host -- was built
+# inside the window between creating the lock with O_EXCL and writing it, and the host came from
+# `platform.node()`, which on Windows under Python 3.12+ is a WMI query. Every hook is a fresh
+# process, so every one paid it with an empty lock on disk; sixty concurrent hooks on the Windows 3.13
+# runner lost 5 of 60 scratch.jsonl entries to LOCK_TIMEOUT. This pins the order on any platform:
+# when the host name and the start time are looked up, the lock file does not exist yet.
+import importlib as _il439
+import tempfile as _tf439
+from pathlib import Path as _P439
+
+_ws439 = _il439.import_module("workspace")
+_target439 = _P439(_tf439.mkdtemp()) / "shared.jsonl"
+_target439.write_text("", encoding="utf-8")
+_seen439 = []
+_real_host439, _real_start439 = _ws439._own_host, _ws439._own_process_started
+
+
+def _host439():
+    _seen439.append(("host", any(p.name.endswith(".lock") for p in _target439.parent.iterdir())))
+    return _real_host439()
+
+
+def _start439():
+    _seen439.append(("start", any(p.name.endswith(".lock") for p in _target439.parent.iterdir())))
+    return _real_start439()
+
+
+_ws439._own_host, _ws439._own_process_started = _host439, _start439
+try:
+    with _ws439.exclusive(_target439) as _held439:
+        pass
+finally:
+    _ws439._own_host, _ws439._own_process_started = _real_host439, _real_start439
+check("the lock's owner details are looked up before the lock file is created",
+      _held439 and _seen439 and not any(inside for _, inside in _seen439), saw=_seen439)
 # ---- 43_a_new_skill_cannot_silently_conflict_with_an_installed_one.py
 # ------------------------------------- fifty random skill trees, and the answer is known for each
 # The person chamnan writes skill files for is not an engineer. If a captured `.md` duplicates or
