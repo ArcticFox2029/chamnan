@@ -56,6 +56,10 @@ already reports the last released number while running newer code.
 - **A secret behind a YAML anchor is redacted where it is defined.** `x-defaults: &dbcred <value>`
   used as `DB_PASSWORD: *dbcred`, or as `- *tok` under `secrets:`, printed the value at the anchor
   while replacing the alias. Compose, GitHub Actions and GitLab CI all expand these.
+- **File names reach the session as repository text.** The "Last edited" line named your files in
+  chamnan's own voice, outside the fence that marks repository text; a file name is chosen by
+  whoever wrote the clone, and agents have followed instructions hidden in one. The names now sit
+  inside the fence.
 
 ## What's new in 1.35.0
 

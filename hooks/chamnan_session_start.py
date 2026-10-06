@@ -1702,7 +1702,7 @@ def main():
     # asked of anyone. Nothing is written either: `coedit` records these edits already.
     try:
         import coedit
-        _sitting = coedit.sitting_line(wsdir)
+        _sitting = coedit.sitting_line(wsdir, fence=(OPEN_MARK, CLOSE_MARK))
         if _sitting:
             out.append(redact.scrub(_sitting) + "\n")
     except Exception:

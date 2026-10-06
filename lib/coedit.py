@@ -451,7 +451,7 @@ def _ago(seconds):
     return "%dd" % (seconds // 86400)
 
 
-def sitting_line(wsdir, now=None):
+def sitting_line(wsdir, now=None, fence=None):
     """One line naming where the last sitting stopped, or "" when the log cannot say.
 
     No advice and nothing asked of the reader: a warning here was rejected on the grounds that
@@ -462,4 +462,10 @@ def sitting_line(wsdir, now=None):
     if not files:
         return ""
     parts = ", ".join("`%s`" % mdblock.as_quoted(fp) for fp in files)
+    # 🐛 [2026-10-06] (R58 acc4, 2026-10-06) A file name is chosen by whoever wrote the clone, and agents
+    # have followed instructions carried in one (CVE-2025-36730, CVE-2026-44688). Given the session's
+    # fence marks, the names go between them -- repository text, said as such -- and the line's own
+    # words stay outside. Without `fence` the shape is unchanged. Check 447.
+    if fence:
+        return "_Last edited %s ago:_ %s %s %s" % (_ago(ago), fence[0], parts, fence[1])
     return "_Last edited %s ago: %s_" % (_ago(ago), parts)
