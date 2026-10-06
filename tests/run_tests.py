@@ -14753,8 +14753,10 @@ for _n in (".env", ".env.production", "local.env"):
     check(f"peek prints no env VALUES ({_n})",
           "db.internal.example" not in _out and "ops@example.com" not in _out
           and "zz-env-api-value" not in _out)
-    check("...but does print the names, which is what a reader wants",
-          "DB_HOST" in _out and "API_KEY" in _out)
+    # 🐛 [2026-10-06] Printing the names was the behaviour until credential files were refused
+    # unread (check 440): peek now opens nothing, and the environment catalog lists the names.
+    check("...because it refuses the file unread, and says so",
+          "Refused" in _out and "DB_HOST" not in _out)
 # 🐛 `Path(".env").suffix` is "", so the commonest env file never matched an extension test.
 check("the match is by name, since the plainest env file has no extension",
       _pk._is_env_file(".env") and _pk._is_env_file(".env.production") and _pk._is_env_file("a.env"))

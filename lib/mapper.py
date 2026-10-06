@@ -1718,7 +1718,7 @@ def _notebook_source(source):
     """
     try:
         nb = json.loads(source)
-    except ValueError:
+    except (ValueError, RecursionError):
         return ""
     if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
         return ""
