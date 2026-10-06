@@ -2560,7 +2560,11 @@ env = peek_mod.peek(leak / "prod.env")
 check("PEEK NEVER PRINTS THE SLACK TOKEN'S VALUE", "zz-env-slack" not in env)
 check("PEEK NEVER PRINTS THE GITHUB TOKEN'S VALUE", "zz-env-github" not in env)
 check("PEEK NEVER PRINTS AN UNQUOTED PASSWORD", "tr0ub4dor" not in env)
-check("but the variable names survive, which is the useful half", "SLACK_BOT_TOKEN" in env)
+# 🎯 [2026-10-06] (owner's decision) A real `.env` is now refused unread, like credentials.json: the
+# names were the useful half, and `.env.example` still gives them; the values were one scrubber
+# miss from the page. Check 440 pins the set.
+check("a real .env is refused unread, as credentials.json is", "Refused" in env or "refus" in env.lower(),
+      saw=env[:120])
 
 # Unquoted assignment is how every .env and .ini is written; requiring quotes let them through.
 check("scrub redacts an unquoted assignment",

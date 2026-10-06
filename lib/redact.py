@@ -1367,7 +1367,26 @@ def is_never_opened(path):
     and the comment written to stop it happening again was attached to the function that was
     already right.
     """
-    return any(_is_never_opened_name(n) for n in _names_to_judge(path))
+    return (any(_is_never_opened_name(n) or _is_credential_file_name(n) for n in _names_to_judge(path))
+            or (path.name == "config" and path.parent.name == ".kube"))
+
+
+# 🐛 [2026-10-06] (owner's decision, R247 / R15 acc1 / R121 acc1) `credentials.json` was refused unread
+# while a real `.env`, a Google `client_secret_*.json` and a kubeconfig were opened and summarised --
+# files whose whole content is the secret. The templates people commit on purpose stay readable.
+# Only the commands that print a file use this list: the env catalog still reads `.env` through
+# is_blocked for variable NAMES and its not-gitignored warning, and captures no value. Check 440.
+_ENV_TEMPLATES = ("example", "sample", "template", "dist", "defaults", "schema")
+
+
+def _is_credential_file_name(name):
+    if name == ".env" or (name.startswith(".env.") and name.split(".")[-1] not in _ENV_TEMPLATES):
+        return True
+    if name.endswith(".env") and name[:-4].rsplit(".", 1)[-1] not in _ENV_TEMPLATES:
+        return True
+    if name.startswith("client_secret") and name.endswith(".json"):
+        return True
+    return name == "kubeconfig" or name.endswith(".kubeconfig")
 
 
 def _is_never_opened_name(name):
@@ -3370,6 +3389,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     text = _redact_secret_lists(text)
     text = _redact_command_credentials(text)
     text = _redact_key_encodings(text)
+    text = _redact_kubeconfig_users(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -4126,6 +4146,33 @@ _PPK_PRIVATE = _lazy(lambda: re.compile(
     r"(Private-Lines:[ \t]*\d+[ \t]*\r?\n)((?:[ \t]*[A-Za-z0-9+/=]+[ \t]*(?:\r?\n|\Z))+)"))
 _JWK_OBJECT = _lazy(lambda: re.compile(r"\{[^{}]*\"kty\"[^{}]*\}"))
 _JWK_PRIVATE = _lazy(lambda: re.compile(r"(\"(?:d|p|q|dp|dq|qi|k)\"\s*:\s*\")([A-Za-z0-9_\-+/=]{8,})(\")"))
+
+
+# A kubeconfig keeps a user's credential under `users:` -> `user:`, and a bearer `token:` there is a
+# random string no shape rule can recognise; `client-key-data` is a private key in base64. Judged
+# only inside a top-level `users:` block, so a `token:` anywhere else (pagination, CSRF settings)
+# is left alone. Check 440.
+_KUBE_USER_SECRET = _lazy(lambda: re.compile(
+    r"^(\s+-?\s*(?:token|client-key-data|id-token|refresh-token|password)\s*:\s*)(['\"]?)([^\s'\"$][^\s'\"]*)\2\s*$"))
+
+
+def _redact_kubeconfig_users(text):
+    """Redact the credential fields of a kubeconfig's `users:` entries."""
+    if "users:" not in text or "user:" not in text:
+        return text
+    lines = text.split("\n")
+    inside = False
+    for i, line in enumerate(lines):
+        if line.rstrip() == "users:":
+            inside = True
+            continue
+        if inside and line[:1] and not line[:1].isspace() and not line.startswith("-"):
+            inside = False
+        if inside:
+            m = _KUBE_USER_SECRET.match(line)
+            if m:
+                lines[i] = f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}"
+    return "\n".join(lines)
 
 
 def _redact_key_encodings(text):
