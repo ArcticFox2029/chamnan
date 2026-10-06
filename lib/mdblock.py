@@ -501,6 +501,58 @@ def _starts_an_empty_table(boundaries):
     return not any(set(l.strip()) - set("|-: ") for l in run[1:])
 
 
+def strip_html_comments(text):
+    """`text` without its HTML comments, except inside fenced code blocks and inline code.
+
+    🐛 [2026-10-06] (owner's decision, R132; R20 acc4, 2026-10-06) A comment renders as nothing on
+    GitHub and in every Markdown viewer, so a person reviewing STATE.md, a rule or a lesson never
+    sees it -- and it reached the injected block verbatim, read by the model and by nobody else.
+    GitHub strips them before its own models read a file. A comment inside a ``` / ~~~ block or a
+    backtick span is example text and stays. An unterminated `<!--` hides the rest, as it does when
+    rendered. A line that was nothing but a comment is dropped rather than left blank. Check 442.
+    """
+    if "<!--" not in text:
+        return text
+    out, in_fence, in_comment = [], False, False
+    for line in text.split("\n"):
+        stripped = line.lstrip()
+        if not in_comment and stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        res, i = [], 0
+        while i < len(line):
+            if in_comment:
+                end = line.find("-->", i)
+                if end < 0:
+                    i = len(line)
+                    break
+                i, in_comment = end + 3, False
+                continue
+            start, tick = line.find("<!--", i), line.find("`", i)
+            if start < 0:
+                res.append(line[i:])
+                break
+            if 0 <= tick < start:
+                run = len(line[tick:]) - len(line[tick:].lstrip("`"))
+                close = line.find("`" * run, tick + run)
+                if close < 0:
+                    res.append(line[i:])
+                    break
+                res.append(line[i:close + run])
+                i = close + run
+                continue
+            res.append(line[i:start])
+            i, in_comment = start + 4, True
+        kept = "".join(res)
+        if kept.strip() or not stripped:
+            out.append(kept)
+    return "\n".join(out)
+
+
 def close_dangling_fence(text):
     """`text`, with a closing fence appended if it ends still inside one left open.
 

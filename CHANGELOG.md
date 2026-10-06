@@ -33,6 +33,10 @@ already reports the last released number while running newer code.
   about and then written through, and a repository can commit such a link. Every command now says
   so in one line and stops, every hook stays quiet, and nothing is read from or written to the
   target. A link to a folder inside the repository still works.
+- **Hidden HTML comments no longer reach the model.** A `<!-- … -->` in STATE.md, a rule, a
+  lesson title or a skill renders as nothing, so a person reviewing the file never sees it, and
+  it was injected verbatim. It is now stripped from everything chamnan injects; a comment
+  inside a code block or inline code is kept as the example it is.
 
 ## What's new in 1.35.0
 

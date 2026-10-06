@@ -467,6 +467,8 @@ def section(title, body, source="", brief=""):
     # Deliberately not `re.escape(NONCE)`: the point is that a marker the reader might mistake for
     # a fence cannot appear inside one, and that is a question about the SHAPE, not about which
     # nonce it carries.
+    # Hidden HTML comments go first: a reviewer of the file never sees them (check 442).
+    body = mdblock.strip_html_comments(body)
     fenced = _FENCE_SHAPED.sub(lambda m: f"[{m.group(1)}repo:escaped]", body.rstrip())
     # A body that opens a ``` or ~~~ block and never closes it -- whether that is how the file was
     # written, or how a budget cut left it -- swallows everything after it into what a renderer

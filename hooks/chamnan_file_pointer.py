@@ -253,6 +253,11 @@ def main():
             return 0
     except Exception:
         pass
+    # Hidden HTML comments in a lesson or skill never reach the model (check 442). Imported only
+    # when there is one: this runs on every tool call.
+    if "<!--" in block:
+        import mdblock
+        block = mdblock.strip_html_comments(block)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": redact.for_a_terminal(redact.scrub(block))}}))

@@ -325,6 +325,11 @@ def _emit(text):
                 return
         except Exception:
             pass          # never let the coordinator's own failure silence a notice
+    # Hidden HTML comments in a lesson or skill never reach the model (check 442). Imported only
+    # when there is one: this runs on every tool call.
+    if "<!--" in text:
+        import mdblock
+        text = mdblock.strip_html_comments(text)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": redact.for_a_terminal(redact.scrub(text))}}))
