@@ -359,6 +359,18 @@ def scan_bytecode(root):
             runs = blob.decode("utf-16", "replace").splitlines()
         else:
             runs = [r.decode("ascii") for r in re.findall(rb"[\x20-\x7e]{8,}", blob)]
+            # 🐛 [2026-10-06] (R12 acc4, 2026-10-06) UTF-16 without a BOM interleaves every ASCII
+            # character with a NUL, so no printable run reached eight bytes and a staged BOM-less
+            # UTF-16 file with a credential passed in silence. chardet and file(1) read the NUL
+            # positions; when nearly every byte at one parity is NUL and almost none at the other,
+            # the blob is also decoded as UTF-16 of that order and scanned by line. Check 432.
+            head = blob[:4096]
+            odd, even = head[1::2], head[0::2]
+            if len(head) >= 16:
+                for nul_half, other, codec in ((odd, even, "utf-16-le"), (even, odd, "utf-16-be")):
+                    if nul_half.count(0) >= 0.4 * len(nul_half) and other.count(0) <= 0.05 * len(other):
+                        runs += blob[:len(blob) // 2 * 2].decode(codec, "replace").splitlines()
+                        break
         for text in runs:
             if redact.scrub(text) != text:
                 hits += 1
@@ -665,8 +677,12 @@ def main(argv):
               f"and UTF-16 or NUL-headed text is binary to git", file=sys.stderr)
         for _p in sorted(bytecode_found)[:6]:
             print(f"    {mdblock.as_quoted(_p, 70)}  {bytecode_found[_p]} string(s)", file=sys.stderr)
-        print("  Unstage it (`git rm --cached <file>`) and add `__pycache__/` and `*.pyc` to "
-              ".gitignore.", file=sys.stderr)
+        if any(_p.lower().endswith((".pyc", ".pyo")) for _p in bytecode_found):
+            print("  Unstage it (`git rm --cached <file>`) and add `__pycache__/` and `*.pyc` to "
+                  ".gitignore.", file=sys.stderr)
+        else:
+            print("  Open the file in an editor that shows its encoding; move the value out before "
+                  "committing, or unstage it (`git rm --cached <file>`).", file=sys.stderr)
 
     if mcp_found:
         _n = sum(len(v) for v in mcp_found.values())
