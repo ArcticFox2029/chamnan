@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1350), and every one of these is on the
+[README](README.md#whats-new-in-1351), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -19,7 +19,11 @@ already reports the last released number while running newer code.
 
 ---
 
-## Unreleased
+## What's new in 1.35.1
+
+_A patch that closes the gaps 1.35.0 listed and a few found since: credentials held where the name and the value sit apart, files that are credentials by their name alone, and text that reached the model without a reviewer seeing it._
+
+### Fixed and improved
 
 - **Credential files are refused unread.** `chamnan-peek` and the other commands that print a file
   now decline a real `.env` (`.env.local`, `prod.env` …), a Google `client_secret*.json` and a

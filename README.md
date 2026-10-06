@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **4,691 of 4,691** <!-- live: map_claim_check -->; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **4,713 of 4,713** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
@@ -122,7 +122,7 @@ fails when it and the code disagree.</sub>
 **Start here** — [Features, by what you are trying to do](#features-by-what-you-are-trying-to-do) ·
 [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.35.0](#whats-new-in-1350) ·
+[What's new in 1.35.1](#whats-new-in-1351) ·
 [The dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
@@ -644,30 +644,26 @@ follows.
 No money and no model names appear on any page, because the plugin does not know which model you
 run and a price printed against the wrong one is worse than no price at all.
 
-## What's new in 1.35.0
+## What's new in 1.35.1
 
-_Measured improvements on top of 1.34.0 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
+_A patch on top of 1.35.0 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
 
-**This release is about protection and context holding in the shapes text really arrives in.**
+**This patch closes the gaps 1.35.0 listed, and a few found since.**
 
-**Secrets are caught in the shapes commands and key files really take.** A password passed as a
-flag to `curl -u`, `mysql -p`, `sshpass -p`, `docker login -p` or PowerShell's
-`ConvertTo-SecureString` was printed in full; it is now redacted, while `ssh -p 2222` and
-`mkdir -p` are left alone. A private key cut off before its `END` line — what any partial read
-produces — had its body printed under a redacted header; it, a PuTTY key and a JSON Web Key's
-private members are now redacted. Terraform plan and state values held under a secret name are too.
+**Credential files are refused unread.** `chamnan-peek` and the other printing commands decline a
+real `.env`, a kubeconfig or a Google OAuth client file; `.env.example` and its siblings are
+still read, and the environment catalog still lists a `.env`'s variable names without its values.
 
-**A file is found however its name was typed.** A file created with a decomposed Unicode name, as
-macOS keeps some, was invisible to `chamnan-impact` when typed the ordinary way. Lookups now
-compare both forms, and so do the history and memory joins.
+**Credentials are caught where the name and the value sit apart** — under a TOML/INI section named
+for secrets, behind a YAML anchor, in a kubeconfig's `users:`, under a camelCase name's `value`
+member (an Azure parameters file), and inside a Postman or Bruno auth block.
 
-**The steps that ran on every edit stopped costing seconds.** Refreshing the map after a one-file
-edit re-scrubs only what changed — 5.9 s to 0.02 s on a 584,000-character map; editing a
-dependency manifest with 200 past revisions went from 18.9 s to 0.15 s; and `chamnan-recall`
-answers in about half the time, finding notes whatever their case or accents.
+**What reaches the model is what a reviewer sees.** Hidden HTML comments are stripped from
+everything chamnan injects, file names arrive inside the repository-text fence, and a `.chamnan`
+that links outside the repository is refused rather than followed.
 
-**Instruction files are checked even when they point outside the repository.** One quoted path
-like `/var/log/app/` used to switch off the drift check for the whole file; it no longer does.
+**Smaller things:** a did-you-mean for a mistyped path or word, notebooks indexed from their code
+and markdown cells, a first redaction six times faster, and Python 3.9 as the tested floor.
 
 ## Bootstrap does not rewrite your code
 
@@ -1265,7 +1261,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **4,691 of 4,691** <!-- live: map_claim_check --> rather than asserted.
+claims about the tree are checked at **4,713 of 4,713** <!-- live: map_claim_check --> rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1526,7 +1522,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **4,691 of 4,691** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
+searched for, and its claims about the tree check out at **4,713 of 4,713** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.
