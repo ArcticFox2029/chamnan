@@ -1,7 +1,7 @@
 # The regression suite, on the platforms and Python versions the README claims.
 #
 # It exists to settle two claims that were, until now, only asserted there: that Linux works
-# ("expected to work, not tested"), and that 3.8 is really the floor. chamnan's front page says
+# ("expected to work, not tested"), and that the declared floor (3.9) is really the floor. chamnan's front page says
 # "verifiable claims, not adjectives"; a support matrix nobody runs is an adjective.
 #
 # No dependency step on purpose. chamnan is standard library only, and if this file ever needs a
@@ -38,30 +38,34 @@ jobs:
         # The floor the README declares, and the newest. The versions between are the same code
         # path; running all of them would buy repetition rather than coverage.
         #
-        # "3.8" is NOT the same interpreter on every OS, and nothing here says so otherwise.
+        # 🐛 [2026-10-06] (owner's decision, R226 / R18 acc4) The floor moved from 3.8 to 3.9: 3.8 reached
+        # end of life in October 2024 and GitHub's runners no longer cache it, and 3.9 is the
+        # Python macOS ships. The code still uses nothing newer than 3.8 syntax.
+        #
+        # "3.9" is NOT the same interpreter on every OS, and nothing here says so otherwise.
         # setup-python resolves it to the newest matching build per platform, and
         # actions/python-versions stops at DIFFERENT patches (read off the live manifest
-        # 2026-09-07, not from memory):
+        # 2026-10-06, not from memory):
         #
-        #     linux-x64 / linux-arm64 / darwin-x64   3.8.18
-        #     win32-x64 / win32-x86 / darwin-arm64   3.8.10
+        #     linux-x64 / linux-arm64 / darwin-x64   3.9.25
+        #     win32-x64 / win32-x86 / darwin-arm64   3.9.13
         #
-        # So the Windows floor job tests against a build eight patches older than the Linux one.
-        # That is not a failure -- win32 3.8.10 is still published, so the job resolves and runs --
-        # but "tested at 3.8" means two different things across this matrix, and a future reader
+        # So the Windows floor job tests against a build twelve patches older than the Linux one.
+        # That is not a failure -- win32 3.9.13 is still published, so the job resolves and runs --
+        # but "tested at 3.9" means two different things across this matrix, and a future reader
         # comparing a Windows-only failure against the Linux job should know that before assuming
         # the difference is the OS (R12 agent 3, re-measured here).
-        python: ["3.8", "3.13"]
+        python: ["3.9", "3.13"]
         exclude:
           # macOS runners are arm64 and the floor is checked on Linux.
           #
           # The reason written here used to be "arm64 has no 3.8 build", and that is not what the
-          # manifest says: darwin-arm64 publishes 3.8.10, same as Windows. The exclusion is kept
+          # manifest says: darwin-arm64 publishes 3.9.13, same as Windows. The exclusion is kept
           # because the floor only needs proving once and Linux is where it is proven, which is a
           # cost argument rather than an availability one -- worth stating correctly, since the
           # wrong reason is the kind that gets "fixed" by someone who checks it.
           - os: macos-latest
-            python: "3.8"
+            python: "3.9"
     steps:
       # v4 is the LAST major built on Node 20, and GitHub removes Node 20 from the runners on
       # 2026-09-23 — after which a Node-20 action does not resolve and this whole five-job matrix
@@ -81,7 +85,7 @@ jobs:
       # Same deadline, same reasoning: v5 is the last major on Node 20, v6 the first on node24.
       # v7 exists and its release notes say "Remove EOL Python versions", which is about the
       # action's own test fixtures rather than what it can install — but the matrix below still
-      # needs 3.8, and taking the smaller jump means that claim does not have to be right.
+      # needs 3.9, and taking the smaller jump means that claim does not have to be right.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python }}

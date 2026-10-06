@@ -33,7 +33,7 @@ if "%FOUNDPY%"=="" (
 ) else (
     echo   python      found as: %FOUNDPY%
     %FOUNDPY% -V
-    echo   chamnan needs 3.8 or newer. Check the line above.
+    echo   chamnan needs 3.9 or newer. Check the line above.
 )
 
 where git >nul 2>nul

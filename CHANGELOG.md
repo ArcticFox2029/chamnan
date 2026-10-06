@@ -37,6 +37,10 @@ already reports the last released number while running newer code.
   lesson title or a skill renders as nothing, so a person reviewing the file never sees it, and
   it was injected verbatim. It is now stripped from everything chamnan injects; a comment
   inside a code block or inline code is kept as the example it is.
+- **Python 3.9 is now the floor.** 3.8 reached end of life in October 2024 and GitHub's runners
+  no longer provide it, so it could no longer be tested; 3.9 is the Python macOS ships. CI runs
+  3.9 and 3.13, and `install/chamnan-check` names 3.9. The code uses nothing newer than 3.8
+  syntax, so 3.8 may still work — it is no longer claimed.
 
 ## What's new in 1.35.0
 

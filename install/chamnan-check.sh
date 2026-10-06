@@ -16,7 +16,7 @@
 # Exit codes: 0 everything present, 1 something missing.
 
 MIN_MAJOR=3
-MIN_MINOR=8
+MIN_MINOR=9
 
 WANT_INSTALL=0
 [ "$1" = "--install" ] && WANT_INSTALL=1

@@ -16121,7 +16121,7 @@ else:
     _old_code, _old_out = _run_check(str(_fakebin))
     check("a Python below the floor is refused rather than accepted", _old_code == 1)
     check("...naming the version it found and the floor it needs",
-          "3.6.9" in _old_out and "3.8" in _old_out)
+          "3.6.9" in _old_out and "3.9" in _old_out)
     check("...and printing a command that would fix it", "install" in _old_out)
 
     # No Python at all, with a shell that still works. The whole reason this file is sh.
@@ -21762,7 +21762,7 @@ for _sa in _stale_actions:
 # The floors are only meaningful while the matrix still needs what they support. If the Python floor
 # moves, the reason for taking the SMALLER jump on setup-python moves with it.
 check("...and the matrix still declares the Python floor those versions were chosen for",
-      '"3.8"' in (_wf_dir / "tests.yml").read_text(encoding="utf-8"))
+      '"3.9"' in (_wf_dir / "tests.yml").read_text(encoding="utf-8"))
 
 
 # ------------------------------------------- a hook payload is somebody else's JSON
