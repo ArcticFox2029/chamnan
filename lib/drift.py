@@ -88,6 +88,12 @@ def gone_since(root, rel):
         n = m.group(1)
         if "*" in n or n.startswith(("http", "~")) or n in named:
             continue
+        # 🐛 [2026-10-06] (R24 acc4, 2026-10-06) git refuses a path outside the repository with
+        # exit 128 for the WHOLE `ls-tree` below, so one quoted `/var/log/app/` or
+        # `../shared/conf.yml` made every moved path in the same file read as current. Such a path
+        # was never in the tree, so leaving it out loses nothing. Check 435.
+        if n.startswith("/") or ".." in n.split("/"):
+            continue
         named.append(n)
         if len(named) > MAX_PATHS:
             break
