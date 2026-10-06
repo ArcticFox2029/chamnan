@@ -3362,6 +3362,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     # Before the column rule and before the personal-data pass: a list is a value shape, and
     # the rules that follow read one value per name.
     text = _redact_secret_lists(text)
+    text = _redact_command_credentials(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -4059,6 +4060,48 @@ def _list_element(raw):
     if len(stripped) > 1 and stripped[0] in "'\"" and stripped[-1] == stripped[0]:
         return raw.replace(stripped, f"{stripped[0]}{PLACEHOLDER}{stripped[0]}", 1)
     return raw.replace(stripped, PLACEHOLDER, 1)
+
+
+# 🐛 [2026-10-06] (R31 acc5, 2026-10-06) Shell history and pasted commands carry a password in the
+# shape each tool takes it, not as `name=value`, and every rule above keys off a name. Eight shapes
+# were printed in full while `--password PASS` was redacted. A bare `-p` is a port or "parents" to
+# most tools, so each rule is anchored to its command and stays inside one command (no newline,
+# `;`, `|` or `&` between them). A value that is a variable reference names where the password
+# lives and is kept. Check 436.
+_ONE_COMMAND = r"[^\n;|&]*?"
+_FLAG_VALUE = r"(['\"]?)(?P<v>[^\s'\"$%][^\s'\"]*)\1"
+# One lazy pattern each: `_Lazy` proxies attribute access, so a list of them still compiles on use.
+_COMMAND_CREDENTIALS = [_lazy(lambda p=p: re.compile(p)) for p in (
+    r"\bcurl\b" + _ONE_COMMAND + r"\s(?:-u|--user)(?:\s+|=)(['\"]?)[^\s:'\"]+:(?P<v>[^\s'\"$%][^\s'\"]*)\1",
+    r"\b(?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck)\b" + _ONE_COMMAND
+    + r"\s-p" + _FLAG_VALUE,
+    r"\bsshpass\b" + _ONE_COMMAND + r"\s-p\s*" + _FLAG_VALUE,
+    r"\b(?:docker|podman|buildah|skopeo|nerdctl|oras|helm(?:\s+registry)?)\s+login\b" + _ONE_COMMAND
+    + r"\s-p(?:\s+|=)" + _FLAG_VALUE,
+    r"\bredis-cli\b" + _ONE_COMMAND + r"\s-a\s+" + _FLAG_VALUE,
+    r"\bsmbclient\b" + _ONE_COMMAND + r"\s(?:-U|--user)(?:\s+|=)(['\"]?)[^\s%'\"]+%(?P<v>[^\s'\"]+)\1",
+    # `-n` prints instead of writing a file, so the password is the second positional, not the third.
+    r"\bhtpasswd\s+-(?=\w*b)(?=\w*n)\w+\s+\S+\s+" + _FLAG_VALUE,
+    r"\bhtpasswd\s+-(?=\w*b)(?!\w*n)\w+\s+\S+\s+\S+\s+" + _FLAG_VALUE,
+    r"(?i:ConvertTo-SecureString)\s+(?:(?i:-String)\s+)?(['\"])(?P<v>[^'\"\n]+)\1\s+(?i:-AsPlainText)",
+)]
+# Every rule above names one of these; text without any of them pays nothing to compile the list.
+_COMMAND_NAMES = ("curl", "mysql", "mariadb", "sshpass", "login", "redis-cli", "smbclient",
+                  "htpasswd", "SecureString", "securestring", "Securestring")
+
+
+def _redact_command_credentials(text):
+    """Redact a password given to a named command as a flag value or positional."""
+    if not any(k in text for k in _COMMAND_NAMES):
+        return text
+
+    def _one(m):
+        s, e = m.span("v")
+        return m.group(0)[:s - m.start()] + PLACEHOLDER + m.group(0)[e - m.start():]
+
+    for rule in _COMMAND_CREDENTIALS:
+        text = rule.sub(_one, text)
+    return text
 
 
 def _redact_secret_lists(text):
