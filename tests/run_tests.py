@@ -51464,6 +51464,322 @@ check("guard --history in a partial clone names the partial clone and how to fet
       "partial clone" in _text430 and ("backfill" in _text430 or "refetch" in _text430), saw=_text430[-300:])
 check("...and does not report the history as clean", "nothing credential-shaped" not in _text430,
       saw=_text430[-200:])
+# ---- 431_git_log_text_arrives_as_utf8.py
+# ------------------ git log text reaches chamnan as UTF-8 whatever the user's log encoding
+# 🐛 [2026-10-06] (R8 acc4, 2026-10-06) chamnan decodes git output as UTF-8, but git re-encodes commit
+# messages into `i18n.logOutputEncoding`. With it set to a legacy Thai code page (ISO-8859-11), the
+# "last change" line of chamnan-impact printed `��䢡�äӹǳ����` for a Thai subject, and with UTF-16 a
+# NUL-ridden jumble. VS Code forces the encoding per invocation for the same reason. chamnan now
+# forces it with the rest of its git settings. This pins a Thai subject and body arriving intact under
+# both settings.
+import subprocess as _sp431
+import sys as _sys431
+import tempfile as _tf431
+from pathlib import Path as _P431
+
+_d431 = _P431(_tf431.mkdtemp())
+_g431 = lambda *a: _sp431.run(["git", "-C", str(_d431), *a], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+_g431("init", "-q")
+_g431("config", "user.email", "t@t")
+_g431("config", "user.name", "t")
+(_d431 / "app.py").write_text("print(1)\n", encoding="utf-8")
+_g431("add", "app.py")
+_g431("commit", "-qm", "base")
+(_d431 / "app.py").write_text("print(2)\n", encoding="utf-8")
+_g431("commit", "-qam", "แก้ไขการคำนวณภาษี", "-m", "เหตุผล: ยอดรวมผิดเมื่อมีส่วนลด")
+(_d431 / ".chamnan").mkdir()
+_run431 = lambda *a: _sp431.run([_sys431.executable, *map(str, a)], cwd=_d431, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=120)
+_run431(ROOT / "bin" / "chamnan-map")
+_seen431 = {}
+for _enc431 in ("ISO-8859-11", "UTF-16"):
+    _g431("config", "i18n.logOutputEncoding", _enc431)
+    _out431 = _run431(ROOT / "bin" / "chamnan-impact", "app.py")
+    _seen431[_enc431] = next((l for l in (_out431.stdout + _out431.stderr).splitlines()
+                              if "last change" in l), "")
+check("a Thai commit subject and body arrive intact whatever i18n.logOutputEncoding says",
+      all("แก้ไขการคำนวณภาษี" in v and "ยอดรวมผิด" in v for v in _seen431.values()),
+      saw=_seen431)
+# ---- 432_bomless_utf16_is_still_scanned.py
+# ------------------ a staged UTF-16 file without a BOM is still scanned for credentials
+# 🐛 [2026-10-06] (R12 acc4, 2026-10-06) Check 429 taught the guard to decode UTF-16 that starts with a
+# BOM; without one, every ASCII character sits beside a NUL, no printable run reaches eight bytes, and
+# a staged credential in a BOM-less UTF-16 file (as PowerShell and SQL Server tools write) passed in
+# silence. chardet and file(1) infer the byte order from where the NULs fall; the guard now does the
+# same. This pins both byte orders, that the .pyc advice is not given for them, and that a random
+# binary blob with no credential stays quiet.
+import random as _rnd432
+import string as _st432
+import subprocess as _sp432
+import sys as _sys432
+import tempfile as _tf432
+from pathlib import Path as _P432
+
+_r432 = _rnd432.Random(432)
+_val432 = "gh" + "p_" + "".join(_r432.choice(_st432.ascii_letters + _st432.digits) for _ in range(36))
+
+
+def _guard432(files):
+    _d = _P432(_tf432.mkdtemp())
+    _g = lambda *a: _sp432.run(["git", "-C", str(_d), *a], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+    _g("init", "-q")
+    _g("config", "user.email", "t@t")
+    _g("config", "user.name", "t")
+    (_d / "a.txt").write_text("x\n", encoding="utf-8")
+    _g("add", "a.txt")
+    _g("commit", "-qm", "base")
+    for _n, _b in files.items():
+        (_d / _n).write_bytes(_b)
+        _g("add", _n)
+    _r = _sp432.run([_sys432.executable, str(ROOT / "bin" / "chamnan-guard")], cwd=_d,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    return _r.stdout + _r.stderr
+
+
+_out432 = _guard432({"le.sql": ("INSERT INTO cfg VALUES ('token','" + _val432 + "');\n").encode("utf-16-le"),
+                     "be.ps1": ("$token = '" + _val432 + "'\n").encode("utf-16-be")})
+check("a credential in staged BOM-less UTF-16, either byte order, is named",
+      "le.sql" in _out432 and "be.ps1" in _out432, saw=_out432[-300:])
+check("...the .pyc advice is not given for them, and the value is not printed",
+      "__pycache__" not in _out432 and _val432 not in _out432, saw=_out432[-200:])
+_out432b = _guard432({"noise.bin": bytes(_r432.randrange(256) for _ in range(6000))})
+check("a random binary blob with no credential stays quiet", "noise.bin" not in _out432b,
+      saw=_out432b[-200:])
+# ---- 433_a_header_named_list_is_scrubbed.py
+# ------------------ a secret-named list under an HTTP header name is scrubbed like any other
+# 🐛 [2026-10-06] (R13 acc4, 2026-10-06) The two list rules (inline `[...]` and YAML block sequence)
+# required the secret word to open the name. Recorded HTTP cassettes (VCR.py, pytest-recording) store
+# every header as `X-Api-Key:` with its value on an indented `- ` line, so that value was printed
+# while `api_key:` with the same value was redacted. This pins header-style names in both list
+# shapes, and that ordinary header lists (hosts, X-Forwarded-For, X-Request-Id, counts) stay as they
+# were.
+import importlib as _il433
+import random as _rnd433
+import string as _st433
+
+_redact433 = _il433.import_module("redact")
+_r433 = _rnd433.Random(433)
+_val433 = "".join(_r433.choice(_st433.ascii_letters + _st433.digits) for _ in range(40))
+_kept433 = []
+for _name433 in ("X-Api-Key", "x-auth-token", "X-Access-Token", "Private-Token", "api_key"):
+    for _shape433 in ("{n}:\n  - {v}\n", "{n}: [{v}]\n", "      {n}:\n      - {v}\n"):
+        _s433 = _shape433.format(n=_name433, v=_val433)
+        if _val433 in _redact433.scrub(_s433):
+            _kept433.append(repr(_s433[:32]))
+check("a credential under a header-style secret name is scrubbed in list and block-sequence form",
+      not _kept433, saw=_kept433)
+_plain433 = ["hosts:\n  - db1\n", "x-forwarded-for:\n  - 10.0.0.1\n", "X-Request-Id:\n  - abc123def456\n",
+             "tokens_used:\n  - 1200\n"]
+_changed433 = [p for p in _plain433 if _redact433.scrub(p) != p]
+check("...while ordinary header and count lists are left alone", not _changed433, saw=_changed433)
+# ---- 434_a_terraform_value_under_a_secret_name_is_scrubbed.py
+# ------------------ a value Terraform stores under a secret-named object is scrubbed
+# 🐛 [2026-10-06] (R22 acc4, 2026-10-06) A Terraform plan stores every input variable as
+# `"db_password": {"value": "..."}`, and state outputs as `"db_pass": {"value": "...", "sensitive":
+# true}`. HashiCorp documents both as cleartext. The name is one level above the value, so the
+# assignment rules saw `"value": "..."` with no secret word and printed the password, while the same
+# password written `"db_password": "..."` was redacted. This pins the plan and output shapes, inline
+# and pretty-printed, and that a value under an ordinary name, an empty value and a number stay.
+import importlib as _il434
+import random as _rnd434
+import string as _st434
+
+_redact434 = _il434.import_module("redact")
+_r434 = _rnd434.Random(434)
+_val434 = "".join(_r434.choice(_st434.ascii_letters + _st434.digits) for _ in range(24))
+_shapes434 = [
+    '{"variables": {"db_password": {"value": "%s"}}}' % _val434,
+    '"variables": {\n  "secret_key": {\n    "value": "%s"\n  }\n}' % _val434,
+    '"outputs": {\n  "db_pass": {\n    "value": "%s",\n    "type": "string",\n    "sensitive": true\n  }\n}' % _val434,
+    '"outputs": {\n  "api_token": {\n    "sensitive": true,\n    "type": "string",\n    "value": "%s"\n  }\n}' % _val434,
+]
+_kept434 = [s[:40] for s in _shapes434 if _val434 in _redact434.scrub(s)]
+check("a value stored under a secret-named Terraform variable or output is scrubbed", not _kept434,
+      saw=_kept434)
+_plain434 = ['"variables": {\n  "region": {\n    "value": "us-west-2"\n  }\n}',
+             '"db_password": {\n  "value": ""\n}',
+             '"token_ttl": {\n  "value": 3600\n}',
+             '"variables": {"instance_count": {"value": "%s"}}' % _val434]
+_changed434 = [p[:40] for p in _plain434 if _redact434.scrub(p) != p]
+check("...while ordinary variables, an empty value and a number are left alone", not _changed434,
+      saw=_changed434)
+# ---- 435_an_outside_path_does_not_silence_drift.py
+# ------------------ a path outside the repository does not silence the instruction-file drift check
+# 🐛 [2026-10-06] (R24 acc4, 2026-10-06) `drift.gone_since` asks git about every quoted path in one
+# `ls-tree` call and reads any non-zero exit as "nothing gone". Instruction files name paths outside
+# the repository all the time -- `/var/log/app/`, `../shared/conf.yml`, a home directory -- and git
+# refuses those with exit 128, so one such path anywhere in CLAUDE.md switched the check off for the
+# whole file: a moved `tests/` beside it went unreported. Outside paths are now left out of the
+# question. This pins a moved path still reported next to each outside shape.
+import importlib as _il435
+import subprocess as _sp435
+import tempfile as _tf435
+from pathlib import Path as _P435
+
+_drift435 = _il435.import_module("drift")
+
+
+def _repo435(extra):
+    _d = _P435(_tf435.mkdtemp())
+    _g = lambda *a: _sp435.run(["git", "-C", str(_d), *a], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+    _g("init", "-q")
+    _g("config", "user.email", "t@t")
+    _g("config", "user.name", "t")
+    (_d / "tests").mkdir()
+    (_d / "tests" / "test_a.py").write_text("x\n", encoding="utf-8")
+    (_d / "CLAUDE.md").write_text("Run `tests/test_a.py` first. " + extra + "\n", encoding="utf-8")
+    _g("add", ".")
+    _g("commit", "-qm", "base")
+    _g("mv", "tests", "spec")
+    _g("commit", "-qm", "move")
+    return _d
+
+
+_missed435 = {}
+for _extra435 in ("Logs go to `/var/log/app/`.", "Shared config is `../shared/conf.yml`.",
+                  "The venv is `/Users/someone/proj/.venv/`.", "See `docs/../tests/test_a.py`."):
+    _gone435 = _drift435.gone_since(_repo435(_extra435), "CLAUDE.md")[0]
+    if "tests/test_a.py" not in _gone435:
+        _missed435[_extra435] = _gone435
+check("a moved path is still reported when the same file also quotes a path outside the repository",
+      not _missed435, saw=_missed435)
+# ---- 436_a_password_given_as_a_command_flag_is_scrubbed.py
+# ------------------ a password given to a named command as a flag or positional is scrubbed
+# 🐛 [2026-10-06] (R31 acc5, 2026-10-06) Shell history and pasted commands carry credentials in the
+# shape each tool takes them, not as `name=value`: `curl -u user:PASS`, `mysql -pPASS`,
+# `sshpass -p PASS`, `docker login -p PASS`, `redis-cli -a PASS`, `smbclient -U user%PASS`,
+# `htpasswd -b file user PASS` and PowerShell's `ConvertTo-SecureString 'PASS' -AsPlainText`. All
+# eight were printed in full, while `--password PASS` was redacted. A bare `-p` means a port or
+# "parents" to most tools, so the rules are anchored to the command; this pins the eight shapes and
+# that `ssh -p`, `mkdir -p`, `docker run -p`, an empty `mysql -p`, `pg_dump -p`, a user with no
+# password and a variable reference all stay as written.
+import importlib as _il436
+import random as _rnd436
+import string as _st436
+
+_redact436 = _il436.import_module("redact")
+_r436 = _rnd436.Random(436)
+_val436 = "".join(_r436.choice(_st436.ascii_letters + _st436.digits) for _ in range(28))
+_leak436 = [s for s in (
+    "curl -u admin:{v} https://api.example.com",
+    "curl -s --user 'admin:{v}' https://api.example.com",
+    ": 1717171717:0;mysql -u root -p{v} prod",
+    "mysqldump -uroot -p'{v}' shop > dump.sql",
+    "sshpass -p {v} ssh root@10.0.0.1",
+    "docker login -u me -p {v} registry.example.com",
+    "helm registry login reg.io -u me -p {v}",
+    "redis-cli -h cache -a {v} ping",
+    "smbclient //files/share -U alice%{v}",
+    "htpasswd -b .htpasswd admin {v}",
+    "htpasswd -nbB admin {v}",
+    "$pw = ConvertTo-SecureString '{v}' -AsPlainText -Force",
+    "ConvertTo-SecureString -String \"{v}\" -AsPlainText -Force",
+) if _val436 in _redact436.scrub(s.format(v=_val436))]
+check("a password given to a named command as a flag or positional is scrubbed", not _leak436,
+      saw=_leak436)
+_plain436 = ["ssh -p 2222 root@host", "mkdir -p build/out", "docker run -p 8080:80 nginx",
+             "mysql -u root -p prod", "pg_dump -p 5433 shop", "curl -u admin https://x",
+             "curl -u admin:$API_TOKEN https://x", "htpasswd -c .htpasswd admin",
+             "$s = ConvertTo-SecureString $plain -AsPlainText -Force", "sshpass -f ~/.pw ssh h",
+             "redis-cli -a $REDIS_PASSWORD ping", "scp -P 2222 a.txt h:/tmp"]
+_changed436 = [p for p in _plain436 if _redact436.scrub(p) != p]
+check("...while ports, `mkdir -p`, an empty prompt flag and variable references stay as written",
+      not _changed436, saw=_changed436)
+# ---- 437_a_path_typed_in_the_other_unicode_form_is_found.py
+# ------------------ a path typed in the other Unicode normalisation form still finds its file
+# 🐛 [2026-10-06] (R32 acc5, 2026-10-06) APFS keeps a filename in the form it was created in, and a
+# name created decomposed (NFD) is mapped in that spelling, while git with core.precomposeUnicode,
+# the keyboard and most tools hand over the composed (NFC) one. `chamnan-impact café_utils.py`
+# typed normally answered "nothing recorded" for a file `app.py` imports. The lookup now compares
+# both sides in NFC and answers with the map's own spelling. This pins both directions through the
+# real command, on whatever filesystem the suite runs on.
+import subprocess as _sp437
+import sys as _sys437
+import tempfile as _tf437
+import unicodedata as _ud437
+from pathlib import Path as _P437
+
+_missed437 = {}
+for _stored437, _typed437 in (("NFD", "NFC"), ("NFC", "NFD")):
+    _d437 = _P437(_tf437.mkdtemp())
+    _g437 = lambda *a: _sp437.run(["git", "-C", str(_d437), "-c", "core.precomposeUnicode=false", *a],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _g437("init", "-q")
+    _g437("config", "user.email", "t@t")
+    _g437("config", "user.name", "t")
+    (_d437 / _ud437.normalize(_stored437, "café_utils.py")).write_text(
+        "# Helpers for the café menu.\ndef price(x):\n    return x\n", encoding="utf-8")
+    (_d437 / "app.py").write_text("from café_utils import price\n", encoding="utf-8")
+    _g437("add", ".")
+    _g437("commit", "-qm", "base")
+    (_d437 / ".chamnan").mkdir()
+    _run437 = lambda *a: _sp437.run([_sys437.executable, *map(str, a)], cwd=_d437, capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace", timeout=120)
+    _run437(ROOT / "bin" / "chamnan-map")
+    _out437 = _run437(ROOT / "bin" / "chamnan-impact", _ud437.normalize(_typed437, "café_utils.py")).stdout
+    if "app.py" not in _out437:
+        _missed437[f"stored {_stored437}, typed {_typed437}"] = _out437[:160]
+check("chamnan-impact finds a file whose name was typed in the other normalisation form",
+      not _missed437, saw=_missed437)
+# The same join for the timeline and memory stores: a record naming the file in one form must match
+# a query in the other, both ways.
+_mdb437 = __import__("importlib").import_module("mdblock")
+_n437, _d437 = _ud437.normalize("NFC", "docs/café.md"), _ud437.normalize("NFD", "docs/café.md")
+check("a record naming a path in one normalisation form joins a query in the other",
+      all(_mdb437.names_the_path(a, b) for a, b in ((_n437, _d437), (_d437, _n437),
+                                                    (_n437, _d437.split("/")[1]))),
+      saw=[(a == b) for a, b in ((_n437, _d437),)])
+# ---- 438_private_key_material_in_every_encoding_is_scrubbed.py
+# ------------------ private-key material is scrubbed in the encodings block matching never saw
+# 🐛 [2026-10-06] (R49 acc4, 2026-10-06) Three encodings of a private key reached output intact:
+# a PEM block cut before its END line (what any capped read, `head`, or a truncated paste produces)
+# lost only its BEGIN line and printed the whole body under it; a PuTTY `.ppk` printed its
+# `Private-Lines:` body; and a JSON Web Key printed its private members `d`, `p`, `q`, `dp`, `dq`,
+# `qi` (and `k` for a symmetric key). This pins all three, and that a public key, a JWK with no
+# private member and the prose after a cut-off block stay as written.
+import base64 as _b64438
+import importlib as _il438
+import json as _json438
+import random as _rnd438
+
+_redact438 = _il438.import_module("redact")
+_r438 = _rnd438.Random(438)
+_body438 = lambda n: _b64438.b64encode(bytes(_r438.randrange(256) for _ in range(n))).decode()
+_url438 = lambda n: _body438(n).rstrip("=").replace("+", "-").replace("/", "_")
+_k438 = _body438(600)
+_lines438 = [_k438[i:i + 64] for i in range(0, len(_k438), 64)]
+_cut438 = "-----BEGIN RSA " + "PRIVATE KEY-----\n" + "\n".join(_lines438[:6]) + "\n"
+_indented438 = "tls:\n  key: |\n    -----BEGIN " + "PRIVATE KEY-----\n    " + "\n    ".join(_lines438[:4])
+_ppk_priv438 = [_body438(48) for _ in range(4)]
+_ppk438 = ("PuTTY-User-Key-File-3: ssh-rsa\nEncryption: none\nComment: rsa-key\nPublic-Lines: 1\n"
+           + _body438(48) + "\nPrivate-Lines: 4\n" + "\n".join(_ppk_priv438) + "\nPrivate-MAC: " + "ab" * 32)
+_jwk438 = {"kty": "RSA", "n": _url438(64), "e": "AQAB", "d": _url438(64), "p": _url438(32),
+           "q": _url438(32), "dp": _url438(32), "dq": _url438(32), "qi": _url438(32)}
+_oct438 = {"kty": "oct", "k": _url438(32), "alg": "HS256"}
+_kept438 = []
+for _name438, _text438, _secrets438 in (
+        ("a PEM block cut before its END line", _cut438, _lines438[1:6]),
+        ("an indented PEM block cut short", _indented438, _lines438[1:4]),
+        ("a PuTTY key's private lines", _ppk438, _ppk_priv438),
+        ("a JWK's private members", _json438.dumps(_jwk438, indent=2),
+         [_jwk438[m] for m in ("d", "p", "q", "dp", "dq", "qi")]),
+        ("a symmetric JWK's key", _json438.dumps(_oct438), [_oct438["k"]])):
+    _out438 = _redact438.scrub(_text438)
+    _left438 = [s[:12] for s in _secrets438 if s in _out438]
+    if _left438:
+        _kept438.append((_name438, _left438))
+check("private-key material is scrubbed when cut short, in a PuTTY file and in a JWK", not _kept438,
+      saw=_kept438)
+_pub438 = "ssh-ed25519 " + _body438(51) + " me@host"
+_pubjwk438 = _json438.dumps({"kty": "EC", "crv": "P-256", "x": _url438(32), "y": _url438(32)})
+_after438 = _redact438.scrub(_cut438 + "Run `make deploy` next.\n")
+check("...while a public key, a public JWK and the prose after a cut-off block stay as written",
+      _redact438.scrub(_pub438) == _pub438 and _redact438.scrub(_pubjwk438) == _pubjwk438
+      and "Run `make deploy` next." in _after438,
+      saw=[_redact438.scrub(_pubjwk438)[:80], _after438[-60:]])
 # ---- 43_a_new_skill_cannot_silently_conflict_with_an_installed_one.py
 # ------------------------------------- fifty random skill trees, and the answer is known for each
 # The person chamnan writes skill files for is not an engineer. If a captured `.md` duplicates or

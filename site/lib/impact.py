@@ -644,7 +644,16 @@ def lookup(text, target):
         return None, None
     if target in parsed:
         return target, parsed[target]
-    matches = [p for p in parsed if p.endswith("/" + target)]
+    # 🐛 [2026-10-06] (R32 acc5, 2026-10-06) APFS keeps a name in the form it was created in, so a
+    # file created decomposed (NFD) is mapped that way while git, the keyboard and most tools hand
+    # over the composed (NFC) spelling, and the question was answered "nothing recorded". Both sides
+    # are compared in NFC; the answer is the map's own spelling, which is the one that opens the
+    # file. Check 437.
+    nfc = unicodedata.normalize("NFC", target)
+    by_nfc = {unicodedata.normalize("NFC", p): p for p in parsed}
+    if nfc in by_nfc:
+        return by_nfc[nfc], parsed[by_nfc[nfc]]
+    matches = [p for n, p in by_nfc.items() if n.endswith("/" + nfc)]
     if len(matches) == 1:
         return matches[0], parsed[matches[0]]
     return None, None

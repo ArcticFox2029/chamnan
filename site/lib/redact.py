@@ -487,7 +487,13 @@ PATTERNS = [
     # a decoy costs a line of prose, under-covering one publishes a private key.
     _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----.*"
                r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----", re.S)),
-    _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")),
+    # 🐛 [2026-10-06] (R49 acc4, 2026-10-06) This fallback took the BEGIN line alone, so a block cut
+    # before its END -- any capped read, `head`, a truncated paste -- printed its whole body under a
+    # `<REDACTED>` that said the key had been handled. It now takes every following line that is
+    # base64, an armour header (`Proc-Type:`, `DEK-Info:`) or blank, indented or not, and stops at
+    # the first line that is none of those, so the prose after it stays. Check 438.
+    _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
+               r"(?:\r?\n[ \t]*(?:[A-Za-z0-9+/=]+|[A-Za-z-]+:[^\n]*|)[ \t]*(?=\r?\n|\Z))*")),
 ]
 # scheme://user:password@host — the password is replaced, the rest is left readable because
 # "this talks to postgres on db.internal" is exactly the kind of thing the index should say.
@@ -3362,6 +3368,8 @@ def scrub(text, windowed=True, *, _unmask=True):
     # Before the column rule and before the personal-data pass: a list is a value shape, and
     # the rules that follow read one value per name.
     text = _redact_secret_lists(text)
+    text = _redact_command_credentials(text)
+    text = _redact_key_encodings(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -4031,13 +4039,25 @@ def _is_a_header_row(fields):
 # (VCR.py, pytest-recording) writes its headers in -- never matched, and the block-sequence value
 # under it was printed while `api_key:` with the same value was redacted. Hyphenated or underscored
 # segments may now come before the secret word. Check 433.
-_NAME_PREFIX = r"(?:[A-Za-z0-9]+[-_.])*"
+# 🐛 [2026-10-06] (fold smoke, same day) Unbounded, the prefix let `_LIST_OPEN` -- tried at every
+# position -- walk to the end of any dotted run and back: 40,000 characters of `a.a.a…` took 205 s,
+# quadratic. Four segments of up to 32 characters cover every header name in real use
+# (`x-amz-security-token` is three) and keep each position's work constant.
+_NAME_PREFIX = r"(?:[A-Za-z0-9]{1,32}[-_.]){0,4}"
 _LIST_OPEN = _lazy(lambda: re.compile(
     r"(?<![\w-])(['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
 # A YAML block sequence: the key alone on its line, then indented `- item` lines under it.
 _BLOCK_KEY = _lazy(lambda: re.compile(
     r"^(\s*['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")(['\"]?\s*:\s*)$", re.I))
 _BLOCK_ITEM = _lazy(lambda: re.compile(r"^(\s+-\s+)(['\"]?)(.+?)\2(\s*)$"))
+# 🐛 [2026-10-06] (R22 acc4, 2026-10-06) Terraform writes a plan's input variables and a state's
+# outputs as `"db_password": {"value": "..."}` -- the name one level above the value -- and keeps
+# both in cleartext, `sensitive` or not. The assignment rules saw `"value": "..."` with no secret
+# word and printed it. The `"value"` member directly inside a secret-named object is the value.
+# Check 434.
+_OBJECT_VALUE = _lazy(lambda: re.compile(
+    r"(?<![\w-])(['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN
+    + r")\1(\s*:\s*\{[^{}]{0,400}?\"value\"\s*:\s*\")((?:[^\"\\\n]|\\.)+)\"", re.I))
 # A bare number in such a list is a port, a retry count or a length, not a credential. Redacting it
 # costs a reader information and hides nothing, and it is the one element type that is safe to keep.
 _JUST_A_NUMBER = _lazy(lambda: re.compile(r"[-+]?\d+(?:\.\d+)?"))
@@ -4051,6 +4071,70 @@ def _list_element(raw):
     if len(stripped) > 1 and stripped[0] in "'\"" and stripped[-1] == stripped[0]:
         return raw.replace(stripped, f"{stripped[0]}{PLACEHOLDER}{stripped[0]}", 1)
     return raw.replace(stripped, PLACEHOLDER, 1)
+
+
+# 🐛 [2026-10-06] (R31 acc5, 2026-10-06) Shell history and pasted commands carry a password in the
+# shape each tool takes it, not as `name=value`, and every rule above keys off a name. Eight shapes
+# were printed in full while `--password PASS` was redacted. A bare `-p` is a port or "parents" to
+# most tools, so each rule is anchored to its command and stays inside one command (no newline,
+# `;`, `|` or `&` between them). A value that is a variable reference names where the password
+# lives and is kept. Check 436.
+_ONE_COMMAND = r"[^\n;|&]*?"
+_FLAG_VALUE = r"(['\"]?)(?P<v>[^\s'\"$%][^\s'\"]*)\1"
+# One lazy pattern each: `_Lazy` proxies attribute access, so a list of them still compiles on use.
+_COMMAND_CREDENTIALS = [_lazy(lambda p=p: re.compile(p)) for p in (
+    r"\bcurl\b" + _ONE_COMMAND + r"\s(?:-u|--user)(?:\s+|=)(['\"]?)[^\s:'\"]+:(?P<v>[^\s'\"$%][^\s'\"]*)\1",
+    r"\b(?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow|mysqlcheck)\b" + _ONE_COMMAND
+    + r"\s-p" + _FLAG_VALUE,
+    r"\bsshpass\b" + _ONE_COMMAND + r"\s-p\s*" + _FLAG_VALUE,
+    r"\b(?:docker|podman|buildah|skopeo|nerdctl|oras|helm(?:\s+registry)?)\s+login\b" + _ONE_COMMAND
+    + r"\s-p(?:\s+|=)" + _FLAG_VALUE,
+    r"\bredis-cli\b" + _ONE_COMMAND + r"\s-a\s+" + _FLAG_VALUE,
+    r"\bsmbclient\b" + _ONE_COMMAND + r"\s(?:-U|--user)(?:\s+|=)(['\"]?)[^\s%'\"]+%(?P<v>[^\s'\"]+)\1",
+    # `-n` prints instead of writing a file, so the password is the second positional, not the third.
+    r"\bhtpasswd\s+-(?=\w*b)(?=\w*n)\w+\s+\S+\s+" + _FLAG_VALUE,
+    r"\bhtpasswd\s+-(?=\w*b)(?!\w*n)\w+\s+\S+\s+\S+\s+" + _FLAG_VALUE,
+    r"(?i:ConvertTo-SecureString)\s+(?:(?i:-String)\s+)?(['\"])(?P<v>[^'\"\n]+)\1\s+(?i:-AsPlainText)",
+)]
+# Every rule above names one of these; text without any of them pays nothing to compile the list.
+_COMMAND_NAMES = ("curl", "mysql", "mariadb", "sshpass", "login", "redis-cli", "smbclient",
+                  "htpasswd", "SecureString", "securestring", "Securestring")
+
+
+def _redact_command_credentials(text):
+    """Redact a password given to a named command as a flag value or positional."""
+    if not any(k in text for k in _COMMAND_NAMES):
+        return text
+
+    def _one(m):
+        s, e = m.span("v")
+        return m.group(0)[:s - m.start()] + PLACEHOLDER + m.group(0)[e - m.start():]
+
+    for rule in _COMMAND_CREDENTIALS:
+        text = rule.sub(_one, text)
+    return text
+
+
+# 🐛 [2026-10-06] (R49 acc4, 2026-10-06) Two encodings of a private key that no block header marks:
+# PuTTY's `.ppk` keeps the key as the base64 lines under `Private-Lines: N`, and a JSON Web Key keeps
+# it in the members `d`, `p`, `q`, `dp`, `dq`, `qi` (`k` for a symmetric key) of an object with a
+# `kty`. Both were printed in full. A JWK member is judged only inside an object that has `kty`, so
+# a `"p"` or `"d"` anywhere else is left alone. Check 438.
+_PPK_PRIVATE = _lazy(lambda: re.compile(
+    r"(Private-Lines:[ \t]*\d+[ \t]*\r?\n)((?:[ \t]*[A-Za-z0-9+/=]+[ \t]*(?:\r?\n|\Z))+)"))
+_JWK_OBJECT = _lazy(lambda: re.compile(r"\{[^{}]*\"kty\"[^{}]*\}"))
+_JWK_PRIVATE = _lazy(lambda: re.compile(r"(\"(?:d|p|q|dp|dq|qi|k)\"\s*:\s*\")([A-Za-z0-9_\-+/=]{8,})(\")"))
+
+
+def _redact_key_encodings(text):
+    """Redact the private part of a PuTTY key file and of a JSON Web Key."""
+    if "Private-Lines:" in text:
+        text = _PPK_PRIVATE.sub(lambda m: m.group(1) + PLACEHOLDER
+                                + ("\n" if m.group(2).endswith("\n") else ""), text)
+    if '"kty"' in text:
+        text = _JWK_OBJECT.sub(lambda m: _JWK_PRIVATE.sub(
+            lambda k: k.group(1) + PLACEHOLDER + k.group(3), m.group(0)), text)
+    return text
 
 
 def _redact_secret_lists(text):
@@ -4068,6 +4152,10 @@ def _redact_secret_lists(text):
                 f"[{','.join(_list_element(x) for x in m.group(4).split(','))}]")
 
     text = _LIST_OPEN.sub(_inline, text)
+    # Only text that has a `"value"` member pays for compiling the pattern.
+    if '"value"' in text:
+        text = _OBJECT_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}"
+                                 f"{PLACEHOLDER}\"", text)
     # 🐛 [2026-09-08] This used `splitlines()`, which breaks on eight characters besides `\n`:
     # `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029. A value containing any of them was cut
     # in half, the tail read as a line that is not a `- item`, the block loop exited, and EVERY

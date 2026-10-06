@@ -4039,7 +4039,11 @@ def _is_a_header_row(fields):
 # (VCR.py, pytest-recording) writes its headers in -- never matched, and the block-sequence value
 # under it was printed while `api_key:` with the same value was redacted. Hyphenated or underscored
 # segments may now come before the secret word. Check 433.
-_NAME_PREFIX = r"(?:[A-Za-z0-9]+[-_.])*"
+# 🐛 [2026-10-06] (fold smoke, same day) Unbounded, the prefix let `_LIST_OPEN` -- tried at every
+# position -- walk to the end of any dotted run and back: 40,000 characters of `a.a.a…` took 205 s,
+# quadratic. Four segments of up to 32 characters cover every header name in real use
+# (`x-amz-security-token` is three) and keep each position's work constant.
+_NAME_PREFIX = r"(?:[A-Za-z0-9]{1,32}[-_.]){0,4}"
 _LIST_OPEN = _lazy(lambda: re.compile(
     r"(?<![\w-])(['\"]?)(" + _NAME_PREFIX + r"(?:" + SECRET_WORDS + r")" + _KEY_RUN + r")\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I))
 # A YAML block sequence: the key alone on its line, then indented `- item` lines under it.

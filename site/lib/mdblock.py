@@ -383,6 +383,10 @@ def names_the_path(declared, target):
     target = str(target).strip().strip("`").lstrip("./")
     if not declared or not target:
         return False
+    # 🐛 [2026-10-06] (R32 acc5, 2026-10-06) A lesson written about `café.py` in one Unicode form
+    # never joined a query in the other, the same miss `impact.lookup` had. Check 437.
+    declared = unicodedata.normalize("NFC", declared)
+    target = unicodedata.normalize("NFC", target)
     return declared == target or declared.endswith("/" + target)
 
 
