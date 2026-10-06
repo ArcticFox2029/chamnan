@@ -487,7 +487,13 @@ PATTERNS = [
     # a decoy costs a line of prose, under-covering one publishes a private key.
     _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----.*"
                r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----", re.S)),
-    _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")),
+    # 🐛 [2026-10-06] (R49 acc4, 2026-10-06) This fallback took the BEGIN line alone, so a block cut
+    # before its END -- any capped read, `head`, a truncated paste -- printed its whole body under a
+    # `<REDACTED>` that said the key had been handled. It now takes every following line that is
+    # base64, an armour header (`Proc-Type:`, `DEK-Info:`) or blank, indented or not, and stops at
+    # the first line that is none of those, so the prose after it stays. Check 438.
+    _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
+               r"(?:\r?\n[ \t]*(?:[A-Za-z0-9+/=]+|[A-Za-z-]+:[^\n]*|)[ \t]*(?=\r?\n|\Z))*")),
 ]
 # scheme://user:password@host — the password is replaced, the rest is left readable because
 # "this talks to postgres on db.internal" is exactly the kind of thing the index should say.
@@ -3363,6 +3369,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     # the rules that follow read one value per name.
     text = _redact_secret_lists(text)
     text = _redact_command_credentials(text)
+    text = _redact_key_encodings(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -4101,6 +4108,28 @@ def _redact_command_credentials(text):
 
     for rule in _COMMAND_CREDENTIALS:
         text = rule.sub(_one, text)
+    return text
+
+
+# 🐛 [2026-10-06] (R49 acc4, 2026-10-06) Two encodings of a private key that no block header marks:
+# PuTTY's `.ppk` keeps the key as the base64 lines under `Private-Lines: N`, and a JSON Web Key keeps
+# it in the members `d`, `p`, `q`, `dp`, `dq`, `qi` (`k` for a symmetric key) of an object with a
+# `kty`. Both were printed in full. A JWK member is judged only inside an object that has `kty`, so
+# a `"p"` or `"d"` anywhere else is left alone. Check 438.
+_PPK_PRIVATE = _lazy(lambda: re.compile(
+    r"(Private-Lines:[ \t]*\d+[ \t]*\r?\n)((?:[ \t]*[A-Za-z0-9+/=]+[ \t]*(?:\r?\n|\Z))+)"))
+_JWK_OBJECT = _lazy(lambda: re.compile(r"\{[^{}]*\"kty\"[^{}]*\}"))
+_JWK_PRIVATE = _lazy(lambda: re.compile(r"(\"(?:d|p|q|dp|dq|qi|k)\"\s*:\s*\")([A-Za-z0-9_\-+/=]{8,})(\")"))
+
+
+def _redact_key_encodings(text):
+    """Redact the private part of a PuTTY key file and of a JSON Web Key."""
+    if "Private-Lines:" in text:
+        text = _PPK_PRIVATE.sub(lambda m: m.group(1) + PLACEHOLDER
+                                + ("\n" if m.group(2).endswith("\n") else ""), text)
+    if '"kty"' in text:
+        text = _JWK_OBJECT.sub(lambda m: _JWK_PRIVATE.sub(
+            lambda k: k.group(1) + PLACEHOLDER + k.group(3), m.group(0)), text)
     return text
 
 
