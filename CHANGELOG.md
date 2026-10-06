@@ -21,6 +21,19 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Credential files are refused unread.** `chamnan-peek` and the other commands that print a file
+  now decline a real `.env` (`.env.local`, `prod.env` …), a Google `client_secret*.json` and a
+  kubeconfig, as they already declined `credentials.json`; `.env.example`, `.sample`, `.template`
+  and `.dist` are still read. The environment catalog still lists a `.env`'s variable names and
+  still warns when it is not gitignored, and never captures a value.
+- **A kubeconfig user's token is redacted.** A bearer `token:` with a random value inside a
+  kubeconfig's `users:` block was printed; it, `client-key-data`, `id-token` and `refresh-token` are
+  now redacted there. A `token:` field anywhere else is left alone.
+- **A `.chamnan` that links outside the repository is refused, not followed.** It used to be warned
+  about and then written through, and a repository can commit such a link. Every command now says
+  so in one line and stops, every hook stays quiet, and nothing is read from or written to the
+  target. A link to a folder inside the repository still works.
+
 ## What's new in 1.35.0
 
 _Protection and context hold in the shapes text really arrives in — commands in shell history, infrastructure state, keys cut off mid-file, names typed in another Unicode form — and the steps that ran on every edit no longer cost seconds._

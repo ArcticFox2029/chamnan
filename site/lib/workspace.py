@@ -100,6 +100,9 @@ def _quiet_broken_pipe(kind, value, tb, _previous=sys.excepthook):
     # of problem as the broken pipe above -- a condition outside the command's control that a
     # Python traceback explains badly. One line to stderr and a non-zero exit says the same
     # thing a person can act on; the traceback said only "FileNotFoundError: [Errno 2]".
+    if isinstance(kind, type) and kind.__name__ == "NotAWorkspace" and kind.__module__ == __name__:
+        print("chamnan: %s" % (value,), file=sys.stderr)
+        sys.exit(1)
     if isinstance(kind, type) and issubclass(kind, WorkingDirectoryGone):
         print("chamnan: %s" % (value,), file=sys.stderr)
         sys.exit(1)
@@ -846,7 +849,21 @@ def find_root(start=None):
 
 
 def workspace(root=None):
-    return find_root(root) / WORKSPACE_DIRNAME
+    base = find_root(root)
+    ws = base / WORKSPACE_DIRNAME
+    # 🐛 [2026-10-06] (owner's decision, R12 #7 acc4, 2026-10-06) A `.chamnan` symlink to a folder outside
+    # the repository used to be warned about and followed, and a repository can COMMIT that link,
+    # so where it points is not the user's choice. Refused here, the one path every reader and
+    # writer takes -- refusing in ensure() alone left chamnan-map writing its scrub cache and the
+    # temp sweep its stamp into the target first. A link that stays INSIDE the repository is still
+    # followed. Check 441.
+    outside = escapes_repository(ws, base)
+    if outside is not None:
+        raise NotAWorkspace(
+            f"{ws} is a symlink to {outside}, which is outside this repository. chamnan does not "
+            f"write through it or read from it: a repository can commit such a link, so its target "
+            f"is not yours to vouch for. Replace the link with a folder to use chamnan here.")
+    return ws
 
 
 # Type was checked and range was not, and for a retention setting the two are not the same thing.
@@ -2037,32 +2054,18 @@ class NotAWorkspace(Exception):
 
 
 
-_ESCAPE_WARNED = set()
-
-
-def _warn_if_workspace_escapes(ws, root):
-    """Say so when `.chamnan` is a symlink whose target is outside the repository.
-
-    tree.py already refuses to follow a scanned file out of the tree; the workspace root itself was
-    the one path with no such guard, and it is the one that decides whether any of this is committed.
-    """
+def escapes_repository(ws, root):
+    """The target when `ws` is a symlink resolving outside `root`, else None (also when unsure)."""
     try:
         if not ws.is_symlink():
-            return
+            return None
         target = ws.resolve()
         base = root.resolve()
-    except OSError:
-        return
+    except (OSError, RuntimeError):
+        return None
     if target == base or base in target.parents:
-        return
-    key = str(ws)
-    if key in _ESCAPE_WARNED:
-        return
-    _ESCAPE_WARNED.add(key)
-    print(f"chamnan: {ws} is a symlink to {target}, which is outside {base}.\n"
-          f"  Everything chamnan writes — the index, memory, session records — lands there, and git\n"
-          f"  in this repository sees only the link. Nothing here is being committed with the code.",
-          file=sys.stderr)
+        return None
+    return target
 
 
 _WORKTREE_WARNED = set()
@@ -2227,10 +2230,7 @@ def ensure(root=None):
     # so `git add .chamnan` commits a pointer and the content it points at is never versioned at
     # all. The whole premise is markdown committed beside the code, so this is worth saying.
     #
-    # Said, not refused. Someone sharing one workspace across git worktrees has a reason, and this
-    # runs on every write path -- a hard failure there would break a deliberate setup with no way to
-    # opt out. Warned once per process instead, because ensure() is called many times per run.
-    _warn_if_workspace_escapes(ws, find_root(root))
+    # A `.chamnan` linking outside the repository never reaches here: workspace() refuses it.
     # The same question one step over: not a symlink out of the repository, but a checkout
     # that is itself temporary. Both are "what you write here is not where you think".
     _warn_if_workspace_is_in_a_linked_worktree(ws, find_root(root))
