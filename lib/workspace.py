@@ -321,6 +321,11 @@ def _harden_git_config():
         ("uploadpack.packObjectsHook", _REFUSE),
         ("sequence.editor", "true"),
         ("gpg.program", "true"),
+        # 🐛 [2026-10-06] (R8 acc4, 2026-10-06) Every reader here decodes git's output as UTF-8, and
+        # git re-encodes commit messages into `i18n.logOutputEncoding`: with a legacy Thai code page
+        # (ISO-8859-11) set, chamnan-impact's "last change" line printed a Thai subject as mojibake,
+        # and with UTF-16 as NUL-ridden text. VS Code forces the same key per call. Check 431.
+        ("i18n.logOutputEncoding", "UTF-8"),
     )
     try:
         start = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
