@@ -2380,6 +2380,35 @@ _STEM_MARGIN = 64
 _LAST_STEM_HITS = (None, None)
 
 
+def _may_name_a_secret(text):
+    """False only when `text` holds no SECRET_WORDS stem, so no rule built on SECRET_WORDS can match.
+
+    🎯 [2026-10-06] (R1 acc4, R11 acc4, 2026-10-06) Four such rules ran over every text, and compiling
+    them is 48 of the 54 ms a first scrub costs -- paid by the file pointer on a line that names no
+    secret word at all. The stem filter is derived from SECRET_WORDS and held equal to it by check
+    121, so "no stem" means "no match" for every rule that embeds it. When the filter cannot be
+    built the answer is True: scan as before. Check 443.
+    """
+    global _STEM_FILTER, _LAST_GATE
+    # The answer for an unchanged text is the answer it had: on a 590 KB map every call says True
+    # and each one folded the whole text again (28 ms, three times a scrub). The stem hits, when
+    # already computed for this text, answer it outright.
+    if _LAST_STEM_HITS[0] is not None and text == _LAST_STEM_HITS[0]:
+        return bool(_LAST_STEM_HITS[1])
+    if _LAST_GATE[0] is not None and text == _LAST_GATE[0]:
+        return _LAST_GATE[1]
+    if _STEM_FILTER is _UNBUILT:
+        _STEM_FILTER = _make_stem_filter()
+    if _STEM_FILTER is None:
+        return True
+    answer = _STEM_FILTER.search(text.translate(_STEM_FOLD).lower()) is not None
+    _LAST_GATE = (text, answer)
+    return answer
+
+
+_LAST_GATE = (None, None)
+
+
 def _secret_word_hits(text):
     """Every `_SECRET_WORD_ANYWHERE` match in `text`, in order -- coarse-to-fine where possible.
 
@@ -3190,6 +3219,8 @@ def scrub(text, windowed=True, *, _unmask=True):
         # Two groups, and only the value goes — the sentence has to stay readable or the reader
         # cannot tell what was removed. Same shape as AUTH_SCHEME_SECRET below, one rule further on.
         if pattern is DELIMITED_AFTER_SECRET_WORD:
+            if not _may_name_a_secret(text):
+                continue
             text = pattern.sub(
                 lambda m: m.group(0)
                 if not _prose_gap(m.group("gap")) or not _reads_like_a_credential(m.group("value"))
@@ -3216,9 +3247,10 @@ def scrub(text, windowed=True, *, _unmask=True):
         else f"{m.group(1)}:{PLACEHOLDER}@", text)
     # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
     # and running them first means a value they take is not left for a looser rule to half-capture.
-    text = XML_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
-        else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
+    if _may_name_a_secret(text):
+        text = XML_SECRET.sub(
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
+            else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
     # 🐛 [2026-09-28] (R214 acc4, 2026-09-27) The name/value SIBLING-FIELD shape: the credential word
     # lives in a `name=`/`key=`/`id=` attribute, or a JSON `"name"`/`"key"` member, and the actual
     # secret sits in a separate `value=` attribute or `"value"` member beside it. Same guard as
@@ -4200,6 +4232,8 @@ def _redact_secret_lists(text):
         return (f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}"
                 f"[{','.join(_list_element(x) for x in m.group(4).split(','))}]")
 
+    if not _may_name_a_secret(text):
+        return text
     text = _LIST_OPEN.sub(_inline, text)
     # Only text that has a `"value"` member pays for compiling the pattern.
     if '"value"' in text:

@@ -41,6 +41,10 @@ already reports the last released number while running newer code.
   no longer provide it, so it could no longer be tested; 3.9 is the Python macOS ships. CI runs
   3.9 and 3.13, and `install/chamnan-check` names 3.9. The code uses nothing newer than 3.8
   syntax, so 3.8 may still work — it is no longer claimed.
+- **The first redaction in a process is about six times faster** on text that names no secret
+  word: 55 ms to 8.5 ms, the cost every per-call notice paid. The four rules built on the
+  credential-word list are compiled only when a credential word is present; output is
+  byte-identical on every file the plugin ships and on a 590,000-character map.
 
 ## What's new in 1.35.0
 
