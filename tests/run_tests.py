@@ -51230,6 +51230,67 @@ _plain426 = "a sentence​ with an invisible character and nothing secret"
 check("text with nothing secret is only stripped",
       _redact426.for_a_terminal(_plain426) == _plain426.translate(_redact426._TERMINAL_SAFE),
       saw=repr(_redact426.for_a_terminal(_plain426)))
+# ---- 427_a_worktree_of_a_shallow_clone_is_shallow.py
+# ------------------ a linked worktree of a shallow clone is read as shallow
+# 🐛 [2026-10-05] (R160 acc4, 2026-10-05) `coedit._is_shallow` looked for git's `shallow` file in a
+# linked worktree's own git dir (`.git/worktrees/<name>`), but git keeps it in the COMMON dir, so a
+# worktree of a `--depth 1` clone read as not shallow while `git rev-parse --is-shallow-repository`
+# said true — and the "Last edited" line named the first files alphabetically as if just edited, the
+# R282 defect back in worktrees. The sibling reader in `workspace.is_sparse` already followed
+# `commondir`; clone detection over lib/ found the two copies. This pins both checkouts.
+import importlib as _il427
+import subprocess as _sp427
+import tempfile as _tf427
+from pathlib import Path as _P427
+
+_coedit427 = _il427.import_module("coedit")
+_d427 = _P427(_tf427.mkdtemp())
+_run427 = lambda *a, **k: _sp427.run(list(a), capture_output=True, text=True, encoding="utf-8",
+                                     errors="replace", **k)
+_src427 = _d427 / "src"
+_src427.mkdir()
+_run427("git", "-C", str(_src427), "init", "-q")
+_run427("git", "-C", str(_src427), "config", "user.email", "t@t")
+_run427("git", "-C", str(_src427), "config", "user.name", "t")
+for _i427 in range(3):
+    (_src427 / "f.txt").write_text(str(_i427), encoding="utf-8")
+    _run427("git", "-C", str(_src427), "add", "f.txt")
+    _run427("git", "-C", str(_src427), "commit", "-qm", "c%d" % _i427)
+_run427("git", "clone", "-q", "--depth", "1", _src427.as_uri(), str(_d427 / "shallow"))
+_run427("git", "-C", str(_d427 / "shallow"), "worktree", "add", "-q", str(_d427 / "wt"))
+_git_says427 = _run427("git", "-C", str(_d427 / "wt"), "rev-parse", "--is-shallow-repository").stdout.strip()
+check("the fixture really is a linked worktree of a shallow clone",
+      (_d427 / "wt" / ".git").is_file() and _git_says427 == "true", saw=_git_says427)
+check("the main checkout of a shallow clone reads as shallow", _coedit427._is_shallow(_d427 / "shallow"))
+check("...and so does a linked worktree of it, as git says",
+      _coedit427._is_shallow(_d427 / "wt"), saw=_coedit427._is_shallow(_d427 / "wt"))
+check("a full clone's checkout is not shallow", not _coedit427._is_shallow(_src427))
+# ---- 428_a_variable_reference_is_not_a_secret.py
+# ------------------ a variable reference after a secret word is not a secret, in every shell spelling
+# 🐛 [2026-10-05] (R157 acc4, 2026-10-05) `${VAR}` and `$(cmd)` were already kept as references,
+# but the unbraced `$VAR` was redacted: `export API_TOKEN=$CI_JOB_TOKEN` and `password=$DB_PASS`
+# came out as `<REDACTED>`, hiding the only thing the CI line says (where the value lives) while
+# hiding nothing secret. The same holds for cmd's `%VAR%` and PowerShell's `$env:VAR`. Scanners
+# separate platform-native references from literals for exactly this reason (R157 #10). This pins
+# every spelling, and that a real literal after the same names is still replaced.
+import importlib as _il428
+import random as _rnd428
+import string as _st428
+
+_redact428 = _il428.import_module("redact")
+_refs428 = ["export API_TOKEN=$CI_JOB_TOKEN", "password=$DB_PASS", "API_KEY=$API_KEY",
+            "set PASSWORD=%DB_PASSWORD%", "$env:API_TOKEN = $env:CI_TOKEN", "password: $SECRET_VALUE",
+            "API_KEY=${API_KEY}", "token=$(cat /run/secrets/token)"]
+_eaten428 = [r for r in _refs428 if _redact428.PLACEHOLDER in _redact428.scrub(r)]
+check("a variable reference after a secret word is kept, in every shell spelling", not _eaten428,
+      saw=_eaten428)
+_r428 = _rnd428.Random(428)
+_val428 = "".join(_r428.choice(_st428.ascii_letters + _st428.digits) for _ in range(28))
+_lits428 = ["export API_TOKEN=" + _val428, "password=" + _val428, "set PASSWORD=" + _val428,
+            "password=$" + _val428.lower() + "x9"]
+_kept428 = [l for l in _lits428 if _val428 in _redact428.scrub(l) or _val428.lower() + "x9" in _redact428.scrub(l)]
+check("...while a literal value after the same names is still replaced, even one that starts with $",
+      not _kept428, saw=_kept428)
 # ---- 42_every_subprocess_this_package_starts_is_bounded.py
 # ------------------------------------------- fourteen of fifteen, and the fifteenth waits forever
 # 🐛 [2026-09-10] Every `subprocess.run` in this package passes `timeout=` except one:
@@ -51504,9 +51565,6 @@ _DISPOSABLE45 = frozenset({
     # Age-based deletion is the CORRECT outcome for this one: a digest that survives becomes the
     # standing nag its own comment says it must not be.
     "repeat_digest.json",
-    # Derived by mapper.scrub_map_text and rewritten whole on every map build, so it never grows past
-    # one map's worth; losing it to an age sweep costs one full scrub (R91 acc5, 2026-10-05).
-    "map_scrub_cache.json",
 })
 
 _t_files45 = []

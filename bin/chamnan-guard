@@ -315,7 +315,7 @@ def scan(diff):
 
 
 def scan_bytecode(root):
-    """`{path: count}` of staged .pyc/.pyo files whose literal strings the redactor would rewrite.
+    """`{path: count}` of staged files git shows as binary whose text the redactor would rewrite.
 
     🐛 [2026-10-05] (R76 acc4, 2026-10-05) A compiled module keeps its string literals as plain
     bytes, and committed .pyc files have been decompiled to complete credentials across thousands
@@ -328,15 +328,23 @@ def scan_bytecode(root):
     if not ws.git_can_speak_for(root):
         return {}
     try:
+        # 🐛 [2026-10-06] (R170 acc4, 2026-10-05) Only .pyc and .pyo were read here, and git calls
+        # ANY file binary that has a NUL in its first 8,000 bytes: a staged UTF-16 SQL file and a
+        # text file behind a binary header both carried a credential past the guard in silence.
+        # `--numstat` marks every such file `-<TAB>-`, so the whole set is read, not one suffix.
+        # Check 429.
         names = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false", "diff",
-                                "--cached", "--no-textconv", "--name-only", "--diff-filter=AM", "-z"],
+                                "--cached", "--no-textconv", "--numstat", "--diff-filter=AM", "-z"],
                                capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return {}
     found = {}
     for raw in names.stdout.split(b"\0"):
-        path = raw.decode("utf-8", "replace")
-        if not path.lower().endswith((".pyc", ".pyo")):
+        added, _, rest = raw.partition(b"\t")
+        deleted, _, path_b = rest.partition(b"\t")
+        path = path_b.decode("utf-8", "replace")
+        if not path or not (added == b"-" and deleted == b"-"
+                            or path.lower().endswith((".pyc", ".pyo"))):
             continue
         try:
             blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob", ":" + path],
@@ -345,8 +353,13 @@ def scan_bytecode(root):
         except (OSError, subprocess.SubprocessError):
             continue
         hits = 0
-        for run in re.findall(rb"[\x20-\x7e]{8,}", blob[:5_000_000]):
-            text = run.decode("ascii")
+        blob = blob[:5_000_000]
+        if blob[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            # UTF-16 text with its BOM: decoded and scanned line by line like any staged text.
+            runs = blob.decode("utf-16", "replace").splitlines()
+        else:
+            runs = [r.decode("ascii") for r in re.findall(rb"[\x20-\x7e]{8,}", blob)]
+        for text in runs:
             if redact.scrub(text) != text:
                 hits += 1
         if hits:
@@ -505,7 +518,13 @@ def main(argv):
         # adopt chamnan on a repository that already has a past.
         hist = _history_diff(root, HISTORY_DEFAULT_COMMITS)
         if hist is None:
-            print("chamnan: not a git repository, or git cannot answer here.", file=sys.stderr)
+            # 🐛 [2026-10-06] (R163 acc4, 2026-10-05) In a partial clone (`--filter=blob:none`) the
+            # historical blobs are not on disk, and chamnan forbids git from fetching them
+            # (GIT_NO_LAZY_FETCH), so `log -p` fails here. The old line said "not a git repository"
+            # about a repository; the cause is now named, and nothing was claimed scanned.
+            print("chamnan: git could not produce this repository's history, so nothing was scanned "
+                  "\u2014 not a git repository, or a partial clone whose older contents are not on "
+                  "this machine (`git fetch --refetch` or `git backfill` brings them).", file=sys.stderr)
             return 1
         hits = scan_history(hist)
         _reflog_n = _reflog_only_commits(root)
@@ -641,11 +660,11 @@ def main(argv):
               "secret into this terminal and its transcript.", file=sys.stderr)
 
     if bytecode_found:
-        print(f"chamnan-guard: {len(bytecode_found)} staged compiled file(s) carry string literals "
-              f"that look like a leaked secret \u2014 a .pyc keeps its source's literals as plain bytes",
-              file=sys.stderr)
+        print(f"chamnan-guard: {len(bytecode_found)} staged file(s) that git shows as binary carry text "
+              f"that looks like a leaked secret \u2014 a .pyc keeps its source's literals as plain bytes, "
+              f"and UTF-16 or NUL-headed text is binary to git", file=sys.stderr)
         for _p in sorted(bytecode_found)[:6]:
-            print(f"    {mdblock.as_quoted(_p, 70)}  {bytecode_found[_p]} literal(s)", file=sys.stderr)
+            print(f"    {mdblock.as_quoted(_p, 70)}  {bytecode_found[_p]} string(s)", file=sys.stderr)
         print("  Unstage it (`git rm --cached <file>`) and add `__pycache__/` and `*.pyc` to "
               ".gitignore.", file=sys.stderr)
 
