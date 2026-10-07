@@ -1207,6 +1207,34 @@ XML_NAME_VALUE_PAIR_SECRET = _lazy(lambda: re.compile(
 JSON_NAME_VALUE_PAIR_SECRET = _lazy(lambda: re.compile(
     r'(?P<head>"(?:name|key)"\s*:\s*"(?P<nameval>[^"]*)"\s*,\s*"value"\s*:\s*")'
     r'(?P<val>[^"]{1,})"', re.I))
+# 🐛 [2026-10-07] (R100 acc5, 2026-10-07: a support-ticket HAR file let a session be hijacked) A
+# session cookie is a bearer credential, and every shape a developer pastes one in printed whole:
+# `curl … -H 'Cookie: session=…'` (the browser's "copy as cURL"), `curl -b 'sid=…'`, a raw
+# `Set-Cookie:` header, and the HAR entries `{"name": "Cookie", "value": "…"}` and
+# `{"name": "sessionid", "value": "…"}`. A cookie string is only touched where the context says it is
+# one, and inside it only a value shaped like a token -- sixteen or more URL-safe characters mixing
+# letters and digits -- is replaced, so `theme=dark`, `Path=/` and `HttpOnly` stay readable. Check 466.
+COOKIE_STRING = _lazy(lambda: re.compile(
+    r"(?i)(?:\b(?:set-)?cookie[ \t]*:[ \t]*|(?<![\w-])(?:-b|--cookie)[ \t]+['\"]?"
+    r"|\"name\"\s*:\s*\"(?:set-)?cookie\"\s*,\s*\"value\"\s*:\s*\")"
+    r"(?P<jar>[^'\"\r\n]{3,4000})"))
+_COOKIE_PAIR = re.compile(r"(?P<k>[!#$%&*+.^_`|~0-9A-Za-z-]+)=(?P<v>[^;,\s'\"]+)")
+# A HAR `cookies` entry names the cookie in its own field; these names are session or login cookies.
+_SESSION_COOKIE_NAME = re.compile(
+    r"(?i)sess|^sid$|[_.-]sid$|^sid[_.-]|jsessionid|phpsessid|auth|jwt|csrf|xsrf|remember|login")
+
+
+def _cookie_value_shaped(value):
+    return (len(value) >= 16 and re.fullmatch(r"[A-Za-z0-9%._~+/=:-]+", value) is not None
+            and sum(c.isalpha() for c in value) >= 4 and sum(c.isdigit() for c in value) >= 2
+            and not _is_only_a_template(value))
+
+
+def _scrub_cookie_jar(jar):
+    return _COOKIE_PAIR.sub(
+        lambda m: f"{m.group('k')}={PLACEHOLDER}" if _cookie_value_shaped(m.group("v")) else m.group(0), jar)
+
+
 # The hash rocket. After `[:=]` matches the `=`, `\s*` cannot cross the `>` — so the quoted rule
 # found no quote and the bare rule captured `>` alone and failed its six-character floor. This is
 # how `config/database.php` is written in every Laravel app and every Rails `.rb` config.
@@ -1414,7 +1442,26 @@ def is_never_opened(path):
     already right.
     """
     return (any(_is_never_opened_name(n) or _is_credential_file_name(n) for n in _names_to_judge(path))
-            or (path.name == "config" and path.parent.name == ".kube"))
+            or any(p.name == "config" and p.parent.name == ".kube" for p in _with_resolved(path, "config")))
+
+
+def _with_resolved(path, *leaf_names):
+    """`path`, and the real file it lands on when its leaf is one of `leaf_names`.
+
+    🐛 [2026-10-07] (R92 acc5, 2026-10-07: a check on a path, then a use of what it resolves to) A
+    file judged by its DIRECTORY -- `.kube/config` -- was judged on the path as typed, so a kubeconfig
+    reached through a symlinked directory (`kubelink/config`) or a symlink with another name
+    (`notes.txt`) was opened and its token printed. `realpath` is paid only when the leaf could be
+    such a file, or is itself a link, so the ordinary path costs nothing extra. Check 466."""
+    out = [path]
+    try:
+        if path.name in leaf_names or path.is_symlink():
+            real = Path(os.path.realpath(str(path)))
+            if real != path:
+                out.append(real)
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return out
 
 
 # 🐛 [2026-10-06] (owner's decision, R247 / R15 acc1 / R121 acc1) `credentials.json` was refused unread
@@ -2720,6 +2767,12 @@ def _close_unterminated_quoted_secrets(text):
         name = text[line_start:opener.start(1)]
         if _names_a_mechanism(name, "") or not _looks_like_a_credential_name(name, ""):
             continue
+        # 🐛 [2026-10-07] (self-scan, 2026-10-07) `grep -c '^API_TOKEN=' .env` lost everything after
+        # `=` -- the quote there CLOSES a string that opened before the name, and was taken for one
+        # opening a value that never ends. When that quote is already open on the line before the
+        # name, the name is inside a quoted pattern, not an assignment. Check 466.
+        if text.count(opener.group(1), line_start, hit.start()) % 2 == 1:
+            continue
         stop = len(text)
         at = text.find("\n", opener.end())
         while at >= 0:
@@ -3343,10 +3396,15 @@ def scrub(text, windowed=True, *, _unmask=True):
         or _names_a_mechanism(m.group("nameval"), m.group("val"))
         else f"{m.group('head')}{PLACEHOLDER}{m.group('vq')}", text)
     text = JSON_NAME_VALUE_PAIR_SECRET.sub(
-        lambda m: m.group(0)
+        lambda m: f"{m.group('head')}{PLACEHOLDER}\""
+        if _SESSION_COOKIE_NAME.search(m.group("nameval")) and _cookie_value_shaped(m.group("val"))
+        else m.group(0)
         if not _SECRET_WORD_ANYWHERE.search(m.group("nameval"))
         or _names_a_mechanism(m.group("nameval"), m.group("val"))
         else f"{m.group('head')}{PLACEHOLDER}\"", text)
+    if "ookie" in text or "OOKIE" in text or "-b " in text:
+        text = COOKIE_STRING.sub(
+            lambda m: m.group(0)[:m.start("jar") - m.start(0)] + _scrub_cookie_jar(m.group("jar")), text)
     # After the assignment rules, never before: a line that any of them can read is read by them,
     # and this is the loosest rule in the file. It fires only where no separator exists at all.
     #

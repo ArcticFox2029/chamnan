@@ -57,8 +57,12 @@ _REGISTRY_READ_CAP = 256 * 1024
 
 
 def _is_registry_config(path):
-    return (path.name.lower() in REGISTRY_CONFIGS
-            or (path.parent.name.lower(), path.name.lower()) in REGISTRY_CONFIGS_IN)
+    # Judged on the real file too when the leaf is a link or a directory-qualified name, so a
+    # symlinked `.docker` directory is still `.docker` (check 466).
+    for p in redact._with_resolved(path, *{n for _d, n in REGISTRY_CONFIGS_IN}):
+        if p.name.lower() in REGISTRY_CONFIGS or (p.parent.name.lower(), p.name.lower()) in REGISTRY_CONFIGS_IN:
+            return True
+    return False
 
 
 def _registry_carries_a_secret(path):
