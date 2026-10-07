@@ -59073,8 +59073,12 @@ _fl_r = _fl_fire(tool_name="Bash", tool_input={"command": "pytest tests/"},
                  error="Exit code 1\nE   ImportError: no module", duration_ms=4187)
 check("a failed tool call is written down without anybody typing anything",
       len(_fl_rows()) == 1 and _fl_rows()[0]["tool"] == "Bash", saw=_fl_rows())
-check("...keeping the first line of the error, which is where the exit code is",
-      _fl_rows()[0]["err"] == "Exit code 1", saw=_fl_rows()[0].get("err"))
+# 🐛 [2026-10-07] This asserted the err was EXACTLY "Exit code 1" -- the first line only, which is
+# why 216 of 265 real rows said nothing else. The exit code still leads; the program's own error
+# line now follows it. Check 464.
+check("...keeping the exit code first and the program's own error line after it",
+      _fl_rows()[0]["err"].startswith("Exit code 1") and "ImportError" in _fl_rows()[0]["err"],
+      saw=_fl_rows()[0].get("err"))
 check("...and saying nothing to the session, which can already see the failure",
       _fl_r.stdout.strip() == "", saw=_fl_r.stdout[:120])
 

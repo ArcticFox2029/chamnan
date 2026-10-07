@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A failed command is remembered by what actually went wrong.** The failure log kept only the
+  first line of the host's error, which is `Exit code 1`, so a missing module, a syntax error and a
+  wrong path were one entry — 216 of 265 entries in a real log said nothing else. It now keeps the
+  program's own error line after the exit code, and a repeat warning can say what failed last time.
 - **Package-registry configs no longer hand their token to the agent.** A `.npmrc`, `.pypirc`,
   `pip.conf`, `.yarnrc.yml`, `.docker/config.json`, `.m2/settings.xml`, Poetry `auth.toml` or
   `.bundle/config` that really carries a token is refused to the agent's own Read, Grep and `cat`,

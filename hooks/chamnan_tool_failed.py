@@ -30,6 +30,7 @@ tool reported an error, and recording it would fill the log with the user changi
 WRITES: logs/failures.jsonl per logs/commands.jsonl
 """
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +56,26 @@ def _first_line(text):
         if line.strip():
             return line.strip()
     return ""
+
+
+# 🐛 [2026-10-07] (self-measured) 216 of 265 rows in a real failures.jsonl read only "Exit code 1":
+# the host's failure event leads with that line and puts the program's own error below it, and the
+# first line was all that was kept. A missing module, a syntax error and a wrong path became one
+# failure, and a repeat warning could not say what went wrong. The error line is looked for from the
+# END (a traceback ends with its exception), in the last few KB only, preferring a line that says
+# what failed. Check 464.
+_EXIT_ONLY = re.compile(r"Exit code \d+")
+_SAYS_ERROR = re.compile(r"(?i)error|fatal|not found|no such|denied|failed|cannot|invalid|unknown|refus")
+_TAIL_CHARS = 4000
+
+
+def _error_line(text):
+    lines = [ln.strip() for ln in str(text or "")[-_TAIL_CHARS:].splitlines() if ln.strip()]
+    lines = [ln for ln in lines if not _EXIT_ONLY.fullmatch(ln)]
+    for ln in reversed(lines):
+        if _SAYS_ERROR.search(ln):
+            return ln
+    return lines[-1] if lines else ""
 
 
 def _subject(tool, tool_input):
@@ -85,6 +106,9 @@ def failure_of(payload):
     if not isinstance(payload, dict) or payload.get("is_interrupt"):
         return ""
     direct = _first_line(payload.get("error"))
+    if direct and _EXIT_ONLY.fullmatch(direct):
+        detail = _error_line(payload.get("error"))
+        return direct + (f" — {detail}" if detail else "")
     if direct:
         return direct
     resp = payload.get("tool_response")
