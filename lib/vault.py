@@ -33,10 +33,23 @@ GIT_READERS = frozenset({"diff", "show", "log", "blame", "grep", "cat-file"})
 _SEGMENTS = re.compile(r"\|\||&&|[|;&\n]")
 
 
+# 🐛 [2026-10-07] (owner, 2026-10-07: "ก็มันทำงานได้ไหมหละ ถ้าต้องเรียกใช้ข้อมูลในการทำงาน เช่น ssh")
+# Measured on 19 real working commands: `cat ~/.ssh/id_rsa.pub` (a PUBLIC key, pasted onto servers)
+# and `openssl x509 -in server.crt -noout -enddate` (a certificate's expiry) were refused, because
+# peek's refusal list also covers public material. A public key and a certificate are published by
+# design, so the guard lets them through; private keys and env files stay refused. Check 461.
+PUBLIC_SUFFIXES = (".pub", ".crt", ".cer")
+# `openssl` commands that only inspect public material or a connection.
+OPENSSL_PUBLIC = frozenset({"x509", "s_client", "verify", "crl", "version", "ciphers", "dgst"})
+
+
 def _is_credential(token, root):
     token = token.strip().strip("'\"")
     if not token or token.startswith("-") or "=" in token and not token.startswith((".", "/")):
         return None
+    if token.lower().endswith(PUBLIC_SUFFIXES):
+        return None
+    token = str(Path(token).expanduser()) if token.startswith("~") else token
     path = Path(token)
     if not path.is_absolute() and root is not None:
         path = Path(root) / path
@@ -84,6 +97,8 @@ def bash_reads(command, root=None):
             sub = next((a for a in args if not a.startswith("-")), "")
             if sub not in GIT_READERS:
                 continue
+        elif verb == "openssl" and (args[:1] and args[0] in OPENSSL_PUBLIC):
+            continue
         elif verb not in READERS:
             continue
         for a in args:
