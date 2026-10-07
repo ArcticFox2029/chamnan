@@ -897,7 +897,6 @@ def _peek(path, find=None, budget=DEFAULT_BUDGET):
         except OSError:
             head = b""
         if head.startswith(b"version https://git-lfs.github.com/spec/v1"):
-            import mapper  # lazy: only a pointer-shaped file pays for it
             real = mapper.lfs_pointer_size(head.decode("utf-8", "replace"))
             if real is not None:
                 return "\n".join(header + ["", f"Not checked out: a git-lfs pointer to {_human(real)} "
