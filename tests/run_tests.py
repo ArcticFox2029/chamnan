@@ -52793,6 +52793,96 @@ _strip460 = {"paragraph": "a <!-- hidden --> b",
              "indented, no blank line": "para line\n    still para <!-- hidden -->\n"}
 _kept460 = [k for k, t in _strip460.items() if "<!--" in _md460.strip_html_comments(t)]
 check("...while a comment Markdown hides is still stripped", not _kept460, saw=_kept460)
+# ---- 461_the_agent_cannot_read_a_credential_file_into_the_session.py
+# ------------------ the agent's own Read, Grep or shell read of a credential file is refused
+# 🎯 [2026-10-07] (owner's direction, 2026-10-07) chamnan refused credential files in its own
+# commands while the agent's Read tool, a `cat .env`, or a Grep aimed at the file still put the
+# values in the model's context. A PreToolUse `deny` now refuses those calls before they run --
+# verified first in a scratch project under bypassPermissions and acceptEdits. A template is read,
+# a command that only moves the file is allowed, and `guard_credential_reads: false` turns it off.
+# Also a seeded random sweep: every reading verb against every credential name must be refused,
+# and every non-reading verb or ordinary file must pass.
+import importlib as _il461
+import json as _json461
+import os as _os461
+import random as _rnd461
+import subprocess as _sp461
+import sys as _sys461
+import tempfile as _tf461
+from pathlib import Path as _P461
+
+_vault461 = _il461.import_module("vault")
+_d461 = _P461(_tf461.mkdtemp())
+(_d461 / ".kube").mkdir()
+for _f461 in (".env", ".env.example", "prod.env", "kubeconfig.yaml", "id_rsa", "README.md", "app.py", ".kube/config"):
+    (_d461 / _f461).write_text("X=1\n", encoding="utf-8")
+_refuse461 = [("Read", {"file_path": str(_d461 / ".env")}), ("Read", {"file_path": str(_d461 / "id_rsa")}),
+              ("Grep", {"pattern": "KEY", "path": str(_d461 / "prod.env")}),
+              ("Bash", {"command": "cat .env"}), ("Bash", {"command": "grep -n TOKEN .env | head"}),
+              ("Bash", {"command": "wc -l < .env"}), ("Bash", {"command": "git diff .env"}),
+              ("Bash", {"command": "sudo head -5 kubeconfig.yaml"}), ("Bash", {"command": "ls && cat .kube/config"})]
+_allow461 = [("Read", {"file_path": str(_d461 / ".env.example")}), ("Read", {"file_path": str(_d461 / "app.py")}),
+             ("Bash", {"command": "cp .env .env.bak"}), ("Bash", {"command": "source .env && make test"}),
+             ("Bash", {"command": "git add .env.example"}), ("Bash", {"command": "cat README.md"}),
+             ("Bash", {"command": "ls -la"}), ("Grep", {"pattern": "KEY", "path": str(_d461)})]
+_wrong461 = ([f"allowed: {t} {i}" for t, i in _refuse461 if not _vault461.tool_reads(t, i, _d461)]
+             + [f"refused: {t} {i}" for t, i in _allow461 if _vault461.tool_reads(t, i, _d461)])
+check("credential reads are refused and ordinary or non-reading calls pass", not _wrong461, saw=_wrong461)
+
+_r461 = _rnd461.Random(461)
+_readers461 = sorted(_vault461.READERS - {"type", "view", "vim", "vi", "nano", "emacs"})
+_others461 = ["ls", "cp", "mv", "rm", "touch", "chmod", "echo", "source", "stat", "wc", "file"]
+_secret461 = [".env", "prod.env", "kubeconfig.yaml", "id_rsa", ".kube/config"]
+_plain461 = ["README.md", "app.py", ".env.example"]
+_bad461 = []
+for _ in range(400):
+    _reads = _r461.random() < 0.5
+    _verb = _r461.choice(_readers461 if _reads else _others461)
+    _secret = _r461.random() < 0.5
+    _file = _r461.choice(_secret461 if _secret else _plain461)
+    _cmd = f"{_verb} {_r461.choice(['', '-n ', '-5 '])}{_file}{_r461.choice(['', ' | wc -l', ' > /dev/null'])}"
+    if _verb == "wc" and _secret:
+        continue          # `wc` counts; it is not in READERS and is not a read
+    _want = _reads and _secret
+    if bool(_vault461.bash_reads(_cmd, _d461)) != _want:
+        _bad461.append(_cmd)
+check("...and a seeded random sweep of 400 commands agrees with the reader x credential table",
+      not _bad461, saw=_bad461[:8])
+
+_hook461 = ROOT / "hooks" / "chamnan_bulk_read_notice.py"
+_pl461 = _json461.dumps({"session_id": "c461", "cwd": str(_d461), "hook_event_name": "PreToolUse",
+                         "tool_name": "Bash", "tool_input": {"command": "cat .env"}})
+_env461 = dict(_os461.environ, CLAUDE_PROJECT_DIR=str(_d461))
+_out461 = _sp461.run([_sys461.executable, str(_hook461)], input=_pl461, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                     env=_env461, timeout=60).stdout
+try:
+    _dec461 = _json461.loads(_out461)["hookSpecificOutput"]["permissionDecision"]
+except (ValueError, KeyError, TypeError):
+    _dec461 = None
+check("the hook, run as the host runs it, answers `cat .env` with a deny", _dec461 == "deny", saw=_out461[:200])
+(_d461 / ".chamnan").mkdir()
+(_d461 / ".chamnan" / "config.json").write_text('{"guard_credential_reads": false}', encoding="utf-8")
+_off461 = _sp461.run([_sys461.executable, str(_hook461)], input=_pl461, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                     env=_env461, timeout=60).stdout
+check("...and guard_credential_reads: false turns it off", "deny" not in _off461, saw=_off461[:200])
+
+# 🐛 [2026-10-07] (owner: "ก็มันทำงานได้ไหมหละ ถ้าต้องเรียกใช้ข้อมูลในการทำงาน เช่น ssh") Real work that USES a
+# secret without printing it must never be refused -- including reading a PUBLIC key or a certificate,
+# which the first version refused.
+_work461 = ["ssh -i ~/.ssh/id_rsa ubuntu@10.0.0.5 'uptime'", "ssh deploy@prod-db",
+            "scp -i ~/.ssh/id_ed25519 app.tar user@host:/tmp", "ssh-add ~/.ssh/id_rsa", "ssh-keygen -y -f ~/.ssh/id_rsa",
+            "cat ~/.ssh/id_rsa.pub", "cat ~/.ssh/config", "kubectl --kubeconfig kubeconfig.yaml get pods",
+            "KUBECONFIG=./kubeconfig.yaml kubectl get nodes", "docker compose --env-file .env up -d",
+            "source .env && npm start", "set -a; . ./.env; set +a; python app.py",
+            "openssl x509 -in server.crt -noout -enddate", "openssl x509 -in cert.pem -noout -dates",
+            "openssl s_client -connect example.com:443", "git push origin main",
+            'curl -H "Authorization: Bearer $TOKEN" https://api.example.com', "psql \"$DATABASE_URL\" -c 'select 1'"]
+_blocked_work461 = [c for c in _work461 if _vault461.bash_reads(c, _d461)]
+check("...while 18 real commands that USE a secret, a public key or a certificate all run", not _blocked_work461,
+      saw=_blocked_work461)
+_print461 = ["cat ~/.ssh/id_rsa", "openssl rsa -in key.pem -text", "cat server.key"]
+_let461 = [c for c in _print461 if not _vault461.bash_reads(c, _d461)]
+check("...and printing a private key is still refused", not _let461, saw=_let461)
 # ---- 46_a_clock_that_is_wrong_does_not_delete_the_newest_record.py
 # --------------------------------- one bad filename, and the guard protects exactly the wrong file
 # 🐛 [2026-09-10] `sessions.prune` had `ledger._ymd_to_ts`'s impossible-date guard and not its
