@@ -52886,6 +52886,457 @@ check("...while 18 real commands that USE a secret, a public key or a certificat
 _print461 = ["cat ~/.ssh/id_rsa", "openssl rsa -in key.pem -text", "cat server.key"]
 _let461 = [c for c in _print461 if not _vault461.bash_reads(c, _d461)]
 check("...and printing a private key is still refused", not _let461, saw=_let461)
+# ---- 462_a_local_import_does_not_shadow_the_module_one.py
+# ------------------ a local import inside a function does not shadow the module-level one
+# 🐛 [2026-10-07] (gate, 2026-10-07) Check 457's fix put `import mapper` inside `_peek`, and
+# `mapper` was already imported at the top of peek.py. Python then treats `mapper` as local to the
+# WHOLE function, so every earlier use raised UnboundLocalError: chamnan-peek on any source file
+# fell through to "unrecognised; 100% printable" and a strings dump. The full gate caught it as
+# one failure; the shape is general, so this asserts it over every function in lib/ and hooks/.
+import ast as _ast462
+import importlib as _il462
+import tempfile as _tf462
+from pathlib import Path as _P462
+
+_mapper462 = _il462.import_module("mapper")
+_peek462 = _il462.import_module("peek")
+_shadow462 = []
+for _f462 in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))):
+    _tree462 = _ast462.parse(_f462.read_text(encoding="utf-8"))
+    _top462 = set()
+    for _n462 in _tree462.body:
+        if isinstance(_n462, (_ast462.Import, _ast462.ImportFrom)):
+            _top462 |= {(a.asname or a.name).split(".")[0] for a in _n462.names}
+    for _fn462 in _ast462.walk(_tree462):
+        if not isinstance(_fn462, (_ast462.FunctionDef, _ast462.AsyncFunctionDef)):
+            continue
+        _first462 = {}
+        for _s462 in _ast462.walk(_fn462):
+            if isinstance(_s462, (_ast462.Import, _ast462.ImportFrom)):
+                for a in _s462.names:
+                    _nm462 = (a.asname or a.name).split(".")[0]
+                    _first462[_nm462] = min(_first462.get(_nm462, 10**9), _s462.lineno)
+        # Harmful when the function can read the name while its own import has not run: Python makes
+        # the name local to the WHOLE function, so a read before the import, or after an import that
+        # sits in a branch not taken (peek's case: the import was inside `if <lfs pointer>:`),
+        # raises UnboundLocalError. Safe only when the import is a plain statement of the function
+        # body itself, ahead of every read.
+        _body_imp462 = {}
+        for _s462 in _fn462.body:
+            if isinstance(_s462, (_ast462.Import, _ast462.ImportFrom)):
+                for a in _s462.names:
+                    _body_imp462.setdefault((a.asname or a.name).split(".")[0], _s462.lineno)
+        _bad462 = []
+        for n in sorted(set(_first462) & _top462):
+            _reads462 = [_s462.lineno for _s462 in _ast462.walk(_fn462)
+                         if isinstance(_s462, _ast462.Name) and _s462.id == n
+                         and isinstance(_s462.ctx, _ast462.Load)]
+            if _reads462 and not (n in _body_imp462 and _body_imp462[n] == _first462[n]
+                                  and _body_imp462[n] < min(_reads462)):
+                _bad462.append(n)
+        if _bad462:
+            _shadow462.append(f"{_f462.name}:{_fn462.lineno} {_fn462.name} can read {_bad462} before its local import runs")
+check("no function in lib/ or hooks/ reads a module name its own local import has not bound yet",
+      not _shadow462, saw=_shadow462)
+
+# The behaviour itself, over the population: one small file per language the map knows.
+_d462 = _P462(_tf462.mkdtemp())
+_broken462 = {}
+for _ext462 in sorted(_mapper462.EXT_LANG):
+    _p462 = _d462 / f"m{_ext462}"
+    _p462.write_text("x = 1\n", encoding="utf-8")
+    _out462 = _peek462.peek(_p462)
+    if "could not read as" in _out462 or "Error" in _out462 or "unrecognised" in _out462:
+        _broken462[_ext462] = _out462.splitlines()[3:5]
+check("peek reads a small source file in every language the map knows, without an error",
+      not _broken462 and len(_mapper462.EXT_LANG) > 5, saw=_broken462)
+(_d462 / "m.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+check("...and names a Python file's functions", "add(a, b)" in _peek462.peek(_d462 / "m.py"))
+# ---- 463_registry_tokens_and_token_urls_do_not_reach_the_session.py
+# ------------------ registry configs, .git-credentials and token-only URLs do not reach the session
+# 🐛 [2026-10-07] (R52 acc4, 2026-10-07) Measured before the fix: `.git-credentials` was opened by
+# peek and by the agent's Read; `.npmrc`, `.pypirc`, `pip.conf`, `.yarnrc.yml`, `.docker/config.json`,
+# `.m2/settings.xml` and Poetry's `auth.toml` reached the session raw through Read or `cat`; a
+# prefix-less token used as a URL's whole userinfo (`https://<token>@github.com/`) and Bundler's
+# `BUNDLE_<HOST>: "user:password"` printed through scrub. Every fixture value is built here.
+import base64 as _b463
+import importlib as _il463
+import random as _r463
+import string as _s463
+import tempfile as _tf463
+from pathlib import Path as _P463
+
+_red463 = _il463.import_module("redact")
+_vault463 = _il463.import_module("vault")
+_peek463 = _il463.import_module("peek")
+_rng463 = _r463.Random(463)
+
+
+def _tok463(n, alpha=_s463.ascii_letters + _s463.digits):
+    while True:
+        t = "".join(_rng463.choice(alpha) for _ in range(n))
+        if any(c.isupper() for c in t) and any(c.islower() for c in t) and sum(c.isdigit() for c in t) >= 2:
+            return t
+
+
+_t463 = _tok463(36)
+_b64463 = _b463.b64encode(("u:" + _t463).encode()).decode()
+_d463 = _P463(_tf463.mkdtemp())
+_files463 = {
+    ".npmrc": "registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=" + _t463 + "\n",
+    ".pypirc": "[pypi]\nrepository = https://upload.pypi.org/legacy/\nusername = __token__\npassword = " + _t463 + "\n",
+    "pip.conf": "[global]\nindex-url = https://user:" + _t463 + "@pypi.example.com/simple\n",
+    ".yarnrc.yml": 'npmRegistryServer: "https://npm.example.com"\nnpmAuthToken: "' + _t463 + '"\n',
+    ".docker/config.json": '{"auths": {"https://index.docker.io/v1/": {"auth": "' + _b64463 + '"}}}\n',
+    ".m2/settings.xml": "<settings><servers><server><id>c</id><password>" + _t463 + "</password></server></servers></settings>\n",
+    "pypoetry/auth.toml": '[http-basic.foo]\nusername = "u"\npassword = "' + _t463 + '"\n',
+    ".bundle/config": '---\nBUNDLE_PATH: "vendor/bundle"\nBUNDLE_GEMS__EXAMPLE__COM: "user:' + _t463 + '"\n',
+}
+_open463, _leak463, _lost463 = [], [], []
+for _n463, _c463 in _files463.items():
+    _p463 = _d463 / _n463
+    _p463.parent.mkdir(parents=True, exist_ok=True)
+    _p463.write_text(_c463, encoding="utf-8")
+    if not (_vault463.tool_reads("Read", {"file_path": str(_p463)}, _d463)
+            and _vault463.tool_reads("Bash", {"command": f"cat {_p463}"}, _d463)):
+        _open463.append(_n463)
+    _pk463 = _peek463.peek(_p463)
+    if _t463 in _pk463 or _b64463 in _pk463:
+        _leak463.append(_n463)
+    # The settings beside the token are the reason peek is offered instead: they must survive.
+    if "example" not in _pk463 and "registry" not in _pk463 and "pypi" not in _pk463 and "docker" not in _pk463 \
+            and "settings" not in _pk463 and "vendor/bundle" not in _pk463:
+        _lost463.append(_n463)
+check("a registry config carrying a token is refused to Read and to cat", not _open463, saw=_open463)
+check("...and chamnan-peek, which the refusal offers, shows each without the token", not _leak463, saw=_leak463)
+_why463 = _vault463.refusal(str(_d463 / ".npmrc"))
+check("...the refusal names chamnan-peek and the path", "chamnan-peek" in _why463 and ".npmrc" in _why463)
+
+# A token-free registry config is read as before: the guard is not a block on the file name.
+(_d463 / "clean").mkdir()
+(_d463 / "clean" / ".npmrc").write_text("registry=https://registry.npmjs.org/\nsave-exact=true\n", encoding="utf-8")
+(_d463 / "clean" / "pip.conf").write_text("[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8")
+check("a registry config with no token in it is read as before",
+      not _vault463.tool_reads("Read", {"file_path": str(_d463 / "clean" / ".npmrc")}, _d463)
+      and not _vault463.tool_reads("Bash", {"command": "cat clean/pip.conf"}, _d463))
+
+# .git-credentials: the whole file is the secret, refused unread everywhere.
+_gc463 = _d463 / ".git-credentials"
+_gc463.write_text("https://alice:" + _t463 + "@github.com\n", encoding="utf-8")
+check(".git-credentials is refused by peek, by Read and by cat",
+      _red463.is_never_opened(_gc463) and _t463 not in _peek463.peek(_gc463)
+      and bool(_vault463.tool_reads("Read", {"file_path": str(_gc463)}, _d463))
+      and bool(_vault463.tool_reads("Bash", {"command": "cat ~/.git-credentials"}, None)))
+
+# A token used as a URL's whole userinfo.
+_hex463 = "".join(_rng463.choice("0123456789abcdef") for _ in range(40))
+_url_leaks463 = []
+for _v463 in (_t463, _hex463):
+    for _line463 in (f'[url "https://{_v463}@github.com/"]\n\tinsteadOf = https://github.com/',
+                     f"git clone https://{_v463}@github.com/org/repo.git",
+                     f"url = https://{_v463}@gitlab.example.com/x.git"):
+        _o463 = _red463.scrub(_line463)
+        if _v463 in _o463 or _red463.scrub(_o463) != _o463 or "github.com" not in _o463 and "gitlab" not in _o463:
+            _url_leaks463.append(_line463[:40])
+check("a prefix-less token as a URL's whole userinfo is redacted, once, host kept", not _url_leaks463,
+      saw=_url_leaks463)
+_users463 = ["git clone https://alice@github.com/org/repo.git", "ssh://git@github.com/org/repo.git",
+             "https://user.name@bitbucket.org/team/repo.git", "https://deploy-bot@gitlab.com/x.git",
+             "https://myorganization2024dev@dev.azure.com/myorganization/p/_git/r",
+             "https://PeterParker@example.com/x"]
+check("...while a username in the same place is left alone",
+      all(_red463.scrub(u) == u for u in _users463), saw=[u for u in _users463 if _red463.scrub(u) != u])
+
+# Bundler's host credential, and its neighbours that are settings.
+_bl463 = ['BUNDLE_GEMS__EXAMPLE__COM: "user:' + _t463 + '"', "export BUNDLE_ENTERPRISE__CONTRIBSYS__COM=cafebabe:" + _t463]
+_bk463 = ['BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/: "https://mirror.example.com"', 'BUNDLE_PATH: "vendor/bundle"',
+          'BUNDLE_BUILD__NOKOGIRI: "--use-system-libraries"', 'BUNDLE_GEMS__EXAMPLE__COM: "${GEM_USER}:${GEM_PASS}"']
+check("Bundler's BUNDLE_<HOST> login is redacted, and its settings are not",
+      all(_t463 not in _red463.scrub(x) for x in _bl463) and all(_red463.scrub(x) == x for x in _bk463),
+      saw=[_red463.scrub(x) for x in _bl463 + _bk463])
+
+# R60: the .env refusal says how to USE a value without reading it.
+_env463 = _vault463.refusal(".env")
+check("the .env refusal says how to use a value without printing it",
+      "set -a" in _env463 and "--env-file" in _env463 and "never print" in _env463)
+
+# 🐛 [2026-10-07] (R60 benchmark) An agent asking whether a variable is SET was refused: a count, a
+# file name or an exit status is all these print, never a line of the file.
+_ask463 = ["grep -c '^API_TOKEN=' .env", "grep -q API_TOKEN .env", "grep -l TOKEN .env",
+           "rg --count TOKEN .env", "grep -ic token .env"]
+_show463 = ["grep API_TOKEN .env", "grep -o 'API_TOKEN=.*' .env", "rg TOKEN .env", "grep -A1 TOKEN .env",
+            "grep --color TOKEN .env", "grep -C1 TOKEN .env"]
+check("a grep that only counts, lists or tests is allowed on a secret file; one that prints lines is not",
+      not any(_vault463.bash_reads(c) for c in _ask463) and all(_vault463.bash_reads(c) for c in _show463),
+      saw=[c for c in _ask463 if _vault463.bash_reads(c)] + [c for c in _show463 if not _vault463.bash_reads(c)])
+# ---- 464_a_failed_command_is_remembered_by_its_real_error.py
+# ------------------ a failed command is remembered by its real error, not by "Exit code 1"
+# 🐛 [2026-10-07] (self-measured) 216 of 265 rows in this workspace's failures.jsonl read only
+# "Exit code 1". The host's failure event puts "Exit code N" on the FIRST line and the program's
+# own error below it, and the hook kept the first line -- so a missing module, a syntax error and a
+# wrong path were one failure, and a repeat warning could not say what had gone wrong.
+import importlib.util as _ilu464
+
+_sp464 = _ilu464.spec_from_file_location("_tf464", ROOT / "hooks" / "chamnan_tool_failed.py")
+_tf464 = _ilu464.module_from_spec(_sp464)
+_sp464.loader.exec_module(_tf464)
+
+
+def _err464(text):
+    return _tf464.failure_of({"tool_name": "Bash", "tool_input": {"command": "x"}, "error": text})
+
+
+_cases464 = {
+    "Exit code 1\nTraceback (most recent call last):\n  File \"a.py\", line 1, in <module>\n"
+    "    import nope\nModuleNotFoundError: No module named 'nope'": "ModuleNotFoundError",
+    "Exit code 2\nls: cannot access 'missing': No such file or directory": "No such file",
+    "Exit code 127\n(eval):1: command not found: timeout": "command not found",
+    "Exit code 1\n  File \"b.py\", line 3\n    def f(:\n         ^\nSyntaxError: invalid syntax": "SyntaxError",
+    "Exit code 128\nfatal: not a git repository (or any of the parent directories): .git": "not a git repository",
+}
+_bad464 = {k.split("\n")[1][:40]: _err464(k) for k, want in _cases464.items() if want not in _err464(k)}
+check("a failed command is recorded with the program's own error line", not _bad464, saw=_bad464)
+check("...still led by its exit code, the kind gotcha keys on",
+      all(_err464(k).startswith(k.split("\n")[0]) for k in _cases464))
+_keys464 = {_tf464.failure_of({"tool_name": "Bash", "error": k}) for k in list(_cases464)[:1] + [list(_cases464)[3]]}
+check("...so two different exit-1 failures are two different records", len(_keys464) == 2, saw=_keys464)
+check("an error with nothing below its exit code is kept as it was", _err464("Exit code 1") == "Exit code 1")
+check("a non-shell error is kept as it was",
+      _tf464.failure_of({"tool_name": "Edit", "error": "File has not been read yet"}) == "File has not been read yet")
+_long464 = "Exit code 1\n" + "noise line\n" * 5000 + "RuntimeError: boom"
+check("a long output is not scanned without bound and still yields its last error",
+      "RuntimeError: boom" in _err464(_long464))
+# ---- 465_a_pattern_or_a_heredoc_is_not_a_file_read.py
+# ------------------ a grep pattern, a quoted separator or a heredoc body is not a credential read
+# 🐛 [2026-10-07] (R86 acc4, 2026-10-07: measure a rule set on a foreign population) Run over every
+# Bash, Read and Grep call in this project's transcripts -- 18,354 real calls -- the read guard
+# refused 10 and 9 were false: a grep PATTERN read as a file (`grep -n "\.env" lib/tree.py`), a line
+# of a heredoc body judged as a command, and a quoted `\|` cutting a pattern into a second command.
+# After: 18,363 calls, 1 refused, a real `cat` of an id_rsa fixture.
+import importlib as _il465
+
+_v465 = _il465.import_module("vault")
+_pass465 = [
+    'grep -n "\\.env" lib/tree.py', 'grep -rln "credentials\\.json" lib/', 'grep -n "id_rsa\\|.env" x.py',
+    "sed -n '/\\.env/p' notes.md", "awk '/secrets/' a.txt", "jq '.env' package.json", "rg -e .env src",
+    "git grep -n .env -- lib",
+    "python3 - <<'EOF'\nfor d in ('.env', 'x'):\n    print(open(d).name)\nEOF\necho done",
+    'grep -n "^def \\|PASSED\\|FAILED" t.py | head -30; grep -n "a corpus of secrets is a leak\\|which test" $T',
+    "echo 'cat .env; ok' && ls",
+]
+_refuse465 = [
+    "grep TOKEN .env", "grep -n x .env", "grep -e TOKEN .env", "sed -n 1p .env", "awk '{print}' .env",
+    "cat .env", "git grep TOKEN -- .env", "rg -e foo .env", "head -3 ~/.ssh/id_rsa", "echo hi | cat .env",
+    "x=1; cat '.env'", "cat .env&", "cat <<'EOF' >/dev/null\nhello\nEOF\ncat .env", "grep -h x a.txt .env",
+]
+check("a pattern, a quoted separator or a heredoc body is not taken for a credential file",
+      not [c for c in _pass465 if _v465.bash_reads(c)], saw=[c for c in _pass465 if _v465.bash_reads(c)])
+check("...while every real read of one is still refused, wherever it sits in the command",
+      not [c for c in _refuse465 if not _v465.bash_reads(c)], saw=[c for c in _refuse465 if not _v465.bash_reads(c)])
+# ---- 466_session_cookies_and_symlinked_credential_dirs.py
+# ------------------ session cookies are redacted; a credential reached through a symlink is refused
+# 🐛 [2026-10-07] (R100 acc5, 2026-10-07: a support-ticket HAR let a session be hijacked) Measured: a
+# cookie in `curl -H 'Cookie: …'`, `curl -b`, a `Set-Cookie:` header and three HAR shapes printed
+# whole. (R92 acc5, 2026-10-07: a check on a path, a use of what it resolves to) A kubeconfig through
+# a symlinked directory or a renamed symlink, and a `.docker/config.json` through a symlinked
+# directory, were opened. Every fixture value is built here.
+import importlib as _il466
+import os as _os466
+import random as _r466
+import string as _s466
+import tempfile as _tf466
+from pathlib import Path as _P466
+
+_red466 = _il466.import_module("redact")
+_vault466 = _il466.import_module("vault")
+_peek466 = _il466.import_module("peek")
+_g466 = _r466.Random(466)
+_t466 = "".join(_g466.choice(_s466.ascii_lowercase) for _ in range(20)) + "".join(
+    _g466.choice(_s466.digits) for _ in range(12)) + "".join(_g466.choice(_s466.ascii_uppercase) for _ in range(8))
+_leak466 = {
+    "copy as cURL": f"curl 'https://app.example.com/api' -H 'Cookie: session={_t466}; theme=dark'",
+    "curl -b": f"curl -b 'sid={_t466}' https://app.example.com/",
+    "curl --cookie": f'curl --cookie "connect.sid={_t466}" https://x.example/',
+    "Set-Cookie": f"Set-Cookie: PHPSESSID={_t466}; path=/",
+    "HAR header": '{"name": "Cookie", "value": "session=' + _t466 + '"}',
+    "HAR set-cookie": '{"name": "set-cookie", "value": "sid=' + _t466 + '; Path=/; HttpOnly"}',
+    "HAR cookies": '"cookies": [{"name": "sessionid", "value": "' + _t466 + '"}]',
+}
+_bad466 = {k: _red466.scrub(v) for k, v in _leak466.items()
+           if _t466 in _red466.scrub(v) or _red466.scrub(_red466.scrub(v)) != _red466.scrub(v)}
+check("a session cookie is redacted in every shape it is pasted in, once", not _bad466, saw=_bad466)
+check("...and the cookie's name and the harmless attributes beside it stay readable",
+      all(w in _red466.scrub(_leak466["HAR set-cookie"]) for w in ("sid=", "Path=/", "HttpOnly"))
+      and "theme=dark" in _red466.scrub(_leak466["copy as cURL"]))
+_keep466 = ["Cookie: theme=dark; lang=en", "Set-Cookie: sid=abc; Path=/; HttpOnly", "the cookie banner says accept",
+            '{"name": "cookie_consent", "value": "accepted-all-2024"}', "curl -b cookies.txt https://x",
+            '{"name": "session_timeout", "value": "3600"}', "Cookie: _ga=GA1.2.1234567890.1700000000",
+            "tar -b 20 -cf x.tar dir", '"cookies": [{"name": "sessionid", "value": "${SESSION}"}]']
+check("...while preferences, tracking ids, placeholders and the word cookie in prose are left alone",
+      all(_red466.scrub(k) == k for k in _keep466), saw=[k for k in _keep466 if _red466.scrub(k) != k])
+
+_d466 = _P466(_tf466.mkdtemp())
+(_d466 / "real" / ".kube").mkdir(parents=True)
+(_d466 / "real" / ".kube" / "config").write_text("users:\n- name: u\n  user:\n    token: " + _t466 + "\n", encoding="utf-8")
+(_d466 / "real" / ".docker").mkdir(parents=True)
+(_d466 / "real" / ".docker" / "config.json").write_text('{"auths": {"r": {"password": "' + _t466 + '"}}}', encoding="utf-8")
+(_d466 / "app").mkdir()
+(_d466 / "app" / "config").write_text("x=1\n", encoding="utf-8")
+try:
+    _os466.symlink(_d466 / "real" / ".kube", _d466 / "kubelink")
+    _os466.symlink(_d466 / "real" / ".docker", _d466 / "dockerlink")
+    _os466.symlink(_d466 / "real" / ".kube" / "config", _d466 / "notes.txt")
+    _links466 = True
+except (OSError, NotImplementedError):
+    _links466 = False          # Windows without the symlink privilege: nothing to judge
+if _links466:
+    _open466 = [n for n in ("kubelink/config", "notes.txt", "dockerlink/config.json")
+                if not _vault466.tool_reads("Read", {"file_path": str(_d466 / n)}, _d466)
+                or _t466 in _peek466.peek(_d466 / n)]
+    check("a credential file reached through a symlinked directory or a renamed link is refused",
+          not _open466, saw=_open466)
+check("...and an ordinary file named config is read as before",
+      not _vault466.tool_reads("Read", {"file_path": str(_d466 / "app" / "config")}, _d466))
+
+# 🐛 [2026-10-07] (self-scan) A quote that CLOSES a pattern was taken for one opening a value that
+# never ends, and everything after it was redacted: `grep -c '^API_TOKEN=' .env` lost its file name.
+_grep466 = ["grep -c '^API_TOKEN=' .env -- asking", "grep -q '^SECRET_KEY=' .env && echo set",
+            "echo 'API_TOKEN=' >> .env", 'grep "^PASSWORD=" .env']
+check("a quoted pattern ending in KEY= is not an unterminated secret",
+      all(_red466.scrub(g) == g for g in _grep466), saw=[_red466.scrub(g) for g in _grep466])
+check("...while an unterminated quoted secret is still redacted to where its value ends",
+      _red466.scrub("API_TOKEN='abcdef12345678\n\nnext") == "API_TOKEN=<REDACTED>\n\nnext")
+# ---- 467_a_huge_json_number_does_not_lose_a_repository_file.py
+# ------------------ a JSON number too long for Python 3.11+ does not lose a repository file
+# 🐛 [2026-10-07] (R101 acc5, 2026-10-07: a Python security release changed a default) On 3.11+,
+# `json.loads` raises a plain ValueError for an integer of more than 4,300 digits. Measured on 3.12:
+# a package.json with one such number lost every command (`npm test`, `npm run build` -> []), while
+# 3.9 listed both. Repository JSON is now parsed by `workspace.loads_repository_json`.
+import importlib as _il467
+import re as _re467
+import shutil as _sh467
+import subprocess as _sp467
+import sys as _sys467
+
+_ws467 = _il467.import_module("workspace")
+_big467 = "7" * 5000
+_doc467 = _ws467.loads_repository_json('{"n": ' + _big467 + ', "k": 12}')
+check("a number too long to convert is kept as its text, and an ordinary one is still an int",
+      _doc467["n"] == _big467 and _doc467["k"] == 12)
+# The set, not one member: no module that reads repository JSON parses it with a bare json.loads.
+_bare467 = {}
+for _m467 in ("catalogs", "deps", "peek"):
+    _src467 = (ROOT / "lib" / f"{_m467}.py").read_text(encoding="utf-8")
+    _n467 = len(_re467.findall(r"\bjson\.loads\(", _src467))
+    if _n467:
+        _bare467[_m467] = _n467
+check("catalogs, deps and peek parse repository JSON only through the long-number-safe loader",
+      not _bare467, saw=_bare467)
+# On an interpreter that has the limit, the real path: a package.json keeps its commands.
+_py467 = next((p for p in ("python3.14", "python3.13", "python3.12", "python3.11")
+               if _sh467.which(p)), None) if _sys467.version_info < (3, 11) else _sys467.executable
+if _py467:
+    _code467 = (
+        "import sys,tempfile,pathlib;sys.path.insert(0,sys.argv[1]);import catalogs\n"
+        "d=pathlib.Path(tempfile.mkdtemp())\n"
+        "(d/'package.json').write_text('{\"name\":\"x\",\"scripts\":{\"test\":\"jest\"},\"n\":'+'7'*5000+'}')\n"
+        "print([c for c,_ in catalogs.scan_commands(d)])")
+    _out467 = _sp467.run([_py467, "-c", _code467, str(ROOT / "lib")], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=60)
+    check("...and on an interpreter with the 4,300-digit limit a package.json keeps its commands",
+          "npm test" in _out467.stdout, saw=(_out467.stdout + _out467.stderr)[-300:])
+# ---- 468_a_sql_dump_keeps_its_credentials_out.py
+# ------------------ a SQL dump's credential, placed by position, is redacted
+# 🐛 [2026-10-07] (R121 acc4, 2026-10-07: credentials in committed database dumps and seeds) Measured:
+# a settings row `('stripe_secret','…')`, an `INSERT … (id, email, api_key) VALUES (…)` and a
+# `COPY … (id, access_token) FROM stdin` block all printed the value whole. Fixture values built here.
+import importlib as _il468
+import random as _r468
+import string as _s468
+import time as _t468
+
+_red468 = _il468.import_module("redact")
+_g468 = _r468.Random(468)
+_v468 = "".join(_g468.choice(_s468.ascii_lowercase) for _ in range(14)) + "".join(
+    _g468.choice(_s468.digits) for _ in range(10)) + "".join(_g468.choice(_s468.ascii_uppercase) for _ in range(8))
+_leak468 = [
+    f"INSERT INTO `settings` (`key`, `value`) VALUES ('stripe_secret','{_v468}'),('site_name','Shop');",
+    f"INSERT INTO users (id, email, api_key) VALUES (1, 'a@b.c', '{_v468}'), (2, 'x@y.z', '{_v468}');",
+    f"COPY public.oauth_tokens (id, access_token) FROM stdin;\n1\t{_v468}\n\\.",
+    f"INSERT INTO cfg VALUES ('db_password', '{_v468}');",
+]
+_bad468 = [_red468.scrub(x) for x in _leak468
+           if _v468 in _red468.scrub(x) or _red468.scrub(_red468.scrub(x)) != _red468.scrub(x)]
+check("a credential placed by column or beside its name in a SQL dump is redacted, once", not _bad468, saw=_bad468)
+_keep468 = ["INSERT INTO users (id, name, token_type) VALUES (1, 'Ann', 'bearer');",
+            "INSERT INTO settings (`key`, `value`) VALUES ('site_name','My Shop 2024'),('password_min_length','12');",
+            "INSERT INTO t (a,b) VALUES (NOW(), 'it''s fine'), (2, 'x');",
+            "COPY public.users (id, name) FROM stdin;\n1\tAnn\n\\.",
+            "-- insert into the cache values that we copy later"]
+check("...while ordinary rows, settings, escaped quotes and SQL comments are untouched",
+      all(_red468.scrub(k) == k for k in _keep468), saw=[k for k in _keep468 if _red468.scrub(k) != k])
+_big468 = "INSERT INTO t (id, api_key) VALUES " + ",".join(f"({i}, '{_v468[:20]}{i:04d}')" for i in range(3000)) + ";"
+_t0468 = _t468.process_time()
+_out468 = _red468.scrub(_big468)
+check("...and a 3,000-row INSERT is redacted row by row in bounded time",
+      _out468.count("<REDACTED>") == 3000 and _t468.process_time() - _t0468 < 5,
+      saw=(_out468.count("<REDACTED>"), round(_t468.process_time() - _t0468, 2)))
+# ---- 469_a_write_keeps_a_symlink_a_symlink.py
+# ------------------ an atomic write through a symlink keeps the link and updates its target
+# 🐛 [2026-10-07] (R147 acc4, 2026-10-07: dotfile managers and symlinked configuration) Measured:
+# `atomic_write_text` on `settings.json -> dotfiles/settings.json` left a regular file at
+# settings.json and the managed copy unchanged -- `AGENTS.md -> CLAUDE.md` and Stow-linked configs
+# lost their link on chamnan's first write.
+import importlib as _il469
+import os as _os469
+import tempfile as _tf469
+from pathlib import Path as _P469
+
+_ws469 = _il469.import_module("workspace")
+_d469 = _P469(_tf469.mkdtemp())
+(_d469 / "dotfiles").mkdir()
+(_d469 / "dotfiles" / "CLAUDE.md").write_text("old\n", encoding="utf-8")
+try:
+    _os469.symlink(_d469 / "dotfiles" / "CLAUDE.md", _d469 / "AGENTS.md")
+    _links469 = True
+except (OSError, NotImplementedError):
+    _links469 = False              # Windows without the symlink privilege: nothing to judge
+if _links469:
+    _ok469 = _ws469.atomic_write_text(_d469 / "AGENTS.md", "new\n")
+    check("a write to a symlinked file keeps the link",
+          _ok469 and (_d469 / "AGENTS.md").is_symlink(), saw=_ok469)
+    check("...and the file it points at gets the new content",
+          (_d469 / "dotfiles" / "CLAUDE.md").read_text(encoding="utf-8") == "new\n")
+    check("...and no staging file is left beside either",
+          not [p.name for p in list(_d469.iterdir()) + list((_d469 / "dotfiles").iterdir()) if p.name.endswith(".tmp")])
+(_d469 / "plain.md").write_text("a\n", encoding="utf-8")
+check("a write to an ordinary file still replaces it atomically",
+      _ws469.atomic_write_text(_d469 / "plain.md", "b\n") and (_d469 / "plain.md").read_text(encoding="utf-8") == "b\n"
+      and not (_d469 / "plain.md").is_symlink())
+
+# The other direction, and the reason the follow is bounded: a symlink COMMITTED inside a repository
+# pointing out of it (`.chamnan/STATE.md -> ~/.bashrc`) must not turn chamnan's write into a write to
+# that outside file. Inside a repository a link is followed only to a target in the same repository.
+_r469 = _P469(_tf469.mkdtemp())
+(_r469 / "repo" / ".git").mkdir(parents=True)
+(_r469 / "repo" / ".chamnan").mkdir()
+(_r469 / "outside.txt").write_text("user's own file\n", encoding="utf-8")
+(_r469 / "repo" / "CLAUDE.md").write_text("old\n", encoding="utf-8")
+try:
+    _os469.symlink(_r469 / "outside.txt", _r469 / "repo" / ".chamnan" / "STATE.md")
+    _os469.symlink(_r469 / "repo" / "CLAUDE.md", _r469 / "repo" / "AGENTS.md")
+    _links469b = True
+except (OSError, NotImplementedError):
+    _links469b = False
+if _links469b:
+    _ws469.atomic_write_text(_r469 / "repo" / ".chamnan" / "STATE.md", "state\n")
+    check("a link inside a repository pointing out of it is NOT written through",
+          (_r469 / "outside.txt").read_text(encoding="utf-8") == "user's own file\n",
+          saw=(_r469 / "outside.txt").read_text(encoding="utf-8"))
+    _ws469.atomic_write_text(_r469 / "repo" / "AGENTS.md", "new\n")
+    check("...while a link inside a repository to a file in the same repository is",
+          (_r469 / "repo" / "AGENTS.md").is_symlink()
+          and (_r469 / "repo" / "CLAUDE.md").read_text(encoding="utf-8") == "new\n")
 # ---- 46_a_clock_that_is_wrong_does_not_delete_the_newest_record.py
 # --------------------------------- one bad filename, and the guard protects exactly the wrong file
 # 🐛 [2026-09-10] `sessions.prune` had `ledger._ymd_to_ts`'s impossible-date guard and not its
@@ -52955,6 +53406,56 @@ _ses46.prune(_t_root46b, 30)
 check("...and an impossible calendar date still falls back to mtime rather than becoming a date",
       not _t_feb46.exists(), saw="2026-02-30 survived a 400-day-old mtime")
 _sh46.rmtree(_t_root46b, ignore_errors=True)
+# ---- 470_a_stale_lock_break_removes_only_the_lock_it_judged.py
+# ------------------ breaking a stale lock removes only the lock that was judged stale
+# 🐛 [2026-10-07] (R159 acc4, 2026-10-07: Borg's stale-lock cleanup deleted a live successor's lock)
+# Two waiters judge the same crashed lock dead. The first unlinks it and takes the lock; the second
+# then unlinked by PATH -- the first one's live lock -- and took it too. Replayed here without timing:
+# the successor's lock is put in place between the second waiter's judgement and its unlink.
+import importlib as _il470
+import os as _os470
+import tempfile as _tf470
+import time as _t470
+from pathlib import Path as _P470
+
+_ws470 = _il470.import_module("workspace")
+_d470 = _P470(_tf470.mkdtemp())
+_target470 = _d470 / "state.json"
+_lock470 = _P470(str(_target470) + ".lock")
+_lock470.write_text("999999\n", encoding="utf-8")                  # a crashed holder
+_old470 = _t470.time() - 5
+_os470.utime(_lock470, (_old470, _old470))
+_succ470 = f"{_os470.getpid()}\n"                                # a live holder, older format
+_real_state470 = _ws470._lock_holder_state
+_swapped470 = []
+
+
+def _judge_then_swap470(lock):
+    verdict = _real_state470(lock)                                   # judged on the crashed lock
+    if not _swapped470:
+        _swapped470.append(1)
+        _P470(lock).unlink()                                         # the other waiter breaks it…
+        _P470(lock).write_text(_succ470, encoding="utf-8")           # …and takes it
+    return verdict
+
+
+_ws470._lock_holder_state = _judge_then_swap470
+_saved_timeout470 = _ws470.LOCK_TIMEOUT
+_ws470.LOCK_TIMEOUT = 0.4
+try:
+    with _ws470.exclusive(_target470) as _held470:
+        _during470 = _lock470.read_text(encoding="utf-8") if _lock470.exists() else None
+finally:
+    _ws470._lock_holder_state = _real_state470
+    _ws470.LOCK_TIMEOUT = _saved_timeout470
+check("a waiter that judged a lock dead does not remove the successor's lock put there since",
+      _swapped470 and not _held470 and _during470 == _succ470, saw=(_held470, _during470))
+# And the ordinary case still works: a crashed holder's lock alone is broken and taken.
+_lock470.write_text("999999\n", encoding="utf-8")
+_os470.utime(_lock470, (_old470, _old470))
+with _ws470.exclusive(_target470) as _held470b:
+    pass
+check("...while a crashed holder's lock, unchanged, is still broken and taken", _held470b)
 # ---- 47_the_state_cut_marker_names_what_is_missing.py
 # ------------------------------------- a number is not a reason to go and read; a name is
 # 🐛 [2026-09-10] When `STATE.md` overran its budget the marker said only "…9.3k more — read
