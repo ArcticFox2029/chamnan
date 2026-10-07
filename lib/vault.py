@@ -30,7 +30,6 @@ READERS = frozenset({
 })
 # `git` prints file contents only through these.
 GIT_READERS = frozenset({"diff", "show", "log", "blame", "grep", "cat-file"})
-_SEGMENTS = re.compile(r"\|\||&&|[|;&\n]")
 
 
 # 🐛 [2026-10-07] (owner, 2026-10-07: "ก็มันทำงานได้ไหมหละ ถ้าต้องเรียกใช้ข้อมูลในการทำงาน เช่น ssh")
@@ -107,12 +106,86 @@ def _words(segment):
         return segment.split()
 
 
+# 🐛 [2026-10-07] (R86 acc4, 2026-10-07: measure a rule set on a foreign population) Run over every
+# Bash, Read and Grep call in this project's transcripts -- 18,354 real calls -- the guard refused 10,
+# and 9 were false: `grep -n "\.env" lib/tree.py` had its PATTERN read as a file, and a line inside
+# a `python3 - <<'EOF'` body was judged as a command. These verbs take a program or pattern before
+# their files, and a heredoc body is data. Check 465.
+_PROGRAM_FIRST = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "sed", "awk", "gawk", "jq", "yq"})
+# Options whose next word is a value, not a file. `-e`/`-f` and their long forms also mean the
+# program was given that way, so every positional after them is a file.
+_TAKES_VALUE = frozenset({"-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "-g", "-t", "-T", "-M", "-j",
+                          "-v", "-F", "--regexp", "--file", "--glob", "--type", "--max-count",
+                          "--context", "--after-context", "--before-context", "--expression"})
+_PROGRAM_GIVEN = frozenset({"-e", "-f", "--regexp", "--file", "--expression"})
+_HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n(.*?)(?:\n[ \t]*\2[ \t]*(?=\n|$)|\Z)",
+                      re.S)
+
+
+def _segments(text):
+    """The command split at `|`, `||`, `&&`, `;`, `&` and newlines that are NOT inside quotes.
+
+    A grep pattern such as `"a\\|b"` used to be cut at its `|`, and the half after it judged as a
+    command of its own (check 465)."""
+    out, cur, quote, i = [], [], None, 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            cur.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                cur.append(text[i + 1])
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            cur.append(ch)
+        elif ch == "\\" and i + 1 < len(text):
+            cur.append(ch + text[i + 1])
+            i += 1
+        elif ch in "|;&\n":
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return out
+
+
+def _without_heredoc_bodies(text):
+    return _HEREDOC.sub(lambda m: m.group(0)[:m.start(3) - m.start(0)], text)
+
+
+def _file_args(verb, args):
+    """The arguments a command takes as FILES: for a pattern/program verb, not its first positional."""
+    if verb not in _PROGRAM_FIRST:
+        return args
+    files, program_seen, skip = [], False, False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a in _TAKES_VALUE:
+            program_seen = program_seen or a in _PROGRAM_GIVEN
+            skip = True
+            continue
+        if a.startswith("-"):
+            program_seen = program_seen or a.split("=", 1)[0] in _PROGRAM_GIVEN
+            continue
+        if not program_seen:
+            program_seen = True
+            continue
+        files.append(a)
+    return files
+
+
 def bash_reads(command, root=None):
     """The credential file a shell command would print, or None."""
     text = str(command or "")
     if not text.strip():
         return None
-    for segment in _SEGMENTS.split(text):
+    for segment in _segments(_without_heredoc_bodies(text)):
         words = _words(segment)
         if not words:
             continue
@@ -138,6 +211,8 @@ def bash_reads(command, root=None):
             sub = next((a for a in args if not a.startswith("-")), "")
             if sub not in GIT_READERS:
                 continue
+            if sub == "grep":
+                verb, args = "grep", args[args.index(sub) + 1:]
         elif verb == "openssl" and (args[:1] and args[0] in OPENSSL_PUBLIC):
             continue
         elif verb not in READERS:
@@ -145,7 +220,7 @@ def bash_reads(command, root=None):
         elif verb in _SEARCHERS and any(a in _NO_CONTENT_FLAGS or re.fullmatch(r"-[A-Za-z]*[clLq][A-Za-z]*", a)
                                         and not a.startswith("--") for a in args):
             continue
-        for a in args:
+        for a in _file_args(verb, args):
             hit = _is_credential(a, root)
             if hit:
                 return hit

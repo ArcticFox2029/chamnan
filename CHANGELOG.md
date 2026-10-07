@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The read guard no longer mistakes a search pattern for a file.** Measured over 18,354 real
+  tool calls, it refused 10 and 9 were ordinary work: `grep -n "\.env" lib/tree.py` had its
+  pattern taken for a file, a line of a heredoc script was judged as a command, and a `|` inside a
+  quoted pattern split it in two. Now 1 of 18,363 is refused, and it is a real read of a key.
 - **A failed command is remembered by what actually went wrong.** The failure log kept only the
   first line of the host's error, which is `Exit code 1`, so a missing module, a syntax error and a
   wrong path were one entry — 216 of 265 entries in a real log said nothing else. It now keeps the

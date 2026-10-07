@@ -52840,7 +52840,10 @@ for _ in range(400):
     _verb = _r461.choice(_readers461 if _reads else _others461)
     _secret = _r461.random() < 0.5
     _file = _r461.choice(_secret461 if _secret else _plain461)
-    _cmd = f"{_verb} {_r461.choice(['', '-n ', '-5 '])}{_file}{_r461.choice(['', ' | wc -l', ' > /dev/null'])}"
+    # A pattern or program verb (grep, sed, awk, jq …) takes its FIRST positional as the pattern, so
+    # it is given one: `grep .env` alone reads stdin, not the file (check 465).
+    _prog = "x " if _verb in _vault461._PROGRAM_FIRST else ""
+    _cmd = f"{_verb} {_r461.choice(['', '-n ', '-5 '])}{_prog}{_file}{_r461.choice(['', ' | wc -l', ' > /dev/null'])}"
     if _verb == "wc" and _secret:
         continue          # `wc` counts; it is not in READERS and is not a read
     _want = _reads and _secret
