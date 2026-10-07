@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A credential in a SQL dump is redacted.** A dump keeps a secret by position: a settings row
+  `('stripe_secret', '…')`, an `INSERT` whose column list names `api_key`, or a `COPY … FROM stdin`
+  block. All three printed the value whole. Each value is now paired with its column or the name
+  beside it; ordinary rows, settings such as `site_name`, and SQL comments are untouched.
+
 - **Session cookies are redacted.** A cookie pasted as the browser's "copy as cURL", `curl -b`, a
   `Set-Cookie:` header or a HAR export printed whole, and a session cookie lets anyone holding it
   act as its owner. Token-shaped cookie values are replaced now; `theme=dark`, `Path=/` and an

@@ -1230,6 +1230,104 @@ def _cookie_value_shaped(value):
             and not _is_only_a_template(value))
 
 
+
+# 🐛 [2026-10-07] (R121 acc4, 2026-10-07: credentials in committed database dumps and seeds) A SQL
+# dump keeps a credential where no rule above looks: by POSITION. `INSERT INTO users (id, api_key)
+# VALUES (1, '…')` names the column in one list and puts the value in another; a settings table
+# stores `('stripe_secret', '…')` as two strings side by side; `COPY t (…, access_token) FROM stdin`
+# writes tab-separated rows. All three printed whole. A small literal reader pairs each value with
+# its column, or with the string before it, and redacts only a value that reads like a credential
+# under a name that is a secret word and not a mechanism. Bounded: one pass, at most _SQL_SCAN
+# characters per statement. Check 468.
+_SQL_INSERT = _lazy(lambda: re.compile(
+    r"(?is)\binsert\s+(?:ignore\s+)?into\s+[`\"\[\]\w.]{1,128}\s*(?:\((?P<cols>[^()]{1,4000})\))?\s*values\s*"))
+_SQL_COPY = _lazy(lambda: re.compile(
+    r"(?im)^copy\s+[\w.\"]{1,128}\s*\((?P<cols>[^()]{1,4000})\)\s+from\s+stdin[^\n]*\n"))
+_SQL_SCAN = 200_000
+
+
+def _sql_columns(cols):
+    return [c.strip().strip('`"[] ') for c in (cols or "").split(",")] if cols else []
+
+
+def _sql_secret_at(name, value):
+    return (bool(name) and value != PLACEHOLDER and _SECRET_WORD_ANYWHERE.search(name) is not None
+            and not _names_a_mechanism(name, value) and _reads_like_a_credential(value))
+
+
+def _sql_tuples(text, pos, limit):
+    """Yield each VALUES tuple from `pos` as a list of (start, end, text-or-None) for its values."""
+    n = len(text)
+    while pos < min(n, limit):
+        while pos < n and text[pos] in " \t\r\n,":
+            pos += 1
+        if pos >= n or text[pos] != "(":
+            return
+        pos += 1
+        values = []
+        while pos < n:
+            while pos < n and text[pos] in " \t\r\n":
+                pos += 1
+            if pos < n and text[pos] in "'\"":
+                q, start = text[pos], pos + 1
+                pos += 1
+                while pos < n:
+                    if text[pos] == "\\":
+                        pos += 2
+                        continue
+                    if text[pos] == q:
+                        if pos + 1 < n and text[pos + 1] == q:
+                            pos += 2
+                            continue
+                        break
+                    pos += 1
+                values.append((start, pos, text[start:pos]))
+                pos += 1
+            else:
+                depth = 0
+                while pos < n and (depth or text[pos] not in ",)"):
+                    depth += {"(": 1, ")": -1}.get(text[pos], 0)
+                    pos += 1
+                values.append((pos, pos, None))
+            while pos < n and text[pos] in " \t\r\n":
+                pos += 1
+            if pos >= n or text[pos] == ")":
+                pos += 1
+                break
+            pos += 1                      # the comma between values
+        yield values
+
+
+def _scrub_sql_dump(text):
+    spans = []
+    for m in _SQL_INSERT.finditer(text):
+        names = _sql_columns(m.group("cols"))
+        for values in _sql_tuples(text, m.end(), m.end() + _SQL_SCAN):
+            for i, (a, b, v) in enumerate(values):
+                if v is None:
+                    continue
+                prev = values[i - 1][2] if i else None
+                if ((i < len(names) and _sql_secret_at(names[i], v))
+                        or (prev is not None and len(prev) <= 64 and _sql_secret_at(prev, v))):
+                    spans.append((a, b))
+    for m in _SQL_COPY.finditer(text):
+        names = _sql_columns(m.group("cols"))
+        pos, end = m.end(), min(len(text), m.end() + _SQL_SCAN)
+        while pos < end:
+            nl = text.find("\n", pos)
+            nl = len(text) if nl < 0 else nl
+            if text[pos:nl].strip() == "\\.":
+                break
+            col = pos
+            for i, v in enumerate(text[pos:nl].split("\t")):
+                if i < len(names) and _sql_secret_at(names[i], v):
+                    spans.append((col, col + len(v)))
+                col += len(v) + 1
+            pos = nl + 1
+    for a, b in sorted(spans, reverse=True):
+        text = text[:a] + PLACEHOLDER + text[b:]
+    return text
+
 def _scrub_cookie_jar(jar):
     return _COOKIE_PAIR.sub(
         lambda m: f"{m.group('k')}={PLACEHOLDER}" if _cookie_value_shaped(m.group("v")) else m.group(0), jar)
@@ -3402,6 +3500,8 @@ def scrub(text, windowed=True, *, _unmask=True):
         if not _SECRET_WORD_ANYWHERE.search(m.group("nameval"))
         or _names_a_mechanism(m.group("nameval"), m.group("val"))
         else f"{m.group('head')}{PLACEHOLDER}\"", text)
+    if re.search(r"(?i)\binsert\s+(?:ignore\s+)?into\b|^copy\s", text, re.M):
+        text = _scrub_sql_dump(text)
     if "ookie" in text or "OOKIE" in text or "-b " in text:
         text = COOKIE_STRING.sub(
             lambda m: m.group(0)[:m.start("jar") - m.start(0)] + _scrub_cookie_jar(m.group("jar")), text)
