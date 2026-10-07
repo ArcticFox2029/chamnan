@@ -107,8 +107,10 @@ PLACEHOLDER = "<REDACTED>"
 # `sk-proj-abcd1234`, `hunter2-hunter2` and `abc-def-ghi-jkl-mno` out: a credential is not two or
 # three all-alphabetic English words joined by hyphens. Checked against every word the one-word
 # version accepted -- same answer on all of them.
+# 🐛 [2026-10-07] (R16 acc4, 2026-10-07) `}` added to the trailing closers: a word ending a JSON string
+# (`auth blocks"}`) is still one word. Check 455.
 _PLAIN_WORD = _lazy(lambda: re.compile(
-    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]\u2026\"'`]*$"))
+    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]}\u2026\"'`]*$"))
 
 
 def _is_a_default_credential(value):
@@ -251,6 +253,19 @@ def _structure_the_value_did_not_open(match, value):
                   if ch == q and i >= 1 and value[i - 1] != "\\"), -1)
         if k >= 1:
             return scrub(value[k:])
+    # 🐛 [2026-10-07] (R16 acc4, 2026-10-07) The same, for a key further INTO a quoted string:
+    # `{"note": "the password <value>"}` lost the closing `"` with the value, because the branch
+    # above looks only at the character right before the key. An odd count of unescaped quotes on
+    # the line before the key means the key sits inside a string, and that quote's first unescaped
+    # copy in the value closes it -- unless the key itself holds that quote, as above. Check 455.
+    for q in "\"'":
+        if (len(re.findall(r"(?<!\\)" + q, before_key)) % 2 == 1
+                and q not in (match.group(1) or "")):
+            k = next((i for i, ch in enumerate(value)
+                      if ch == q and i >= 1 and value[i - 1] != "\\"), -1)
+            if k >= 1:
+                return scrub(value[k:])
+            break
     # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) A JSON comma is structure, not part of the value:
     # `"total_tokens": 88123, "model": "x"` came back as `<REDACTED> "model": "x"`. Every rule that
     # reaches this helper takes a bare `\S` run, so the comma rides along; it is given back here,

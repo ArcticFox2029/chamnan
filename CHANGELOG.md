@@ -36,6 +36,11 @@ already reports the last released number while running newer code.
   for "card number" or the common abbreviation for citizen ID printed in full; it is redacted
   now, and a number that fails the checksum still is not.
 
+- **A sentence inside a JSON string is no longer mistaken for a value.** A commit subject stored
+  in a JSON log, ending in words such as "auth blocks", came back with its last word redacted and
+  its closing quote gone, so the line was no longer valid JSON. A real value in the same position
+  is still redacted, and now keeps the quote that closes its string.
+
 ## What's new in 1.35.1
 
 _A patch that closes the gaps 1.35.0 listed and a few found since: credentials held where the name and the value sit apart, files that are credentials by their name alone, and text that reached the model without a reviewer seeing it._
