@@ -43,6 +43,43 @@ PUBLIC_SUFFIXES = (".pub", ".crt", ".cer")
 OPENSSL_PUBLIC = frozenset({"x509", "s_client", "verify", "crl", "version", "ciphers", "dgst"})
 
 
+# 🐛 [2026-10-07] (R52 acc4, 2026-10-07) Package-registry configs hold a token beside settings the
+# work needs -- the registry URL, a scope, a proxy, a mirror. Measured: `cat ~/.npmrc`, `.pypirc`,
+# `pip.conf`, `.yarnrc.yml`, `.docker/config.json` and `.m2/settings.xml` all reached the session
+# with the token in clear, while `chamnan-peek` shows each with the token replaced. So such a file
+# is refused only when it really carries a value the scrubber would remove, and the refusal points
+# at peek: the settings stay readable, the token does not travel. A token-free `.npmrc` (just a
+# `registry=` line) is read as before. Check 463.
+REGISTRY_CONFIGS = frozenset({".npmrc", ".pypirc", "pip.conf", "pip.ini", ".yarnrc", ".yarnrc.yml"})
+# The same idea for files whose name only means a registry config inside one directory.
+REGISTRY_CONFIGS_IN = frozenset({(".docker", "config.json"), (".m2", "settings.xml"),
+                                 ("pypoetry", "auth.toml"), (".bundle", "config")})
+_REGISTRY_READ_CAP = 256 * 1024
+
+
+def _is_registry_config(path):
+    return (path.name.lower() in REGISTRY_CONFIGS
+            or (path.parent.name.lower(), path.name.lower()) in REGISTRY_CONFIGS_IN)
+
+
+def _registry_carries_a_secret(path):
+    try:
+        if not path.is_file() or path.stat().st_size > _REGISTRY_READ_CAP:
+            return False
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return False
+    return redact.scrub(text) != text
+
+
+# 🐛 [2026-10-07] (R60 benchmark, 2026-10-07) `grep -c '^API_TOKEN=' .env` -- asking whether a
+# variable is SET -- was refused, measured in a scratch run: a count, a file name or an exit status is
+# all those flags print, never a line of the file. Only the searchers get this; `cat -c` is not a thing.
+_SEARCHERS = frozenset({"grep", "egrep", "fgrep", "rg", "ag"})
+_NO_CONTENT_FLAGS = frozenset({"--count", "--files-with-matches", "--files-without-match", "--quiet",
+                               "--silent"})
+
+
 def _is_credential(token, root):
     token = token.strip().strip("'\"")
     if not token or token.startswith("-") or "=" in token and not token.startswith((".", "/")):
@@ -54,9 +91,13 @@ def _is_credential(token, root):
     if not path.is_absolute() and root is not None:
         path = Path(root) / path
     try:
-        return token if redact.is_never_opened(path) else None
+        if redact.is_never_opened(path):
+            return token
+        if _is_registry_config(path) and _registry_carries_a_secret(path):
+            return token
     except (OSError, ValueError):
         return None
+    return None
 
 
 def _words(segment):
@@ -101,6 +142,9 @@ def bash_reads(command, root=None):
             continue
         elif verb not in READERS:
             continue
+        elif verb in _SEARCHERS and any(a in _NO_CONTENT_FLAGS or re.fullmatch(r"-[A-Za-z]*[clLq][A-Za-z]*", a)
+                                        and not a.startswith("--") for a in args):
+            continue
         for a in args:
             hit = _is_credential(a, root)
             if hit:
@@ -123,6 +167,18 @@ def tool_reads(tool, tool_input, root=None):
 def refusal(name):
     """The reason handed back to the model when a read is refused."""
     import mdblock
-    return (f"chamnan: `{mdblock.as_quoted(Path(name).name, 80)}` holds credentials or a key, so it is "
-            f"not read into the session. Its variable NAMES, never values, are listed under "
-            f"`## Configuration` in `.chamnan/MAP.md`. If a value is really needed, ask the user.")
+    shown = mdblock.as_quoted(Path(name).name, 80)
+    if _is_registry_config(Path(str(name).strip("'\""))):
+        return (f"chamnan: `{shown}` carries a registry token, so it is not read into the session raw. "
+                f"`chamnan-peek {mdblock.as_quoted(str(name), 200)}` shows the same file with the token "
+                f"replaced -- registry URLs, scopes and settings stay readable. To USE the token, run the "
+                f"tool that reads this file (npm, pip, twine, docker, mvn); it reads the file itself.")
+    # 🎯 [2026-10-07] (R60 acc4, 2026-10-07: use a secret without seeing it) A refusal that only says
+    # "ask the user" stops work that never needed the value in the session: a command needs the
+    # value, the model does not. So the reason says how to hand the file to the program that uses
+    # it -- the shell or the tool reads it, the command line carries `$NAME`, and nothing prints it.
+    return (f"chamnan: `{shown}` holds credentials or a key, so it is not read into the session. "
+            f"Its variable NAMES, never values, are listed under `## Configuration` in "
+            f"`.chamnan/MAP.md`. To USE a value, let the program read the file itself and never print "
+            f"it: `set -a; . ./.env; set +a; <command using $NAME>`, a tool's `--env-file`, or "
+            f"`ssh -i <key>`. If you need to know a value itself, ask the user.")

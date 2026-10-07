@@ -979,6 +979,31 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
     # an `@` because `@` is not in its class — so the old greedy-to-the-last-`@` behaviour, which
     # `amqp://svc:a@b@rabbit/vhost` depends on, is unchanged for everything else.
     r":((?:[A-Za-z0-9+/=]{20,}|[^\s/]{3,}))@(?=[^\s/@]+)"))
+# 🐛 [2026-10-07] (R52 acc4, 2026-10-07) A token used as the WHOLE userinfo, with no colon --
+# `https://<token>@github.com/` in a `[url] insteadOf` line of `.gitconfig`, a clone command, a CI
+# remote -- matched nothing above, which needs `:password@`. A vendor-prefixed token was still caught
+# by its prefix; a prefix-less one (GitHub's older 40-hex tokens, a random base62 token) went through
+# whole. A plain username stays: `alice@`, `git@`, `deploy-bot@`, `user.name@`, and an organisation
+# name of any length, because the value must be one unbroken run of letters and digits that mixes
+# upper case, lower case and digits, or is 32 or more hex digits. Check 463.
+TOKEN_USERINFO_URL = _lazy(lambda: re.compile(
+    r"(?<![A-Za-z0-9])([a-zA-Z][a-zA-Z0-9+.-]{0,31}://)([A-Za-z0-9]{20,})@(?=[A-Za-z0-9])"))
+
+# 🐛 [2026-10-07] (R52 acc4, 2026-10-07) Bundler keeps a private gem server's login as
+# `BUNDLE_<HOST>: "user:password"` -- in `.bundle/config`, or as an environment variable -- with the
+# host's dots written `__`. No secret word is in the key, so nothing above fired and the password
+# printed. Only a key carrying a `__` host part is judged (`BUNDLE_PATH` and the other settings have
+# none), and a value whose second half begins `//` is a URL (`BUNDLE_MIRROR__...`), not a login.
+BUNDLER_HOST_CREDENTIAL = _lazy(lambda: re.compile(
+    r"\b(BUNDLE_[A-Z0-9_]*?__[A-Z0-9_]+[ \t]*[:=][ \t]*[\"']?[^:\s\"']+:)(?!//)([^\s\"']+)"))
+
+def _token_shaped_userinfo(value):
+    if re.fullmatch(r"[0-9a-fA-F]{32,}", value):
+        return True
+    return (any(c.isupper() for c in value) and any(c.islower() for c in value)
+            and sum(c.isdigit() for c in value) >= 2)
+
+
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 # 🐛 [2026-09-06] What sits immediately after the separator is not always the value. Three shapes
 # put something else there, and the rules below captured THAT and stopped:
@@ -1256,13 +1281,17 @@ BLOCKED_SUFFIXES = (
 # not refused. Two members of a set were fixed and the identical ones beside them were not, which
 # is this project's most repeated defect and the reason the entry is now the STEM.
 #
+# 🐛 [2026-10-07] (R52 acc4, 2026-10-07) `.git-credentials` -- git's `store` helper file, one
+# `https://user:token@host` per line and nothing else -- was opened by peek and by the agent's own
+# Read. Its whole content is the secret, the property this list is for. Check 463.
+#
 # `credentials` is already handled that way and shows why it is safe: `_is_blocked_name` blocks a
 # bare stem only when the name does not end in a SOURCE extension, so `secrets.toml`, `.json`,
 # `.ini`, `.yaml`, `.yml` and a bare `secrets` are all refused while `secrets.py` and `secrets.ts`
 # stay ordinary modules. Only the leaf name is judged, so a directory called `secrets/` is
 # untouched and the files inside it are each judged on their own.
 BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc", "_netrc",
-                 ".pgpass", "pgpass.conf",
+                 ".pgpass", "pgpass.conf", ".git-credentials",
                  "credentials", "secrets")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
@@ -3292,6 +3321,11 @@ def scrub(text, windowed=True, *, _unmask=True):
     text = CREDENTIALED_URL.sub(
         lambda m: m.group(0) if _is_only_a_template(m.group(2))
         else f"{m.group(1)}:{PLACEHOLDER}@", text)
+    if "BUNDLE_" in text:
+        text = BUNDLER_HOST_CREDENTIAL.sub(
+            lambda m: m.group(0) if _is_only_a_template(m.group(2)) else f"{m.group(1)}{PLACEHOLDER}", text)
+    text = TOKEN_USERINFO_URL.sub(
+        lambda m: f"{m.group(1)}{PLACEHOLDER}@" if _token_shaped_userinfo(m.group(2)) else m.group(0), text)
     # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
     # and running them first means a value they take is not left for a looser rule to half-capture.
     if _may_name_a_secret(text):

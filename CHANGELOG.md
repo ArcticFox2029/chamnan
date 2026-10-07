@@ -21,6 +21,21 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Package-registry configs no longer hand their token to the agent.** A `.npmrc`, `.pypirc`,
+  `pip.conf`, `.yarnrc.yml`, `.docker/config.json`, `.m2/settings.xml`, Poetry `auth.toml` or
+  `.bundle/config` that really carries a token is refused to the agent's own Read, Grep and `cat`,
+  and the refusal points at `chamnan-peek`, which shows the same file with the token replaced, so
+  the registry URLs and settings are still there to read. One with no token in it is read as
+  before. `.git-credentials`, whose whole content is logins, is now refused outright like `.netrc`.
+- **A token used as a URL's whole login is redacted.** `https://<token>@github.com/`, the form a
+  `.gitconfig` rewrite rule or a clone command carries, printed whole when the token had no vendor
+  prefix. A plain username in the same place (`alice@`, `git@`, `deploy-bot@`) is left alone.
+  Bundler's `BUNDLE_<HOST>: "user:password"` login is redacted too.
+- **A refused secret file says how to use it without reading it.** The refusal now shows how to
+  let the program read the file itself — `set -a; . ./.env; set +a` and `$NAME` in the command, a
+  tool's `--env-file`, or `ssh -i <key>` — so work that needs the value goes on without the value
+  entering the session.
+
 - **A key split across string literals no longer rewrites the rest of the file.** Joining
   adjacent literals, so a provider key a formatter broke in two is still caught, was applied to
   every concatenation in the text once one key was found; the map then showed code that did not
