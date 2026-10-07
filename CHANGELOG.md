@@ -44,6 +44,10 @@ already reports the last released number while running newer code.
   extra headers as JSON written inside an environment variable, with every quote escaped; a key
   there printed in full while the tokens beside it were redacted. A variable reference in the
   same place is left as written.
+- **chamnan-peek says when a file is only a Git LFS pointer.** A data file stored in LFS and not
+  pulled is checked out as a three-line pointer; peek read it as the data itself (a one-column
+  CSV of pointer metadata). It now says the file is not checked out and how large the real one is,
+  as the map already did.
 
 ## What's new in 1.35.1
 

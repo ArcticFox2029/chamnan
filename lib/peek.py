@@ -886,6 +886,24 @@ def _peek(path, find=None, budget=DEFAULT_BUDGET):
     if _is_env_file(path.name):
         return "\n".join(header + ["", _env_names(path)])
 
+    # 🐛 [2026-10-07] (R66 acc4, 2026-10-07) A file in Git LFS is checked out without `git lfs pull`
+    # as a three-line pointer. The map already says so; peek read the pointer as the file -- a
+    # one-column CSV of pointer metadata. Same detector as the map, so the two cannot disagree.
+    # Check 457.
+    if size <= 1024:
+        try:
+            with open(path, "rb") as fh:
+                head = fh.read(1024)
+        except OSError:
+            head = b""
+        if head.startswith(b"version https://git-lfs.github.com/spec/v1"):
+            import mapper  # lazy: only a pointer-shaped file pays for it
+            real = mapper.lfs_pointer_size(head.decode("utf-8", "replace"))
+            if real is not None:
+                return "\n".join(header + ["", f"Not checked out: a git-lfs pointer to {_human(real)} "
+                                                 f"of content. `git lfs pull` fetches the real file.",
+                                            "", "_[the pointer is all that is on disk]_"])
+
     # An extension is a claim, not a fact. Handed binary data named .csv, the csv reader parses it
     # perfectly happily -- errors="replace" guarantees it never raises -- and the result was a
     # column list of raw control characters going straight into the session. Sniff the bytes first
