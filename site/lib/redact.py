@@ -1218,10 +1218,10 @@ COOKIE_STRING = _lazy(lambda: re.compile(
     r"(?i)(?:\b(?:set-)?cookie[ \t]*:[ \t]*|(?<![\w-])(?:-b|--cookie)[ \t]+['\"]?"
     r"|\"name\"\s*:\s*\"(?:set-)?cookie\"\s*,\s*\"value\"\s*:\s*\")"
     r"(?P<jar>[^'\"\r\n]{3,4000})"))
-_COOKIE_PAIR = re.compile(r"(?P<k>[!#$%&*+.^_`|~0-9A-Za-z-]+)=(?P<v>[^;,\s'\"]+)")
+_COOKIE_PAIR = _lazy(lambda: re.compile(r"(?P<k>[!#$%&*+.^_`|~0-9A-Za-z-]+)=(?P<v>[^;,\s'\"]+)"))
 # A HAR `cookies` entry names the cookie in its own field; these names are session or login cookies.
-_SESSION_COOKIE_NAME = re.compile(
-    r"(?i)sess|^sid$|[_.-]sid$|^sid[_.-]|jsessionid|phpsessid|auth|jwt|csrf|xsrf|remember|login")
+_SESSION_COOKIE_NAME = _lazy(lambda: re.compile(
+    r"(?i)sess|^sid$|[_.-]sid$|^sid[_.-]|jsessionid|phpsessid|auth|jwt|csrf|xsrf|remember|login"))
 
 
 def _cookie_value_shaped(value):

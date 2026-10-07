@@ -1153,8 +1153,16 @@ def _int_or_text(digits):
 
 
 def loads_repository_json(text):
-    """`json.loads` for a file from the repository, which may hold a number of any length."""
-    return json.loads(text, parse_int=_int_or_text)
+    """`json.loads` for a file from the repository, which may hold a number of any length.
+
+    A document nested past the recursion limit raises RecursionError, which a caller catching only
+    JSONDecodeError would miss; it is reported as what it is to the caller -- not a document this
+    can read -- by raising JSONDecodeError instead.
+    """
+    try:
+        return json.loads(text, parse_int=_int_or_text)
+    except RecursionError:
+        raise json.JSONDecodeError("nested past the recursion limit", str(text)[:80], 0) from None
 
 
 def append_jsonl(root, rel, row, keep):
