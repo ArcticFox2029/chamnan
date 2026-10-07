@@ -995,7 +995,7 @@ TOKEN_USERINFO_URL = _lazy(lambda: re.compile(
 # printed. Only a key carrying a `__` host part is judged (`BUNDLE_PATH` and the other settings have
 # none), and a value whose second half begins `//` is a URL (`BUNDLE_MIRROR__...`), not a login.
 BUNDLER_HOST_CREDENTIAL = _lazy(lambda: re.compile(
-    r"\b(BUNDLE_[A-Z0-9_]*?__[A-Z0-9_]+[ \t]*[:=][ \t]*[\"']?[^:\s\"']+:)(?!//)([^\s\"']+)"))
+    r"\b(BUNDLE_[A-Z0-9_]*?__[A-Z0-9_]+[ \t]*" + _KV_SEP + r"[ \t]*[\"']?[^:\s\"']+:)(?!//)([^\s\"']+)"))
 
 def _token_shaped_userinfo(value):
     if re.fullmatch(r"[0-9a-fA-F]{32,}", value):
