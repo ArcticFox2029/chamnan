@@ -21,6 +21,18 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Session cookies are redacted.** A cookie pasted as the browser's "copy as cURL", `curl -b`, a
+  `Set-Cookie:` header or a HAR export printed whole, and a session cookie lets anyone holding it
+  act as its owner. Token-shaped cookie values are replaced now; `theme=dark`, `Path=/` and an
+  analytics id stay readable.
+- **A credential file reached through a symlink is refused like the file itself.** A kubeconfig
+  behind a symlinked directory, or a link to it under another name, was opened and its token shown.
+- **A quoted pattern ending in `KEY=` is left alone.** `grep -c '^API_TOKEN=' .env` lost everything
+  after the `=`, the closing quote having been read as the start of a secret.
+- **A JSON number longer than 4,300 digits no longer hides a file's contents on Python 3.11+.**
+  Python now refuses to convert such a number, and a `package.json` holding one lost all its
+  commands. The number is kept as text and the rest of the file is read as before.
+
 - **The read guard no longer mistakes a search pattern for a file.** Measured over 18,354 real
   tool calls, it refused 10 and 9 were ordinary work: `grep -n "\.env" lib/tree.py` had its
   pattern taken for a file, a line of a heredoc script was judged as a command, and a `|` inside a

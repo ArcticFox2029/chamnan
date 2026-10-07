@@ -218,7 +218,7 @@ def names(text, manifest):
     lower = manifest.lower().rsplit("/", 1)[-1]
     if lower.endswith(".json"):
         try:
-            data = json.loads(text)
+            data = ws.loads_repository_json(text)
         except (ValueError, RecursionError):
             return set()
         if not isinstance(data, dict):

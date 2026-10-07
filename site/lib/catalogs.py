@@ -486,7 +486,7 @@ def scan_routes(root, files):
         base = _spec_base(text)
         if path.suffix == ".json":
             try:
-                doc = json.loads(text)
+                doc = ws.loads_repository_json(text)
                 for p, ops in (doc.get("paths") or {}).items():
                     for meth in ops:
                         if meth.lower() in ("get", "post", "put", "patch", "delete"):
@@ -831,7 +831,7 @@ def scan_commands(root):
     text = _read_root_file(root, "package.json")
     if text is not None:
         try:
-            data = json.loads(text)
+            data = ws.loads_repository_json(text)
         except (ValueError, RecursionError):
             data = None
         scripts = data.get("scripts") if isinstance(data, dict) else None

@@ -1138,6 +1138,25 @@ def jsonl_lines(text, keepends=False):
     return [p + "\n" for p in parts] if keepends else parts
 
 
+# 🐛 [2026-10-07] (R101 acc5, 2026-10-07: a Python security release changed a default) Since
+# Python 3.11 (and 3.10.7, 3.9.14, 3.8.14), converting an integer of more than 4,300 digits raises
+# a plain ValueError, so `json.loads` on a JSON file holding one fails -- not with JSONDecodeError,
+# which is what most callers catch. Measured on 3.12: a package.json with one such number lost all
+# its commands (`npm test`, `npm run build` -> nothing) while 3.9 listed both. Repository files are
+# parsed through this instead: a number too long to convert is kept as its text, which no caller
+# uses as a number, and nothing pays the quadratic conversion the limit exists to stop. Check 467.
+_MAX_INT_DIGITS = 4000
+
+
+def _int_or_text(digits):
+    return int(digits) if len(digits) <= _MAX_INT_DIGITS else digits
+
+
+def loads_repository_json(text):
+    """`json.loads` for a file from the repository, which may hold a number of any length."""
+    return json.loads(text, parse_int=_int_or_text)
+
+
 def append_jsonl(root, rel, row, keep):
     """Append one record to a workspace `.jsonl` and trim it to the newest `keep`. Never raises.
 

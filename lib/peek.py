@@ -29,6 +29,7 @@ from pathlib import Path
 
 import mapper
 import redact
+import workspace as ws
 import tokens
 import tree
 DEFAULT_BUDGET = 400           # tokens of output; the whole point is to stay small
@@ -285,7 +286,7 @@ def _shape(value, depth=0):
 
 def peek_json(path, find=None):
     try:
-        data = json.loads(path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace"))
+        data = ws.loads_repository_json(path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace"))
     # RecursionError belongs beside MemoryError here: both mean the document is too much for the
     # parser rather than malformed, and both should degrade to the text view instead of raising out
     # of a tool whose entire purpose is reading files that are too big to read.
@@ -322,7 +323,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
                 total += 1
                 if len(rows) < sample:
                     try:
-                        rows.append(json.loads(line))
+                        rows.append(ws.loads_repository_json(line))
                     except (json.JSONDecodeError, RecursionError):
                         bad += 1
                 if find and len(hits) < HIT_CAP and find.lower() in line.lower():

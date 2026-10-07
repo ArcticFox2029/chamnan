@@ -1717,7 +1717,7 @@ def _notebook_source(source):
     than another language's code read as Python.
     """
     try:
-        nb = json.loads(source)
+        nb = ws.loads_repository_json(source)
     except (ValueError, RecursionError):
         return ""
     if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
