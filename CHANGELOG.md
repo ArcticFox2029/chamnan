@@ -40,6 +40,10 @@ already reports the last released number while running newer code.
   in a JSON log, ending in words such as "auth blocks", came back with its last word redacted and
   its closing quote gone, so the line was no longer valid JSON. A real value in the same position
   is still redacted, and now keeps the quote that closes its string.
+- **A secret inside JSON carried as a string is redacted.** Agent tool-server configurations pass
+  extra headers as JSON written inside an environment variable, with every quote escaped; a key
+  there printed in full while the tokens beside it were redacted. A variable reference in the
+  same place is left as written.
 
 ## What's new in 1.35.1
 

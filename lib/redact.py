@@ -3466,6 +3466,7 @@ def scrub(text, windowed=True, *, _unmask=True):
     text = _redact_key_encodings(text)
     text = _redact_kubeconfig_users(text)
     text = _redact_api_client_auth(text)
+    text = _redact_escaped_json(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -4271,6 +4272,27 @@ _POSTMAN_AUTH_PAIR = _lazy(lambda: re.compile(
     r'("key"\s*:\s*"(?:token|value)"\s*,\s*"value"\s*:\s*")((?:[^"\\\n]|\\.)+)"'))
 _BRUNO_AUTH_OPEN = _lazy(lambda: re.compile(r"^auth:" + _AUTH_TYPES + r"\s*\{\s*$", re.I))
 _BRUNO_AUTH_FIELD = _lazy(lambda: re.compile(r"^(\s*(?:token|value)\s*:[ \t]*)(\S.*?)\s*$"))
+
+
+# 🐛 [2026-10-07] (R36 acc4, 2026-10-07) JSON carried as a JSON string value -- agent tool-server
+# configs pass headers as `"OPENAPI_MCP_HEADERS": "{\"x-internal-key\": \"<value>\"}"` -- puts a
+# backslash before every quote, and every quoted-value rule stops at the escaped quote. A
+# secret-named key between escaped quotes has its escaped-quoted value redacted, unless the key
+# names a mechanism or the value is a `${...}`, `$VAR` or `<...>` reference. Check 456.
+_ESCAPED_JSON_SECRET = _lazy(lambda: re.compile(
+    r'(\\"' + _NAME_PREFIX + r'(?:' + SECRET_WORDS + r')' + _KEY_RUN + r'\\"\s*:\s*\\")'
+    r'((?:[^"\\\n]|\\[^"\n]){1,400}?)(\\")', re.I))
+
+
+def _redact_escaped_json(text):
+    """Redact a secret-named member's value inside JSON that is itself an escaped string."""
+    if '\\"' not in text:
+        return text
+    return _ESCAPED_JSON_SECRET.sub(
+        lambda m: m.group(0)
+        if m.group(2).startswith(("${", "$", "<")) or _names_a_mechanism(
+            m.group(1).strip('\\":\t '), m.group(2))
+        else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
 
 
 def _is_a_client_reference(value):
