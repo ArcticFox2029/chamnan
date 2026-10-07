@@ -1401,9 +1401,13 @@ def _is_credential_file_name(name):
         return True
     if name.endswith(".env") and name[:-4].rsplit(".", 1)[-1] not in _ENV_TEMPLATES:
         return True
+    # 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) A Google client-secret TEMPLATE
+    # (`client_secret_template.json`, `client_secret.example.json`) was refused like the real file,
+    # while `kubeconfig.yaml` -- the commonest name a real kubeconfig is saved under -- was read.
+    # The template words are the same ones `.env.example` uses. Check 459.
     if name.startswith("client_secret") and name.endswith(".json"):
-        return True
-    return name == "kubeconfig" or name.endswith(".kubeconfig")
+        return not any(part in _ENV_TEMPLATES for part in re.split(r"[._-]", name[:-5]))
+    return name in ("kubeconfig", "kubeconfig.yaml", "kubeconfig.yml") or name.endswith(".kubeconfig")
 
 
 def _is_never_opened_name(name):
@@ -4342,7 +4346,7 @@ def _redact_yaml_anchor_targets(text):
     if "&" not in text or "*" not in text:
         return text
     lines = text.split("\n")
-    wanted = set()
+    wanted = {}
     for i, line in enumerate(lines):
         m = _YAML_ALIAS_VALUE.match(line)
         if not m:
@@ -4358,13 +4362,19 @@ def _redact_yaml_anchor_targets(text):
                     break
                 if lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) < indent and not k:
                     break
-        if key and _secret_named_yaml_key(key):
-            wanted.add(m.group(3))
+        # 🐛 [2026-10-07] (Alpha's review of 1.35.1; R1-R80 lot of 2026-10-07) The mechanism test was
+        # made on the KEY alone here, while every assignment rule makes it on the key AND the value:
+        # `password_file: <credential-shaped value>` was redacted as an assignment and printed in
+        # full when the same value came through an anchor. The key is collected now and judged with
+        # its value below, the way the assignment rules judge it. Check 458.
+        if key and key.strip().strip("'\"") and _secret_word_hits(key.strip().strip("'\"")):
+            wanted.setdefault(m.group(3), []).append(key.strip().strip("'\""))
     if not wanted:
         return text
     for i, line in enumerate(lines):
         m = _YAML_ANCHOR_SCALAR.search(line)
-        if m and m.group(2) in wanted:
+        if m and m.group(2) in wanted and any(
+                not _names_a_mechanism(k, m.group(4)) for k in wanted[m.group(2)]):
             lines[i] = line[:m.start(4)] + PLACEHOLDER + line[m.end(4):]
     return "\n".join(lines)
 

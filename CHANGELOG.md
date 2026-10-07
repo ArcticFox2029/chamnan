@@ -48,6 +48,18 @@ already reports the last released number while running newer code.
   pulled is checked out as a three-line pointer; peek read it as the data itself (a one-column
   CSV of pointer metadata). It now says the file is not checked out and how large the real one is,
   as the map already did.
+- **Every format judges a secret name the same way.** A value reached through a YAML anchor was
+  judged by its key alone, so a file-path key holding a credential-shaped value printed there and
+  was redacted everywhere else. A new check holds JSON, JSON value objects, escaped JSON, YAML
+  anchors and TOML sections to the plain assignment's verdict, name by name.
+- **The credential-file refusal holds its line both ways.** A Google client-secret template is
+  read like any other template, and a kubeconfig saved as `kubeconfig.yaml` is refused unread like
+  the real thing it is. Both directions are pinned against a list of near-neighbour names.
+- **An HTML comment inside an indented code block is kept.** Markdown shows it literally, so it is
+  not hidden from a reviewer; it was being stripped like a hidden one. Comments in paragraphs, list
+  items and list continuations are still stripped.
+- **The review skill reads the change before its description**, so the commit message cannot tell
+  the reviewer what to see; a claim the code does not bear out is a finding.
 
 ## What's new in 1.35.1
 
