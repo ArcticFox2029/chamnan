@@ -3264,6 +3264,18 @@ def _replace_with_retry(tmp, dest, first_pause=0.02, max_pause=0.2, budget=1.0):
 LAST_WRITE_ERROR = []
 
 
+def _enclosing_repository(directory):
+    """The real path of the nearest directory at or above `directory` holding `.git`, or None."""
+    try:
+        here = pathlib.Path(os.path.realpath(str(directory)))
+    except (OSError, ValueError):
+        return None
+    for d in (here, *here.parents):
+        if (d / ".git").exists():
+            return d
+    return None
+
+
 def atomic_write_text(dest, text, encoding="utf-8"):
     """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
 
@@ -3295,6 +3307,19 @@ def atomic_write_text(dest, text, encoding="utf-8"):
     tmp = None
     try:
         dest = pathlib.Path(dest)
+        # 🐛 [2026-10-07] (R147 acc4, 2026-10-07: dotfile managers and symlinked configuration) The
+        # rename put a regular file where a SYMLINK had been: `AGENTS.md -> CLAUDE.md`, or a config a
+        # dotfile manager (Stow, chezmoi) links into place, lost its link, and the file the link
+        # pointed at kept the old content. A plain `open(dest, "w")` writes through a link, so the
+        # atomic write does too: it stages and renames beside the file the link lands on -- but only
+        # where the link could not have been planted to point out: inside a repository, its target
+        # must be in the same repository (a committed `.chamnan/STATE.md -> ~/.bashrc` must not turn
+        # a state write into a write to the user's shell profile; it is replaced as before). Check 469.
+        if dest.is_symlink():
+            real = pathlib.Path(os.path.realpath(str(dest)))
+            repo = _enclosing_repository(dest.parent)
+            if repo is None or real == repo or repo in real.parents:
+                dest = real
         # 🐛 An atomic replace does not need write permission on the TARGET — `os.replace` only
         # needs a writable directory — so switching to it silently defeated a read-only file. A
         # user who `chmod 444`s a store means it, and `chamnan-promote` relies on the refusal to
@@ -3484,6 +3509,15 @@ def notice_due(root, key, times=NOTICE_TIMES):
 LOCK_HOLDER_ALIVE, LOCK_HOLDER_DEAD, LOCK_HOLDER_UNKNOWN = "alive", "dead", "unknown"
 
 
+def _lock_fingerprint(lock):
+    """(mtime_ns, size, inode) of the lock file, or None when it is gone."""
+    try:
+        st = lock.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, getattr(st, "st_ino", 0))
+
+
 def _lock_holder_state(lock):
     """"alive", "dead", or "unknown" — and the third is not the same as the second.
 
@@ -3632,14 +3666,18 @@ def exclusive(path):
             # "Dead", not "not alive": a lock is created and its PID written a moment later, so an
             # empty lock is what a healthy holder looks like for a few microseconds. That case
             # stays on the age rule, which is what it was always decided by.
+            #
+            # 🐛 [2026-10-07] (R159 acc4, 2026-10-07: Borg's stale-lock cleanup deleted a live
+            # successor's lock) Two waiters judged the same crashed lock dead; the first unlinked it
+            # and took the lock, and the second then unlinked BY PATH -- the first one's live lock --
+            # and took it too: two writers. The break now removes only the lock it judged, the one
+            # whose stat fingerprint is still `here`. Check 470.
             if age > LOCK_READ_AFTER:
                 try:
                     state = _lock_holder_state(lock)
-                    if state == LOCK_HOLDER_DEAD:
-                        lock.unlink()
-                        continue
-                    if age > LOCK_STALE and state != LOCK_HOLDER_ALIVE:
-                        lock.unlink()
+                    if state == LOCK_HOLDER_DEAD or (age > LOCK_STALE and state != LOCK_HOLDER_ALIVE):
+                        if _lock_fingerprint(lock) == here:
+                            lock.unlink()
                         continue
                 except OSError:
                     pass

@@ -21,6 +21,15 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Writing a file through a symlink keeps the link.** chamnan's safe write put a plain file where
+  a symlink had been, so `AGENTS.md -> CLAUDE.md`, or a config linked into place by a dotfile
+  manager, lost its link and the real file kept the old content. The write now goes to the file the
+  link points at. Inside a repository a link is followed only to a file in that repository, so a
+  committed link pointing elsewhere still cannot redirect a write out of it.
+- **Breaking a crashed process's lock no longer removes a live one.** When two waiters judged the
+  same abandoned lock dead, the second could delete the lock the first had just taken, and both
+  wrote at once. A lock is now removed only if it is still the one that was judged.
+
 - **A credential in a SQL dump is redacted.** A dump keeps a secret by position: a settings row
   `('stripe_secret', '…')`, an `INSERT` whose column list names `api_key`, or a `COPY … FROM stdin`
   block. All three printed the value whole. Each value is now paired with its column or the name
