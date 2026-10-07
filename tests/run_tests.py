@@ -53461,6 +53461,62 @@ _os470.utime(_lock470, (_old470, _old470))
 with _ws470.exclusive(_target470) as _held470b:
     pass
 check("...while a crashed holder's lock, unchanged, is still broken and taken", _held470b)
+# ---- 471_a_preview_does_not_consume_the_repeat_digest.py
+# ------------------ a read-only session start (a preview) shows the repeat digest and keeps it
+# 🐛 [2026-10-07] (gate, 2026-10-07) The full gate's "preview and real SessionStart agree
+# byte-for-byte" check failed 251 bytes apart: `chamnan-context --preview` runs the hook read-only,
+# and the hook deleted logs/repeat_digest.json as it showed it -- so the preview consumed the
+# digest and the real session start that followed never showed it.
+import importlib.util as _ilu471
+import io as _io471
+import json as _json471
+import os as _os471
+import sys as _sys471
+import tempfile as _tf471
+import contextlib as _cl471
+from pathlib import Path as _P471
+
+_root471 = _P471(_tf471.mkdtemp()) / "r"
+(_root471 / ".git").mkdir(parents=True)
+ws.ensure(_root471)
+_digest471 = _root471 / ".chamnan" / "logs" / "repeat_digest.json"
+_digest471.parent.mkdir(parents=True, exist_ok=True)
+_spec471 = _ilu471.spec_from_file_location("_ss471", ROOT / "hooks" / "chamnan_session_start.py")
+_hook471 = _ilu471.module_from_spec(_spec471)
+_spec471.loader.exec_module(_hook471)
+
+
+def _start471(read_only):
+    _old = (_os471.getcwd(), _sys471.stdin, _os471.environ.get(ws.READ_ONLY_ENV))
+    _buf = _io471.StringIO()
+    try:
+        if read_only:
+            _os471.environ[ws.READ_ONLY_ENV] = "1"
+        else:
+            _os471.environ.pop(ws.READ_ONLY_ENV, None)
+        _os471.chdir(str(_root471))
+        _sys471.stdin = _io471.StringIO(_json471.dumps({"cwd": str(_root471), "hook_event_name": "SessionStart",
+                                                        "source": "startup"}))
+        with _cl471.redirect_stdout(_buf):
+            _hook471.main()
+    finally:
+        _os471.chdir(_old[0])
+        _sys471.stdin = _old[1]
+        if _old[2] is None:
+            _os471.environ.pop(ws.READ_ONLY_ENV, None)
+        else:
+            _os471.environ[ws.READ_ONLY_ENV] = _old[2]
+    return _buf.getvalue()
+
+
+_digest471.write_text(_json471.dumps({"lines": ["3x  `python3 make_report.py`"]}), encoding="utf-8")
+_ro471 = _start471(True)
+check("a read-only session start shows the repeat digest",
+      "Repeated last session and never kept" in _ro471, saw=_ro471[-400:])
+check("...and leaves it on disk for the real session start", _digest471.is_file())
+_rw471 = _start471(False)
+check("...which shows it once more and then removes it, as before",
+      "Repeated last session and never kept" in _rw471 and not _digest471.is_file())
 # ---- 47_the_state_cut_marker_names_what_is_missing.py
 # ------------------------------------- a number is not a reason to go and read; a name is
 # 🐛 [2026-09-10] When `STATE.md` overran its budget the marker said only "…9.3k more — read
