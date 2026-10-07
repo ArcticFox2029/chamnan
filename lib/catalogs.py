@@ -865,24 +865,29 @@ def scan_commands(root):
                     add(f"just {m.group(1)}", fname)
             break
 
+    # 🐛 [2026-10-07] (R5 acc5, 2026-10-07) With `uv.lock` beside `pyproject.toml` the test command is
+    # `uv run pytest`; bare `pytest` runs outside the project's environment and fails on the first
+    # import. The JavaScript branch above already picked its runner from the lock file. Check 453.
+    py = ("uv run " if exists("uv.lock") else "poetry run " if exists("poetry.lock")
+          else "pdm run " if exists("pdm.lock") else "")
     text = _read_root_file(root, "pyproject.toml")
     if text is not None:
         if "[tool.pytest" in text:
-            add("pytest", "pyproject.toml")
+            add(py + "pytest", "pyproject.toml")
         if "[tool.ruff" in text:
-            add("ruff check", "pyproject.toml")
+            add(py + "ruff check", "pyproject.toml")
         if "[tool.mypy" in text:
-            add("mypy .", "pyproject.toml")
+            add(py + "mypy .", "pyproject.toml")
     if exists("pytest.ini"):
-        add("pytest", "pytest.ini")
+        add(py + "pytest", "pytest.ini")
     else:
         text = _read_root_file(root, "setup.cfg")
         if text is not None and "[tool:pytest]" in text:
-            add("pytest", "setup.cfg")
+            add(py + "pytest", "setup.cfg")
     if exists("tox.ini"):
-        add("tox", "tox.ini")
+        add(py + "tox", "tox.ini")
     if exists("noxfile.py"):
-        add("nox", "noxfile.py")
+        add(py + "nox", "noxfile.py")
 
     if exists("Cargo.toml"):
         add("cargo test", "Cargo.toml")

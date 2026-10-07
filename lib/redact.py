@@ -280,7 +280,9 @@ def _structure_the_value_did_not_open(match, value):
 
 # 🐛 [2026-10-05] (R30 acc5, 2026-10-02) A budget is a count too: index_token_budget = 120000 was redacted. Check 419.
 _TOKENS_KEY = _lazy(lambda: re.compile(r"(?:tokens|budget)['\"]?\s*(?::|=)\s*(?:[A-Za-z_][\w.]*\s*=\s*)?$", re.I))
-_PLAIN_COUNT = _lazy(lambda: re.compile(r"[0-9]{1,12}(?:,|[}\]]+,?)?"))
+# 🐛 [2026-10-07] (R7 acc4, 2026-10-07) `100_000` -- digit separators, as Python, Rust, Java and
+# JavaScript write them -- fell through to the bare-value rule. Check 451.
+_PLAIN_COUNT = _lazy(lambda: re.compile(r"(?:[0-9]{1,12}|[0-9]{1,3}(?:_[0-9]{3}){1,4})(?:,|[}\]]+,?)?"))
 
 
 def _is_a_token_count(key_part, value):
@@ -2976,6 +2978,10 @@ _SPLIT_JOIN = _lazy(lambda: re.compile(
         (?=[A-Za-z0-9_\-])              # the start of the second""", re.VERBOSE))
 
 
+# What may sit between two join sites of one run: the body of a single literal, nothing else.
+_ONE_LITERAL_BODY = _lazy(lambda: re.compile(r"[^\"'\n]*"))
+
+
 def _unmask_split_credentials(text):
     """`text` with adjacent string literals joined, so a value the source splits is seen whole.
 
@@ -2994,27 +3000,45 @@ def _unmask_split_credentials(text):
     """
     if '"' not in text and "'" not in text:
         return text
-    joined = _SPLIT_JOIN.sub("", text)
-    if joined == text:
+    sites = list(_SPLIT_JOIN.finditer(text))
+    if not sites:
         return text
-    # 🐛 [2026-09-24] (self-measured) The first form handed the joined text to `scrub` and kept it
-    # whenever it redacted MORE, which is the contract the two disguises above use — and that is
-    # too loose for a rule that rewrites ordinary source. Joining `_REQUIRES_KEY = "chamnan-" +
-    # "canonical"` produces `_REQUIRES_KEY = "chamnan-canonical"`, the NAME-based assignment rule
-    # fires on `_KEY =`, and a constant in this package's own `lib/canonical.py` came out redacted.
-    # The self-scan check caught it in the same gate run that this rule shipped in.
+    # 🐛 [2026-10-07] (R7 acc4, 2026-10-07) The join used to be applied to the WHOLE text once any
+    # one vendor pattern gained a match, so every other `"a" + "b"` in the file was rewritten too --
+    # code shown to the model that no longer matched the file, and a second scrub that changed it
+    # again. A run of literals is joined only when joining THAT run makes a vendor shape match
+    # nearby. A run is consecutive join sites with only one literal's body between them. Check 452.
     #
-    # So the join is accepted only when it makes a VENDOR-SHAPED pattern match — the prefixed
-    # families in `PATTERNS` and `LATE_PREFIXES`, which is the case this exists for: `("ghp_"
-    # "EXAMPLE…")` is a GitHub token whichever way the source wrote it. A name-based rule firing
-    # on the joined form is not evidence that the source split a credential; it is evidence that
-    # the variable is called `key`, which was already true before anything was joined.
-    for _pat in PATTERNS + LATE_PREFIXES:
-        if _pat is DELIMITED_AFTER_SECRET_WORD or _pat is AUTH_SCHEME_SECRET:
-            continue                  # name-based, not a vendor shape — see above
-        if _pat.search(joined) and not _pat.search(text):
-            return joined
-    return text
+    # Name-based rules are left out for the reason the first fix gave: joining
+    # `_REQUIRES_KEY = "chamnan-" + "canonical"` makes the NAME-based assignment rule fire on
+    # `_KEY =`, which is evidence about the variable's name, not that a credential was split.
+    vendor = [p for p in PATTERNS + LATE_PREFIXES
+              if p is not DELIMITED_AFTER_SECRET_WORD and p is not AUTH_SCHEME_SECRET]
+    runs, current = [], [sites[0]]
+    for m in sites[1:]:
+        if _ONE_LITERAL_BODY.fullmatch(text, current[-1].end(), m.start()):
+            current.append(m)
+        else:
+            runs.append(current)
+            current = [m]
+    runs.append(current)
+    joined_sites = []
+    for run in runs:
+        lo, hi = max(0, run[0].start() - 120), min(len(text), run[-1].end() + 120)
+        before = text[lo:hi]
+        after = before
+        for m in reversed(run):
+            after = after[:m.start() - lo] + after[m.end() - lo:]
+        if any(len(p.findall(after)) > len(p.findall(before)) for p in vendor):
+            joined_sites.extend(run)
+    if not joined_sites:
+        return text
+    out, pos = [], 0
+    for m in joined_sites:
+        out.append(text[pos:m.start()])
+        pos = m.end()
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _unmask_invisible_secret_words(text):
@@ -3188,30 +3212,32 @@ def scrub(text, windowed=True, *, _unmask=True):
     # kept unless unmasking it actually redacts more. `_unmask=False` is how that second run asks
     # for the plain pipeline, and is the only thing that stops this recursing. (R13.4.)
     if _unmask:
-        _unmasked = _unmask_disguised_secret_words(text)
-        if _unmasked is not text:
-            _with = scrub(_unmasked, windowed, _unmask=False)
-            _without = scrub(text, windowed, _unmask=False)
-            return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
-        # A second disguise, same contract: an invisible codepoint INSERTED inside the word rather
-        # than a look-alike SUBSTITUTED for one of its letters. Checked only when the confusable
-        # branch above found nothing to unmask -- the two attacks have not been seen combined, and
-        # trying both unconditionally would mean reasoning about which of four variants to keep
-        # rather than two, for a case not yet observed.
-        _destripped = _unmask_invisible_secret_words(text)
-        if _destripped is not text:
-            _with = scrub(_destripped, windowed, _unmask=False)
-            _without = scrub(text, windowed, _unmask=False)
-            return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
-        # A third disguise, same contract again: the value is not spelled oddly and nothing is
-        # hidden inside it -- the SOURCE simply wrote it as two adjacent string literals. Checked
-        # last because it is the only one of the three that rewrites text outside a credential
-        # name, so it gets to run only when neither of the others found anything to undo.
-        _joined = _unmask_split_credentials(text)
-        if _joined is not text and _joined != text:
-            _with = scrub(_joined, windowed, _unmask=False)
-            _without = scrub(text, windowed, _unmask=False)
-            return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
+        # 🐛 [2026-10-07] (R7 acc4, 2026-10-07) The three disguises below were tried as ALTERNATIVES:
+        # the first one that changed anything returned, so a document holding both a look-alike
+        # letter and a split literal had only the first undone, and a SECOND scrub of the output
+        # then undid the other and redacted more -- the result was not idempotent, and the first
+        # pass let a split key through. Each is now tried in turn on the best text so far, and kept
+        # only when it redacts more. Check 452.
+        # The three, in order: a look-alike letter SUBSTITUTED in a credential name; an invisible
+        # codepoint INSERTED inside one; and a value the SOURCE wrote as adjacent string literals,
+        # which goes last because it is the only one that rewrites text outside a credential name.
+        _src, _best = text, None
+        for _undo in (_unmask_disguised_secret_words, _unmask_invisible_secret_words,
+                      _unmask_split_credentials):
+            _cand = _undo(_src)
+            if _cand is _src or _cand == _src:
+                continue
+            if _best is None:
+                _best = scrub(_src, windowed, _unmask=False)
+            _cand_out = scrub(_cand, windowed, _unmask=False)
+            # The join already proved its gain run by run (a vendor shape matches only once joined),
+            # and joining two redacted literals can turn two placeholders into one -- so for it a
+            # placeholder COUNT is the wrong test and it is kept whenever it changed anything.
+            if (_undo is _unmask_split_credentials
+                    or _cand_out.count(PLACEHOLDER) > _best.count(PLACEHOLDER)):
+                _src, _best = _cand, _cand_out
+        if _best is not None:
+            return _best
     text = _redact_yaml_anchor_targets(text)
     text = _redact_secret_sections(text)
     text = _redact_kubernetes_secret_data(text)
@@ -3676,9 +3702,11 @@ _THAI_ID_DASHED = _lazy(lambda: re.compile(
     r"(?<![0-9])([1-8])" + _SEP + r"([0-9]{4})" + _SEP + r"([0-9]{5})" + _SEP
     + r"([0-9]{2})" + _SEP + r"([0-9])(?![0-9])"))
 _THAI_ID_BARE = _lazy(lambda: re.compile(r"(?<![0-9A-Za-z_-])([1-8][0-9]{12})(?![0-9A-Za-z_-])"))
+# 🐛 [2026-10-07] (R6 acc4, 2026-10-07) Thai text usually labels the number `เลขบัตร` ("card number")
+# or `ปชช`; neither was here, so a checksum-valid ID after them printed in full. Check 454.
 _THAI_ID_WORD = _lazy(lambda: re.compile(
     r"(?i)(?<![a-z])(national[_ -]?id|citizen[_ -]?id|id[_ -]?card|idcard|thai[_ -]?id"
-    r"|เลขประจำตัวประชาชน|บัตรประชาชน|ประชาชน)(?![a-z])"))
+    r"|เลขประจำตัวประชาชน|บัตรประชาชน|ประชาชน|เลขบัตร|ปชช|เลขประจำตัว)(?![a-z])"))
 
 
 # Korea's 13-digit Resident Registration Number, written `YYMMDD-Sxxxxxx`. It carries a birth date

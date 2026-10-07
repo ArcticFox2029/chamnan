@@ -19,6 +19,23 @@ already reports the last released number while running newer code.
 
 ---
 
+## Unreleased
+
+- **A key split across string literals no longer rewrites the rest of the file.** Joining
+  adjacent literals, so a provider key a formatter broke in two is still caught, was applied to
+  every concatenation in the text once one key was found; the map then showed code that did not
+  match the file, and scrubbing the output again changed it again. Only the literals that form
+  the key are joined now, and the three disguises chamnan undoes are tried in turn, so one scrub
+  is final: 2 of 2,321 real files changed on a second scrub before, 0 after.
+- **A count written with digit separators is left alone.** A token budget written as one hundred
+  thousand with underscores between the digit groups was redacted as if it were a secret.
+- **A Python project's test command names its runner.** With a uv, Poetry or PDM lock file
+  beside `pyproject.toml`, the declared commands read `uv run pytest` (and so on) instead of a
+  bare `pytest` that runs outside the project's environment.
+- **A Thai ID labelled the usual way is redacted.** A checksum-valid national ID after the words
+  for "card number" or the common abbreviation for citizen ID printed in full; it is redacted
+  now, and a number that fails the checksum still is not.
+
 ## What's new in 1.35.1
 
 _A patch that closes the gaps 1.35.0 listed and a few found since: credentials held where the name and the value sit apart, files that are credentials by their name alone, and text that reached the model without a reviewer seeing it._
