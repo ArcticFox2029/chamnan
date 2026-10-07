@@ -52441,6 +52441,225 @@ _plain450 = ['"bearer": [{"key": "token", "value": "{{bearerToken}}", "type": "s
 _changed450 = [p.split("\n")[0] for p in _plain450 if _redact450.scrub(p) != p]
 check("...while a variable reference, the header name, and a token outside an auth block stay as written",
       not _changed450, saw=_changed450)
+# ---- 451_an_underscored_count_is_not_a_credential.py
+# ------------------ a count written with digit separators is not a credential
+# 🐛 [2026-10-07] (R7 acc4, 2026-10-07) An idempotence sweep over 2,321 real files found
+# `"index_token_budget": 100_000` in chamnan's own `lib/workspace.py` coming back as `<REDACTED>`.
+# A token count with plain digits was already exempt; Python, Rust, Java and JavaScript all allow
+# `_` between digit groups, and that spelling fell through to the bare-value rule.
+import importlib as _il451
+
+_redact451 = _il451.import_module("redact")
+_plain451 = ['"index_token_budget": 100_000,', "index_token_budget = 100_000", "max_tokens = 4_096",
+             "context_budget: 1_000_000", '"output_tokens": 12_345}']
+_changed451 = [p for p in _plain451 if _redact451.scrub(p) != p]
+check("a token count or budget written with digit separators stays as written",
+      not _changed451, saw=_changed451)
+# ---- 452_joining_split_literals_touches_only_the_credential.py
+# ------------------ joining split string literals rewrites only the literals that form a credential
+# 🐛 [2026-10-07] (R7 acc4, 2026-10-07) Joining adjacent string literals exists so a provider key a
+# formatter split in two is seen whole. The join was applied to the WHOLE text whenever it found
+# one such key, so every other `"a" + "b"` in the file was rewritten as well -- code shown to the
+# model that no longer matched the file -- and a second scrub changed the text again. Now only the
+# run of literals that actually forms the key is joined.
+import importlib as _il452
+import random as _rnd452
+import string as _st452
+
+_redact452 = _il452.import_module("redact")
+_r452 = _rnd452.Random(452)
+_body452 = "".join(_r452.choice(_st452.ascii_letters + _st452.digits) for _ in range(36))
+_text452 = ('TOKEN = ("gh" "p_"\n         "' + _body452 + '")\n'
+            '_COLUMN = "Zx" + "7" * 6 + "qW"\nGREETING = "hello" "world"\n')
+_out452 = _redact452.scrub(_text452)
+check("a provider key split across adjacent literals is still redacted", _body452 not in _out452,
+      saw=_out452)
+check("...while the other concatenations in the same text are left exactly as written",
+      '_COLUMN = "Zx" + "7" * 6 + "qW"' in _out452 and 'GREETING = "hello" "world"' in _out452, saw=_out452)
+check("...and a second scrub changes nothing", _redact452.scrub(_out452) == _out452,
+      saw=_redact452.scrub(_out452))
+# ---- 453_a_python_lock_file_names_its_runner.py
+# ------------------ a Python project's lock file puts its runner in front of the declared commands
+# 🐛 [2026-10-07] (R5 acc5, 2026-10-07) With `uv.lock` beside `pyproject.toml`, the declared test
+# command is `uv run pytest`: plain `pytest` runs outside the project's environment and fails on the
+# first import. chamnan already chose `pnpm`/`yarn`/`bun` from a JavaScript lock file and printed
+# bare `pytest` for every Python project.
+import importlib as _il453
+import tempfile as _tf453
+from pathlib import Path as _P453
+
+_cat453 = _il453.import_module("catalogs")
+_got453 = {}
+for _lock453, _want453 in (("uv.lock", "uv run pytest"), ("poetry.lock", "poetry run pytest"),
+                           ("pdm.lock", "pdm run pytest"), (None, "pytest")):
+    _d453 = _P453(_tf453.mkdtemp())
+    (_d453 / "pyproject.toml").write_text("[tool.pytest.ini_options]\naddopts = \"-q\"\n", encoding="utf-8")
+    if _lock453:
+        (_d453 / _lock453).write_text("version = 1\n", encoding="utf-8")
+    _cmds453 = [c for c, _s in _cat453.scan_commands(_d453)]
+    if _want453 not in _cmds453:
+        _got453[_lock453] = _cmds453
+check("uv.lock, poetry.lock and pdm.lock put their runner before pytest; no lock file leaves it bare",
+      not _got453, saw=_got453)
+# ---- 454_a_thai_id_labelled_card_number_is_redacted.py
+# ------------------ a Thai national ID labelled the way people write it is redacted
+# 🐛 [2026-10-07] (R6 acc4, 2026-10-07) A bare 13-digit Thai ID that passes the checksum is redacted
+# only beside an ID word, and the word list held `บัตรประชาชน` and `national id` but not `เลขบัตร`
+# ("card number") or `ปชช` -- the way the number is usually labelled in Thai text. A valid ID
+# after either printed in full.
+import importlib as _il454
+
+_redact454 = _il454.import_module("redact")
+
+
+def _thid454(d12):
+    return d12 + str((11 - sum(int(d) * (13 - i) for i, d in enumerate(d12)) % 11) % 10)
+
+
+_id454 = _thid454("310170012345")
+_kept454 = [t for t in (f"เลขบัตร {_id454}", f"เลขบัตร ปชช. {_id454}", f"ปชช {_id454}",
+                        f"เลขประจำตัว {_id454}") if _id454 in _redact454.scrub(t)]
+check("a checksum-valid Thai ID after เลขบัตร, ปชช or เลขประจำตัว is redacted", not _kept454, saw=_kept454)
+_bad454 = _id454[:-1] + str((int(_id454[-1]) + 1) % 10)
+check("...while a 13-digit number failing the checksum stays", _bad454 in _redact454.scrub(f"เลขบัตร {_bad454}"))
+# ---- 455_a_plain_word_before_a_closing_brace_is_prose.py
+# ------------------ a plain word that ends a JSON string is prose, not a credential
+# 🐛 [2026-10-07] (R16 acc4, 2026-10-07) A re-scrub of chamnan's own logs found two commit subjects
+# stored as JSON -- `{"head": "... API-client auth blocks"}` -- coming back as `auth <REDACTED>}`:
+# the end-of-line rule took `blocks"}` as the value, and the plain-word guard allowed a trailing
+# quote but not the brace after it. The closing quote went with it, so the line was no longer JSON.
+import importlib as _il455
+
+_redact455 = _il455.import_module("redact")
+_plain455 = ['{"head": "Redact camelCase secret value objects and API-client auth blocks"}',
+             '{"head": "Scrub a Terraform value stored under a secret-named object"}',
+             '["rotate the api token weekly"]']
+_changed455 = [p for p in _plain455 if _redact455.scrub(p) != p]
+check("a sentence ending a JSON string after a secret word stays as written", not _changed455, saw=_changed455)
+check("...while a credential-shaped value in the same position is still redacted",
+      "Zq8" not in _redact455.scrub('{"note": "the password Zq8xW2kP9mL4vT7r"}'))
+check("...and the string's closing quote survives the redaction",
+      _redact455.scrub('{"note": "the password Zq8xW2kP9mL4vT7r"}') == '{"note": "the password <REDACTED>"}',
+      saw=_redact455.scrub('{"note": "the password Zq8xW2kP9mL4vT7r"}'))
+# ---- 456_a_secret_in_escaped_json_is_redacted.py
+# ------------------ a secret inside JSON that is itself a JSON string value is redacted
+# 🐛 [2026-10-07] (R36 acc4, 2026-10-07) Agent tool-server configs carry headers as JSON inside an
+# environment variable -- `"OPENAPI_MCP_HEADERS": "{\"x-internal-key\": \"<value>\"}"` -- and
+# the escaped quotes stopped every quoted-value rule, so the key printed in full while the
+# neighbouring `env` tokens and `Authorization` header in the same file were redacted.
+import importlib as _il456
+import json as _json456
+import random as _rnd456
+import string as _st456
+
+_redact456 = _il456.import_module("redact")
+_r456 = _rnd456.Random(456)
+_v456 = "".join(_r456.choice(_st456.ascii_letters + _st456.digits) for _ in range(28))
+_kept456 = [t for t in (
+    _json456.dumps({"env": {"OPENAPI_MCP_HEADERS": _json456.dumps({"x-internal-key": _v456})}}),
+    _json456.dumps({"env": {"EXTRA": _json456.dumps({"api_key": _v456, "region": "eu"})}}),
+    _json456.dumps({"cfg": _json456.dumps({"password": _v456})}),
+) if _v456 in _redact456.scrub(t)]
+check("a secret-named key inside an escaped JSON string has its value redacted", not _kept456, saw=_kept456)
+_plain456 = [_json456.dumps({"env": {"H": _json456.dumps({"x-api-key": "${API_KEY}"})}}),
+             _json456.dumps({"env": {"H": _json456.dumps({"region": "eu", "mode": "fast"})}})]
+_changed456 = [p for p in _plain456 if _redact456.scrub(p) != p]
+check("...while a variable reference and ordinary escaped fields stay as written", not _changed456, saw=_changed456)
+# ---- 457_peek_names_a_git_lfs_pointer.py
+# ------------------ chamnan-peek says a git-lfs pointer is not the file, as the map already does
+# 🐛 [2026-10-07] (R66 acc4, 2026-10-07) A data file stored in Git LFS is checked out, without
+# `git lfs pull`, as a three-line pointer. The map already says "not checked out — a git-lfs
+# pointer to 50.0MB"; chamnan-peek read the same file as a one-column CSV with two rows of pointer
+# metadata, so an agent asking to look at the data was shown the pointer as if it were the data.
+import importlib as _il457
+import tempfile as _tf457
+from pathlib import Path as _P457
+
+_peek457 = _il457.import_module("peek")
+_d457 = _P457(_tf457.mkdtemp())
+_ptr457 = ("version https://git-lfs.github.com/spec/v1\n"
+           "oid sha256:" + "4d7a2146" * 8 + "\nsize 52428800\n")
+_got457 = {}
+for _n457 in ("customers.csv", "events.jsonl", "notes.txt", "model_loader.py"):
+    (_d457 / _n457).write_text(_ptr457, encoding="utf-8")
+    _out457 = _peek457.peek(_d457 / _n457)
+    if "git-lfs pointer" not in _out457 or "columns:" in _out457:
+        _got457[_n457] = _out457[:160]
+check("peek names a git-lfs pointer as not checked out, whatever its extension", not _got457, saw=_got457)
+(_d457 / "real.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+check("...while an ordinary small CSV is still read as one", "columns:" in _peek457.peek(_d457 / "real.csv"))
+# ---- 458_every_container_rule_judges_a_name_the_same_way.py
+# ------------------ every container rule judges a secret name the same way as a plain assignment
+# 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) Format-aware rules multiplied -- YAML
+# anchors, TOML/INI sections, JSON value objects, escaped JSON -- and each decides for itself what a
+# secret-named container is. Measured over 30 names in six containers, the anchor rule alone judged
+# the key without its value, so `password_file` holding a credential-shaped value printed through an
+# anchor and was redacted everywhere else. This holds every container to the plain assignment's
+# verdict, name by name, so a rule that drifts fails here. The one intended difference is written
+# down: a TOML/INI SECTION named `token` or `tokens` counts, because a section of that name holds
+# nothing else.
+import importlib as _il458
+import json as _json458
+import random as _rnd458
+import string as _st458
+
+_redact458 = _il458.import_module("redact")
+_r458 = _rnd458.Random(458)
+_v458 = "".join(_r458.choice(_st458.ascii_letters + _st458.digits) for _ in range(24))
+_names458 = ["password", "db_password", "adminPassword", "api_key", "ApiKey", "client_secret", "secrets",
+             "token", "tokens", "access_token", "credentials", "private_key", "keys", "key", "auth",
+             "password_policy", "token_count", "secret_name", "password_file", "passphrase", "x-api-key",
+             "bearer", "session_token", "signing_key", "webhook_secret"]
+
+
+def _hidden458(t):
+    return _v458 not in _redact458.scrub(t)
+
+
+_drift458 = {}
+for _n458 in _names458:
+    _base458 = _hidden458(f"{_n458}: {_v458}\n")
+    _each458 = {"json": _hidden458(_json458.dumps({_n458: _v458})),
+                "json object": _hidden458(_json458.dumps({_n458: {"value": _v458}})),
+                "escaped json": _hidden458(_json458.dumps({"h": _json458.dumps({_n458: _v458})})),
+                "yaml anchor": _hidden458(f"x-defaults: &a {_v458}\nservice:\n  {_n458}: *a\n"),
+                "toml section": _hidden458(f"[{_n458}]\nprod = \"{_v458}\"\n")}
+    if _n458 in ("token", "tokens"):
+        _each458["toml section"] = not _each458["toml section"]   # the written-down exception
+    _off458 = [k for k, got in _each458.items() if got != _base458]
+    if _off458:
+        _drift458[_n458] = _off458
+check("every container rule agrees with the plain assignment on 25 names (one written-down exception)",
+      not _drift458, saw=_drift458)
+check("...and a mechanism value reached through an anchor is still kept",
+      "/run/secrets/db" in _redact458.scrub("x: &p /run/secrets/db\nsvc:\n  password_file: *p\n"))
+# ---- 459_the_credential_file_refusal_keeps_its_near_neighbours.py
+# ------------------ refusing credential files by name holds its line against near-neighbour names
+# 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) A name-based refusal drifts wider or
+# narrower one case at a time, so it is held here against a corpus of near neighbours in both
+# directions. Measured when this was written: `client_secret_template.json` and
+# `client_secret.example.json` -- templates, exactly what `.env.example` is to `.env` -- were
+# refused, and `kubeconfig.yaml`, the commonest name a real kubeconfig is saved under, was read.
+import importlib as _il459
+import tempfile as _tf459
+from pathlib import Path as _P459
+
+_redact459 = _il459.import_module("redact")
+_d459 = _P459(_tf459.mkdtemp())
+(_d459 / ".kube").mkdir()
+_refuse459 = [".env", ".env.local", ".env.production", ".env.test", "prod.env", "local.env",
+              "client_secret.json", "client_secret_1234.apps.googleusercontent.com.json", "client_secrets.json",
+              "kubeconfig", "staging.kubeconfig", "kubeconfig.yaml", "kubeconfig.yml", ".kube/config"]
+_read459 = [".env.example", ".env.sample", ".env.template", ".env.dist", ".envrc", "env.py", "myenv.py",
+            "environment.json", "environment.ts", "env.d.ts", "envs.md", "sample.env", "example.env",
+            "client_secret_template.json", "client_secret.example.json", "client_secret.py",
+            "kubeconfig.example", "kubeconfig.go", "kubeconfig_test.go", "config", "credentials.py"]
+for _n459 in _refuse459 + _read459:
+    (_d459 / _n459).write_text("X=1\n", encoding="utf-8")
+_wrong459 = ([f"read: {n}" for n in _refuse459 if not _redact459.is_never_opened(_d459 / n)]
+             + [f"refused: {n}" for n in _read459 if _redact459.is_never_opened(_d459 / n)])
+check("credential files are refused and their near neighbours are read, in both directions",
+      not _wrong459, saw=_wrong459)
 # ---- 45_every_jsonl_this_package_writes_is_accounted_for.py
 # ------------------------------- the retention list was a list, and a list falls behind its set
 # 🐛 [2026-09-10] `SELF_PRUNING_LOGS` names the logs that bound themselves by RECORD and must not be
@@ -52552,6 +52771,28 @@ check("...and the sweep really spares them: every exempt log survives a 400-day-
 check("...while an ordinary aged log is still taken, so the sweep has not simply stopped working",
       not (_t_sweep45 / ".chamnan" / "logs" / "ordinary_scratch.jsonl").exists())
 _sh45.rmtree(_t_sweep45, ignore_errors=True)
+# ---- 460_a_comment_in_an_indented_code_block_is_kept.py
+# ------------------ an HTML comment shown as code in an indented code block is kept
+# 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) Hidden comments are stripped because a
+# reviewer never sees them. Inside a fenced block or inline code they are visible and were kept;
+# inside an INDENTED code block -- four spaces or a tab after a blank line -- Markdown also shows
+# them literally, and they were stripped, so a documented HTML example lost the comment it was
+# about. A comment in an ordinary paragraph, a list item or an indented list continuation is still
+# hidden on the page and still stripped.
+import importlib as _il460
+
+_md460 = _il460.import_module("mdblock")
+_keep460 = {"four spaces": "Example:\n\n    <div><!-- keep me --></div>\n\nafter",
+            "a tab": "Example:\n\n\t<!-- keep in tab code -->\n",
+            "two code lines": "Text\n\n    a = 1\n    <!-- also kept -->\n"}
+_lost460 = [k for k, t in _keep460.items() if _md460.strip_html_comments(t) != t]
+check("a comment inside an indented code block is shown by Markdown and kept", not _lost460, saw=_lost460)
+_strip460 = {"paragraph": "a <!-- hidden --> b",
+             "list item": "- step <!-- hidden --> one",
+             "list continuation": "- step one\n\n    more text <!-- hidden --> here\n",
+             "indented, no blank line": "para line\n    still para <!-- hidden -->\n"}
+_kept460 = [k for k, t in _strip460.items() if "<!--" in _md460.strip_html_comments(t)]
+check("...while a comment Markdown hides is still stripped", not _kept460, saw=_kept460)
 # ---- 46_a_clock_that_is_wrong_does_not_delete_the_newest_record.py
 # --------------------------------- one bad filename, and the guard protects exactly the wrong file
 # 🐛 [2026-09-10] `sessions.prune` had `ledger._ymd_to_ts`'s impossible-date guard and not its
