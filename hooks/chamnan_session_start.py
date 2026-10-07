@@ -2780,10 +2780,16 @@ def main():
                         lines = [str(x) for x in (data.get("lines") or [])][:6]
                 except (OSError, json.JSONDecodeError, RecursionError):
                     lines = []
-                try:
-                    digest_path.unlink()
-                except OSError:
-                    pass
+                # 🐛 [2026-10-07] (gate, 2026-10-07) The delete ran in read-only mode too, which is how
+                # `chamnan-context --preview` runs this hook -- so a preview CONSUMED the digest: it
+                # showed the section, deleted the file, and the session start that followed had
+                # nothing to show. The suite's preview-equals-real check failed on exactly this, 251
+                # bytes apart. A read-only run shows the digest and leaves it. Check 471.
+                if not ws.read_only():
+                    try:
+                        digest_path.unlink()
+                    except OSError:
+                        pass
                 if lines:
                     out.append(store_section(root,
                         "Repeated last session and never kept",

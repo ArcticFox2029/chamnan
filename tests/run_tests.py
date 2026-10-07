@@ -13845,8 +13845,13 @@ def _fire_start(session_id=None):
     _pl = {"cwd": str(ROOT), "hook_event_name": "SessionStart"}
     if session_id is not None:
         _pl["session_id"] = session_id
+    # 🐛 [2026-10-07] (gate) Fired in write mode on the developer's own workspace, this consumed a
+    # real `repeat_digest.json` on the first firing -- shown once, then deleted -- so the second
+    # differed and the check's result depended on whether one happened to exist. Read-only fires
+    # the same emission and leaves the workspace as it was.
     return subprocess.run([sys.executable, str(_hook)], input=json.dumps(_pl),
-                          capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env=dict(os.environ, **{ws.READ_ONLY_ENV: "1"})).stdout
 
 
 _a1, _a2 = _fire_start("session-AAA"), _fire_start("session-AAA")
