@@ -421,9 +421,27 @@ def main():
     except Exception:
         return 0
     _tool = payload.get("tool_name") or ""
-    if _tool not in ("Read", "Bash"):
+    if _tool not in ("Read", "Bash", "Grep"):
         return 0
     root = ws.hook_root(payload)
+    # 🎯 [2026-10-07] (owner, 2026-10-07) A credential file read by the agent's OWN tool reaches the
+    # model whole; nothing downstream can scrub a tool's result. Refused here, before the call, in
+    # any repository chamnan is installed in -- a workspace is not required to be protected. On by
+    # default; `guard_credential_reads: false` in .chamnan/config.json turns it off. Check 461.
+    try:
+        if ws.load_config(root).get("guard_credential_reads", True):
+            import redact
+            import vault
+            _hit = vault.tool_reads(_tool, payload.get("tool_input"), root)
+            if _hit:
+                _say(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": redact.for_a_terminal(redact.scrub(vault.refusal(_hit)))}}))
+                return 0
+    except Exception:      # noqa: BLE001 -- the guard failing must never break the call it inspects
+        pass
+    if _tool == "Grep":
+        return 0
     if not ws.workspace(root).is_dir() or not ws.load_config(root).get("warn_on_bulk_reads", True):
         return 0
 

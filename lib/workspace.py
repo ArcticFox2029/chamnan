@@ -584,6 +584,9 @@ DEFAULT_CONFIG = {
     # file. A notice, never a block — the one time someone genuinely needs to read package-lock.json
     # is the one time refusing would be most wrong.
     "warn_on_bulk_reads": True,
+    # Refuse the agent's own Read, Grep or shell read of a credential file (.env, kubeconfig, a
+    # private key) before it runs, so the value never reaches the model. lib/vault.py.
+    "guard_credential_reads": True,
     # When a file is opened, name what this repository already records about it — the decision, the
     # lesson, the procedure, and who depends on it. The same knowledge `chamnan-impact` answers on
     # demand, arriving without being asked, because the caller is a model and remembering to ask is

@@ -60,6 +60,14 @@ already reports the last released number while running newer code.
   items and list continuations are still stripped.
 - **The review skill reads the change before its description**, so the commit message cannot tell
   the reviewer what to see; a claim the code does not bear out is a finding.
+- **The agent can no longer read a credential file into the session.** chamnan's own commands
+  already refused a real `.env`, a kubeconfig or a private key, but the agent's own Read tool, a
+  shell `cat`, `head`, `grep` or `< file`, or a Grep aimed at the file still put the values in front
+  of the model, where no redaction can reach. Those calls are now refused before they run, with a
+  pointer to the variable names the map already lists. Templates such as `.env.example` are read as
+  before, a command that only copies or sources the file is allowed, and `guard_credential_reads:
+  false` turns it off. Verified to hold in bypass and accept-edits modes; it adds no measurable time
+  to the hook (151 ms against 155 ms without it, medians of 15 runs).
 
 ## What's new in 1.35.1
 

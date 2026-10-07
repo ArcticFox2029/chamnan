@@ -861,6 +861,7 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `index_token_budget` | `3000` | integer, tokens | Ceiling on the part of `MAP.md` injected every session. Over budget, the index is rolled up by directory rather than truncated, so nothing disappears silently. |
 | `output_byte_ceiling` | `9000` | integer, bytes | Ceiling on the **whole** injected block, in bytes rather than tokens, because that is the unit the host cuts on: Claude Code replaces a SessionStart hook's stdout over 10,000 bytes with its first 2,048 and a file path. That cut is positional, so it keeps whatever was printed first — the architecture index — and discards the rules, the decisions and the session handoff behind it. Over this ceiling chamnan drops whole sections instead, cheapest first, and names each one with the file to read it in. `0` switches it off and takes the host's cut. |
 | `warn_on_bulk_reads` | `true` | `true` / `false` | A notice before a read pulls in a lock file, a minified bundle or a very large file. A notice, never a block. |
+| `guard_credential_reads` | `true` | `true` / `false` | Refuse the agent's own Read, Grep or shell read (`cat`, `head`, `grep`, `< file` …) of a credential file — a real `.env`, a kubeconfig, a private key — before it runs, so the value never reaches the model. Templates such as `.env.example` are read as before. The one place chamnan blocks a call. |
 | `reply_style` | `"off"` | `"off"` / `"concise"` / `"terse"` | Injects a per-repo instruction on how answers should be written. `off` injects nothing; `concise` drops preamble, restatement and closing offers while keeping full sentences; `terse` adds fragments and tables over prose. An unrecognised value injects nothing. |
 | `resume` | `true` | `true` / `false` | Session records under `.chamnan/sessions/`, and injecting the unfinished part of the most recent one. |
 | `resume_pointer` | `true` | `true` / `false` | On a resumed session, send a one-line pointer instead of the whole block — but only when the transcript proves the earlier block is still in context, with no compaction after it. Measured at 837 → 54 tokens on a 12-file repository. Every doubt falls back to the full block, so turning this off only removes a saving. |
@@ -2593,6 +2594,9 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
   of the agent by two mechanisms that *are* proven — injected at session start, and named again
   once per session when a command demonstrably targets that environment — and nothing here blocks,
   prompts, or claims it will.
+  The one block chamnan does make is narrower and was verified first: a `deny` on the agent's own
+  read of a credential file (`guard_credential_reads`), tested in `bypassPermissions` and
+  `acceptEdits` before it shipped, where the documented `deny` is unambiguous.
 - **Knowledge aging is only as good as `environments.md`, and says so out loud.** It compares
   claims against declared versions, never against a clock, so it inherits that file's accuracy
   completely. When every declared environment has gone cold it reports nothing and explains why
