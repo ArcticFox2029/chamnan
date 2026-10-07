@@ -501,6 +501,9 @@ def _starts_an_empty_table(boundaries):
     return not any(set(l.strip()) - set("|-: ") for l in run[1:])
 
 
+_LIST_ITEM = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]")
+
+
 def strip_html_comments(text):
     """`text` without its HTML comments, except inside fenced code blocks and inline code.
 
@@ -513,7 +516,12 @@ def strip_html_comments(text):
     """
     if "<!--" not in text:
         return text
+    # 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) An INDENTED code block -- four spaces or
+    # a tab, after a blank line -- is shown literally too, and its comments were stripped. Inside a
+    # list the same indent is a continuation paragraph, which hides a comment, so there it takes
+    # eight. Check 460.
     out, in_fence, in_comment = [], False, False
+    prev_blank, in_code, in_list = True, False, False
     for line in text.split("\n"):
         stripped = line.lstrip()
         if not in_comment and stripped.startswith(("```", "~~~")):
@@ -523,6 +531,20 @@ def strip_html_comments(text):
         if in_fence:
             out.append(line)
             continue
+        if not stripped:
+            prev_blank = True
+            out.append(line)
+            continue
+        indent = len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+        if not in_comment and indent >= (8 if in_list else 4) and (prev_blank or in_code):
+            in_code, prev_blank = True, False
+            out.append(line)
+            continue
+        in_code, prev_blank = False, False
+        if _LIST_ITEM.match(line):
+            in_list = True
+        elif indent == 0:
+            in_list = False
         res, i = [], 0
         while i < len(line):
             if in_comment:

@@ -26,6 +26,13 @@ six false positives against one for the same change split in two.
 <!-- 🎯 [2026-09-24] (R35, 2026-09-24) Screened from a research round on code review: the
      87%-to-28% figure is its first finding, and the review skill had no word about size. -->
 
+**Read the change before its description.** Work out what the diff does from the code and the four
+signals below first; only then read the commit message or pull-request text, and compare. A claim
+the code does not bear out, or a change the description never mentions, is a finding. Read the
+other way round, the description tells you what to see and you see it.
+<!-- 🎯 [2026-10-07] (BMAD-METHOD, read 2026-10-07) bmad-review stages the change's own narrative
+     for one lens only, so the others judge the code unprimed. Owner: "2 3 ดูดี". -->
+
 ## The four signals, and what each one is for
 
 **1 · Who breaks.** The import graph. Say the number and name the surprising ones — *"six call
