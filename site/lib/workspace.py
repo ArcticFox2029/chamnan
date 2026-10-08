@@ -957,6 +957,27 @@ def ceiling_env_status(raw):
     return f"ignored — above the ceiling's bound of {cap}"
 
 
+# 🐛 [2026-10-08] (R4 acc4, 2026-10-08) Every default a release has since replaced, per key.
+# `ensure()` writes the whole DEFAULT_CONFIG into config.json on first run, so a workspace holds
+# every default as if the user had chosen it -- and a later release that changes one never reaches
+# it. Reproduced: 9,000 -> 9,500 for `output_byte_ceiling` (eb947de, 2026-09-15) left this
+# repository's own plugin checkout at 9,000 three weeks on, while a fresh workspace got 9,500. A
+# value equal to a past default is read as "never chosen" and follows the current one; the one
+# user who typed exactly the old number by hand is indistinguishable, and pays by moving with the
+# release. Check 475 derives these from the release tags, so a default changed without being
+# listed here fails the gate rather than stranding every existing workspace.
+PAST_DEFAULTS = {
+    "output_byte_ceiling": (9000,),
+}
+
+
+def _current_default_if_past(key, value):
+    """`value`, or the current default when `value` is one a release has since replaced."""
+    if value in PAST_DEFAULTS.get(key, ()) and type(value) is type(DEFAULT_CONFIG[key]):
+        return DEFAULT_CONFIG[key]
+    return value
+
+
 def _in_range(key, value):
     """False for a value whose TYPE is right and whose meaning is not."""
     if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):
@@ -1037,7 +1058,7 @@ def load_config(root=None):
         # disk is older than it. Reproduced: a log and a session record written one second earlier,
         # both deleted. Session records are committed work.
         if isinstance(v, want) and _in_range(k, v):
-            cfg[k] = v
+            cfg[k] = _current_default_if_past(k, v)
     _CONFIG_MEMO[stamp] = dict(cfg)
     return cfg
 
@@ -2342,7 +2363,7 @@ def ensure(root=None):
         # option cannot sit in the file looking as though it still does something.
         # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
         # filter, and then raises TypeError on the first `>` comparison in a different module.
-        good = {k: v for k, v in current.items()
+        good = {k: _current_default_if_past(k, v) for k, v in current.items()
                 if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
                 and _in_range(k, v)}
         merged.update(good)

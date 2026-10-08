@@ -38,6 +38,11 @@ already reports the last released number while running newer code.
   true}` `` and the same with a number came back with `<REDACTED>` in place of `true` or the
   number, because the closing backtick was read as part of the value. A credential in the same
   place is still replaced.
+- **An improved default now reaches workspaces made before it.** `config.json` holds every
+  default, so when a release changed one, existing workspaces kept the old number as if someone had
+  chosen it: `output_byte_ceiling` stayed at 9000 after the default became 9500. A value still equal
+  to a default an earlier release shipped now follows the current one, and is rewritten in the
+  file; a value you changed is kept as you wrote it.
 
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.

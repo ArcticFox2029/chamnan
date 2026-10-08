@@ -842,6 +842,8 @@ whatever repository contains it, and every number printed afterwards is about th
 
 Everything lives in `.chamnan/config.json`, written on the first index run with these defaults.
 Every value below was read from `lib/workspace.py`, which is the only place defaults are defined.
+A value still equal to a default an earlier release shipped is read as never chosen, and follows
+the new default when chamnan is upgraded; a value you changed stays as you wrote it.
 
 | Option | Default | Valid values | What it controls |
 |---|---|---|---|
@@ -859,7 +861,7 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `log_retention_days` | `7` | integer, days | Files under `.chamnan/logs/` older than this are deleted on every command. Best-effort and silent — housekeeping never fails a command you asked for. |
 | `language` | `"en"` | any language, e.g. `"th"` | The language chamnan **writes in** when it generates file comments and records procedures. It never rewrites anything already written, and it never affects the language of replies to you. |
 | `index_token_budget` | `3000` | integer, tokens | Ceiling on the part of `MAP.md` injected every session. Over budget, the index is rolled up by directory rather than truncated, so nothing disappears silently. |
-| `output_byte_ceiling` | `9000` | integer, bytes | Ceiling on the **whole** injected block, in bytes rather than tokens, because that is the unit the host cuts on: Claude Code replaces a SessionStart hook's stdout over 10,000 bytes with its first 2,048 and a file path. That cut is positional, so it keeps whatever was printed first — the architecture index — and discards the rules, the decisions and the session handoff behind it. Over this ceiling chamnan drops whole sections instead, cheapest first, and names each one with the file to read it in. `0` switches it off and takes the host's cut. |
+| `output_byte_ceiling` | `9500` | integer, bytes | Ceiling on the **whole** injected block, in bytes rather than tokens, because that is the unit the host cuts on: Claude Code replaces a SessionStart hook's stdout over 10,000 bytes with its first 2,048 and a file path. That cut is positional, so it keeps whatever was printed first — the architecture index — and discards the rules, the decisions and the session handoff behind it. Over this ceiling chamnan drops whole sections instead, cheapest first, and names each one with the file to read it in. `0` switches it off and takes the host's cut. |
 | `warn_on_bulk_reads` | `true` | `true` / `false` | A notice before a read pulls in a lock file, a minified bundle or a very large file. A notice, never a block. |
 | `guard_credential_reads` | `true` | `true` / `false` | Refuse the agent's own Read, Grep or shell read (`cat`, `head`, `grep`, `< file` …) of a credential file — a real `.env`, a kubeconfig, a private key — before it runs, so the value never reaches the model. Templates such as `.env.example` are read as before. The one place chamnan blocks a call. |
 | `reply_style` | `"off"` | `"off"` / `"concise"` / `"terse"` | Injects a per-repo instruction on how answers should be written. `off` injects nothing; `concise` drops preamble, restatement and closing offers while keeping full sentences; `terse` adds fragments and tables over prose. An unrecognised value injects nothing. |
