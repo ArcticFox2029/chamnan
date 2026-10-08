@@ -21,6 +21,13 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **One failed command is remembered once.** The failure log could record a single failed call
+  twice, and the repeat warning then announced a first failure as one that had happened before.
+  Each record now carries the host's call id, and a call already recorded is skipped.
+- **A token in a URL query parameter is redacted.** `?token=…`, `&key=…`, `?session=…` and `?sid=…`
+  kept their values. The bare words still name things in prose and schemas, so the rule applies
+  only inside a URL query and only to credential-shaped values.
+
 - **Writing a file through a symlink keeps the link.** chamnan's safe write put a plain file where
   a symlink had been, so `AGENTS.md -> CLAUDE.md`, or a config linked into place by a dotfile
   manager, lost its link and the real file kept the old content. The write now goes to the file the

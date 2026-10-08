@@ -128,6 +128,21 @@ def failure_of(payload):
     return f"Exit code {code}" + (f" — {detail}" if detail else "")
 
 
+_DEDUP_TAIL = 64 * 1024
+
+
+def _already_recorded(root, call):
+    """True when the last rows of the failure log already hold this tool call."""
+    try:
+        with (ws.workspace(root) / LOG).open("rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - _DEDUP_TAIL))
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return False
+    return ('"call": "%s"' % call) in tail or ('"call":"%s"' % call) in tail
+
+
 def record(payload, err=None):
     """Write one scrubbed line. Returns True when something was written."""
     if err is None:
@@ -139,6 +154,15 @@ def record(payload, err=None):
         return False
     if ws.workspace(root) is None or not ws.workspace(root).is_dir():
         return False                      # not a chamnan workspace; say nothing, write nothing
+    # 🐛 [2026-10-08] (R12 acc5, 2026-10-08: at-least-once delivery means dedupe on the event id)
+    # This hook is registered for both the failure event and the ordinary post event, and one failed
+    # call could be recorded twice -- 3 same-second pairs in a real 265-row log. `gotcha` counts two
+    # rows as a repeat, so a single failure was announced as one that had happened before. The
+    # host's tool_use_id is kept on the row, and a call already recorded is not recorded again.
+    # Check 472.
+    call = str(payload.get("tool_use_id") or "")[:80]
+    if call and _already_recorded(root, call):
+        return False
     err = redact.scrub(err)[:ERR_CHARS]
     row = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
            "tool": str(payload.get("tool_name") or "")[:40],
@@ -147,6 +171,8 @@ def record(payload, err=None):
     ms = payload.get("duration_ms")
     if isinstance(ms, (int, float)):
         row["ms"] = int(ms)
+    if call:
+        row["call"] = call
     row.update(ws.actor(payload))
     ws.append_jsonl(root, LOG, row, MAX_RECORDS)
     return True

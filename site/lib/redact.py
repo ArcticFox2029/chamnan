@@ -1328,6 +1328,14 @@ def _scrub_sql_dump(text):
         text = text[:a] + PLACEHOLDER + text[b:]
     return text
 
+# 🐛 [2026-10-08] (R17 acc4, 2026-10-08: CWE-598, a token in a query string is logged everywhere)
+# `?token=…`, `&key=…`, `?session=…` and `?sid=…` kept their value: bare `token` and `key` are left
+# out of the secret words on purpose, because in prose and schemas they name things. Inside a URL
+# query the name is specific -- it is a parameter carrying a value -- so there, and only there, a
+# credential-shaped value is replaced. Check 472.
+URL_QUERY_CREDENTIAL = _lazy(lambda: re.compile(
+    r"(?i)(?<=[?&])((?:token|key|session|sessionid|sid)=)([A-Za-z0-9._~%+/=-]{16,512})"))
+
 def _scrub_cookie_jar(jar):
     return _COOKIE_PAIR.sub(
         lambda m: f"{m.group('k')}={PLACEHOLDER}" if _cookie_value_shaped(m.group("v")) else m.group(0), jar)
@@ -3502,6 +3510,9 @@ def scrub(text, windowed=True, *, _unmask=True):
         else f"{m.group('head')}{PLACEHOLDER}\"", text)
     if re.search(r"(?i)\binsert\s+(?:ignore\s+)?into\b|^copy\s", text, re.M):
         text = _scrub_sql_dump(text)
+    if "?" in text and "=" in text:
+        text = URL_QUERY_CREDENTIAL.sub(
+            lambda m: f"{m.group(1)}{PLACEHOLDER}" if _reads_like_a_credential(m.group(2)) else m.group(0), text)
     if "ookie" in text or "OOKIE" in text or "-b " in text:
         text = COOKIE_STRING.sub(
             lambda m: m.group(0)[:m.start("jar") - m.start(0)] + _scrub_cookie_jar(m.group("jar")), text)
