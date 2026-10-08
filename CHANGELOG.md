@@ -34,6 +34,10 @@ already reports the last released number while running newer code.
   personal `glpat-` token was known; a pipeline trigger token, deploy token, runner token, CI job
   token and the rest of the family printed whole. An IFTTT Maker URL and a Zapier catch-hook URL
   are credentials by themselves, since anyone holding one can fire it, and are now replaced.
+- **A setting quoted inside Markdown backticks is no longer redacted.** `` `{"index_token_budget":
+  true}` `` and the same with a number came back with `<REDACTED>` in place of `true` or the
+  number, because the closing backtick was read as part of the value. A credential in the same
+  place is still replaced.
 
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.

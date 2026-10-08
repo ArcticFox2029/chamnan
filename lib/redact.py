@@ -356,7 +356,8 @@ _PLAIN_COUNT = _lazy(lambda: re.compile(r"(?:[0-9]{1,12}|[0-9]{1,3}(?:_[0-9]{3})
 
 def _is_a_token_count(key_part, value):
     """True for `<name>tokens` or `<name>budget = <1-12 plain digits>`: a usage count, never a credential."""
-    return bool(_TOKENS_KEY.search(key_part.rstrip()) and _PLAIN_COUNT.fullmatch(value))
+    # A closing inline-code backtick is Markdown, not the count's: see `_is_a_code_reference`. Check 476.
+    return bool(_TOKENS_KEY.search(key_part.rstrip()) and _PLAIN_COUNT.fullmatch(value.rstrip("`")))
 
 
 def _is_a_type_annotation(match):
@@ -2268,7 +2269,11 @@ def _is_a_code_reference(match):
     a plain word after a spaced `=` (`password = correcthorse` in an INI file). The quoted rule is
     untouched: a quoted value is a literal.
     """
-    raw = match.group(2) or ""
+    # 🐛 [2026-10-08] (self-measured: chamnan's own pointer hook) A value at the end of an inline code
+    # span keeps the span's closing backtick: `{"index_token_budget": true}` in a comment came back
+    # as `{"index_token_budget": <REDACTED>, because `true}`` + "`" was no code word. A backtick is
+    # never part of a credential, so it is Markdown, the same as the brace before it. Check 476.
+    raw = (match.group(2) or "").rstrip("`")
     value = raw.rstrip(",;!")
     if _SUBSCRIPT_REF.match(value.rstrip(")}")):
         return True
