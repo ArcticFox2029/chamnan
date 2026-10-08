@@ -453,6 +453,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | **macOS** | **Supported and tested.** Developed and exercised on macOS (arm64) with Python 3.12; the test suite and the polyglot run below were both done there. |
 | **Linux** | **Tested in CI on every commit**, at Python 3.9 and 3.13 — the declared floor runs there and nowhere else. Not for want of a build — darwin-arm64 publishes 3.9.13, same as Windows — but because a floor only needs proving once, and Linux is where it is proven. That is a cost argument, not an availability one. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
 | **Windows** | **Tested in CI on every commit**, at Python 3.9 and 3.13, on `windows-latest`. The `bin/` commands are extensionless POSIX scripts that `cmd.exe` cannot resolve through `PATHEXT`, so a generated `.cmd` shim sits beside each one (and beside each hook script) and hands it to the Python launcher; CI runs the shims themselves through `cmd.exe`, not just the underlying scripts. The optional Git hook is still a `/bin/sh` script and needs a shell that can run one — Git for Windows ships `sh.exe`, so it works there. Under WSL it is the Linux row above. |
+| **Claude Code on the web** | **Does not run there.** A cloud session does not install plugins enabled in a repository's settings or listed as extra marketplaces ([the host's documentation](https://code.claude.com/docs/en/cloud-environments)), so chamnan's hooks never start and no block appears. Nothing is wrong with the repository when that happens; run the session locally to get it. |
 
 ### Running it on each operating system
 
@@ -889,6 +890,11 @@ terse here" is enough, and Claude edits it for you.
 `config.json` is **merged**, not replaced: keys you set are kept, and keys the plugin no longer has
 are dropped. So an option that disappears after an upgrade was removed from the plugin — it is not
 a lost setting.
+
+A value still equal to a default that an earlier release shipped is treated as never chosen and moves
+to the new default — `output_byte_ceiling` at 9000 becomes 9500. A value you changed stays as you
+wrote it. The one case this cannot tell apart is a value you typed that happens to equal an old
+default; it moves with the release too.
 
 ## Any agent, not only Claude Code
 
