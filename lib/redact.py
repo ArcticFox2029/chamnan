@@ -2458,7 +2458,7 @@ def _value_is_the_key_itself(key_part, value):
 # that grows every time somebody adds a word below, which is this repository's most recorded
 # defect sitting in the file whose job is not to miss things.
 #
-# The stems are not written by hand any more. `_secret_word_stems` PARSES `SECRET_WORDS` and, for
+# The stems are not written by hand any more. `secret_word_stems()` PARSES `SECRET_WORDS` and, for
 # every top-level alternative, derives a set of literals that alternative cannot match without --
 # so adding a word below extends the stem set by itself and cannot be forgotten. A branch it
 # cannot cover disables the whole fast path rather than narrowing it (check 121 fails instead).

@@ -361,8 +361,8 @@ def collect(project_dir, want_opened=False, root=None):
                     # headline was the artefact. See the split in main().
                     bool(rec.get("isSidechain")),
                     # 🎯 Which transcript this call came from — one file is one session. The
-                    # before/after comparison is only meaningful across MANY sessions; see
-                    # `_one_session_warning` in main().
+                    # before/after comparison is only meaningful across MANY sessions; main()
+                    # warns when either side of the window holds one session or fewer.
                     path.stem,
                 )
                 prior = best.get(rid)
