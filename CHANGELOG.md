@@ -51,6 +51,10 @@ already reports the last released number while running newer code.
 - **A token right after an escape sequence is redacted.** `\nghp_…` inside a JSON string,
   `%22ghp_…` in a URL-encoded body and `"sk-…` printed whole, because the letter or digit of the
   escape was read as part of a longer word. A token glued to a real word is still left alone.
+- **An editor's backup or swap copy of a credential file is refused like the file.** `.env~`,
+  `#.env#`, `.id_rsa.swp`, `credentials~` and `server.key~` — what Vim and Emacs leave beside the
+  file — were opened while the originals were refused. A backup of a template such as
+  `.env.example~` is now read, as the template is.
 
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.

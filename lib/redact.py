@@ -1589,7 +1589,30 @@ def _names_to_judge(path):
             names.add(Path(os.path.realpath(str(path))).name.lower())
     except (OSError, ValueError, RuntimeError):
         pass
+    # 🐛 [2026-10-08] (R92 acc4, 2026-10-08: Vim swap files and Emacs backup and auto-save copies keep
+    # a secret after the file is cleaned) An editor's copy of a credential file is judged as the file
+    # itself: `.env~`, `#.env#`, `.id_rsa.swp`, `credentials~` and `server.key~` were opened while
+    # `.env`, `id_rsa`, `credentials` and `server.key` were refused. Check 480.
+    # The copy is judged AS the file, so a template's backup (`.env.example~`) stays readable too.
+    names = {u or n for n in names for u in _without_editor_wrapping(n)}
     return names
+
+
+_VIM_SWAP = _lazy(lambda: re.compile(r"\.(.+)\.sw[a-p]"))
+
+
+def _without_editor_wrapping(name):
+    """The names of the file an editor's backup, auto-save or swap copy stands for: `.env~` and
+    `#.env#` are `.env`, `.id_rsa.swp` is `id_rsa`. Vim does not add a second dot to a hidden file,
+    so `.git-credentials.swo` may stand for `git-credentials` or `.git-credentials`; both are
+    judged. The name unchanged when it is not such a copy."""
+    n = name.rstrip("~")
+    if len(n) > 2 and n[0] == "#" and n[-1] == "#":
+        n = n[1:-1]
+    m = _VIM_SWAP.fullmatch(n)
+    if not m:
+        return (n,)
+    return (m.group(1),) if m.group(1).startswith(".") else (m.group(1), "." + m.group(1))
 
 
 def is_blocked(path):
