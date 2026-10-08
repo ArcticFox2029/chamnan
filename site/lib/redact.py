@@ -169,6 +169,20 @@ def _holds_a_literal_default(value):
     return bool(m) and _reads_like_a_credential(m.group(1))
 
 
+def _is_a_safe_parameter_expansion(m):
+    """True when the matched `NAME:` / `NAME:=` is the inside of a `${NAME:-default}` expansion whose
+    default is not credential-shaped -- the name is a variable, not a key assigned a value.
+
+    🐛 [2026-10-08] (self-scan) With `:=` now a separator, `${DB_PASS:=<secret>}` and
+    `${API_KEY:-changeme}` in prose lost their tail to the bare rule, which read the name as a key.
+    The default decides, through the same judge as `_holds_a_literal_default`. Check 473."""
+    start = m.start()
+    if m.string[max(0, start - 2):start] != "${":
+        return False
+    close = m.string.find("}", start)
+    return close < 0 or not _holds_a_literal_default(m.string[start - 2:close + 1])
+
+
 def _names_where_it_lives(value):
     """True when the value names WHERE the secret is kept rather than being the secret.
 
@@ -499,7 +513,12 @@ PATTERNS = [
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{30,}")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{16,}")),
+    # 🐛 [2026-10-08] (R51 acc1, 2026-10-08: a leaked pipeline trigger token runs pipelines) GitLab
+    # issues a family of prefixed tokens and only the personal one, glpat-, was known: a pipeline
+    # trigger token (glptt-), deploy token (gldt-), runner token (glrt-), CI job token (glcbt-),
+    # feed token (glft-) and the rest printed whole. Kept in step with _CREDENTIAL_PREFIX. Check 474.
+    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])gl(?:pat|ptt|dt|rt|rtr|cbt|ft|imt|agent|soat|oas|ffct|wt)-"
+                             r"[A-Za-z0-9_-]{16,}")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])npm_[A-Za-z0-9]{30,}")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}")),
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])GOCSPX-[A-Za-z0-9_-]{16,}")),
@@ -561,6 +580,11 @@ LATE_PREFIXES = [
     _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])pypi-[A-Za-z0-9_-]{20,}")),
     _lazy(lambda: re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]{20,}")),
     _lazy(lambda: re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{20,}")),
+    # 🐛 [2026-10-08] (R51 acc1, 2026-10-08: "anyone with the URL can trigger the Zap") An IFTTT Maker
+    # URL carries the account-wide key in its path, and a Zapier catch hook is unauthenticated: the
+    # URL is the credential, with no key= for another rule to find. Check 474.
+    _lazy(lambda: re.compile(r"https://maker\.ifttt\.com/(?:trigger/[^/\s]+/(?:json/)?with/key|use)/[A-Za-z0-9_-]{16,}")),
+    _lazy(lambda: re.compile(r"https://hooks\.zapier\.com/hooks/catch/\d+/[A-Za-z0-9]{4,}/?")),
     # A signed URL carries its credential in the query string, where no `key=` and no `user:pass@`
     # exists for the other patterns to find. Reproduced end to end: an Azure SAS token in a
     # docstring reached the committed MAP.md verbatim, twice. The parameter names are anchored to a
@@ -2862,7 +2886,7 @@ _TEMPLATED = _lazy(lambda: re.compile(r"\{[^{}]*\}"))
 # disqualifies the exemption.
 _CREDENTIAL_PREFIX = _lazy(lambda: re.compile(
     r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprse]-|"
-    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_|cfk_|cfut_|cfat_|sb_secret_|oy2)", re.I))
+    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|gl(?:pat|ptt|dt|rt|rtr|cbt|ft|imt|agent|soat|oas|ffct|wt)-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_|cfk_|cfut_|cfat_|sb_secret_|oy2)", re.I))
 _WEAK_SECRET_WORD = _lazy(lambda: re.compile(r"(?:^|[^A-Za-z])keys?\s*$", re.I))
 
 
@@ -3673,6 +3697,7 @@ def scrub(text, windowed=True, *, _unmask=True):
         or _is_documented_prose(m)
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         or _is_unspaced_prose(m.group(2))
+        or _is_a_safe_parameter_expansion(m)
         or _names_where_it_lives(m.group(2))
         or _is_a_code_reference(m)
         # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) A count is not a credential: `output_tokens:

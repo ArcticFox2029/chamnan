@@ -30,6 +30,10 @@ already reports the last released number while running newer code.
 - **A secret held as a shell default is redacted.** `API_KEY=${API_KEY:-<secret>}` and
   `${DB_PASS:=<secret>}` were treated as pure indirection; a default that looks like a credential
   is now replaced, while `${PORT:-8080}` and `${API_KEY:-changeme}` stay readable.
+- **All of GitLab's token types are redacted, and IFTTT and Zapier webhook URLs.** Only the
+  personal `glpat-` token was known; a pipeline trigger token, deploy token, runner token, CI job
+  token and the rest of the family printed whole. An IFTTT Maker URL and a Zapier catch-hook URL
+  are credentials by themselves, since anyone holding one can fire it, and are now replaced.
 
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.
