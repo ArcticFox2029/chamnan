@@ -136,6 +136,39 @@ _A_SHELL_VARIABLE = _lazy(lambda: re.compile(
     r"^(?:\$[A-Z_][A-Z0-9_]{0,63}|%[A-Z_][A-Z0-9_]{0,63}%|\$env:[A-Za-z_][A-Za-z0-9_]{0,63})[,;)\]}\"']*$"))
 
 
+_UNSPACED_SCRIPTS = ((0x0E00, 0x0EFF), (0x1000, 0x109F), (0x1780, 0x17FF), (0x3040, 0x30FF),
+                     (0x3400, 0x4DBF), (0x4E00, 0x9FFF))
+
+
+def _is_unspaced_script(char):
+    """True for a letter of a script written without spaces between words (Thai, Lao, Khmer, CJK…)."""
+    o = ord(char)
+    return any(lo <= o <= hi for lo, hi in _UNSPACED_SCRIPTS)
+
+
+def _is_unspaced_prose(value):
+    """True for a run made only of letters and marks of a script written without spaces.
+
+    Shared by the prose judge and the bare-value rule: the bare rule's `\\S{6,}` captures a whole
+    Thai sentence where it captures one English word, so it has to ask this too."""
+    v = (value or "").rstrip(".,;:!?)]}\u2026\"'`")
+    return (bool(v) and len(v) <= 160 and any(_is_unspaced_script(c) for c in v)
+            and all(unicodedata.category(c)[:1] in ("L", "M") or c in " -" for c in v))
+
+
+# 🐛 [2026-10-08] (R27 acc4, 2026-10-08: compose-lint found credentials held as interpolation
+# defaults) `API_KEY=${API_KEY:-<secret>}` and `${DB_PASS:=<secret>}` hold a literal value after the
+# `:-`, `-`, `:=` or `=`, used whenever the variable is unset -- and `${…}` was waved through whole
+# as indirection by both judges that ask. A default that reads like a credential is not indirection.
+# Check 473.
+_SHELL_DEFAULT = _lazy(lambda: re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=]([^{}\s]{6,256})\}"))
+
+
+def _holds_a_literal_default(value):
+    m = _SHELL_DEFAULT.search(value or "")
+    return bool(m) and _reads_like_a_credential(m.group(1))
+
+
 def _names_where_it_lives(value):
     """True when the value names WHERE the secret is kept rather than being the secret.
 
@@ -155,7 +188,7 @@ def _names_where_it_lives(value):
     value = (value or "").strip().rstrip(",;")
     if len(value) > 64:
         return False
-    if value[:2] in ("$(", "${") or _A_SHELL_VARIABLE.match(value):
+    if (value[:2] in ("$(", "${") or _A_SHELL_VARIABLE.match(value)) and not _holds_a_literal_default(value):
         return True
     # A generic, a call or a subscript may open right after the path and the unquoted rule captures
     # only as far as the next space -- `z.infer<typeof schema>` arrives here as `z.infer<typeof`.
@@ -194,13 +227,20 @@ def _is_a_plain_word(value):
     if _A_DOTTED_REFERENCE.match(value):
         return True
     # `$(cmd)` and `${VAR}` are the shell's own indirection, the same claim as the dotted path.
-    if value[:2] in ("$(", "${") or _A_SHELL_VARIABLE.match(value):
+    if (value[:2] in ("$(", "${") or _A_SHELL_VARIABLE.match(value)) and not _holds_a_literal_default(value):
         return True
     # 🐛 [2026-09-13] R12.26: the prose guard was ASCII-only, so an ordinary translated word
     # beside a credential label was treated as the value itself. The R7 external corpus caught
     # `password: contraseña.`; the same defect applies to every alphabetic script. Keep the old
     # length and hyphen bounds, but let Python's Unicode alphabet test answer what a letter is.
     bare = value.rstrip(".,;:!?)]}\u2026\"'`")
+    # 🐛 [2026-10-08] (R39 acc1, 2026-10-08: Python's \w and str.isalpha are Unicode) Thai, Lao,
+    # Khmer, Myanmar, Chinese and Japanese are written without spaces between words, so a whole
+    # sentence is one run of letters -- and the 18-letter bound below read
+    # `password: ใช้รหัสผ่านที่ตั้งไว้ในระบบ` ("use the password set in the system") as a credential.
+    # A run made only of letters and marks of such a script is prose at any reasonable length. Check 473.
+    if _is_unspaced_prose(bare):
+        return True
     parts = bare.split("-")
     return (any(not char.isascii() for char in bare)
             and 1 <= len(parts) <= 4
@@ -1039,7 +1079,11 @@ def _token_shaped_userinfo(value):
 # colon and equals sign (U+FF1A, U+FF1D), and `db_password：value` passed through untouched while
 # the same line with `:` was caught. R69 asked for code-switched text to be measured as its own
 # slice; that slice was 7 of 8 before this line, and the one it missed was this.
-_KV_SEP = r"[:=\uFF1A\uFF1D]"
+# 🐛 [2026-10-08] (R37 acc1, 2026-10-08: Gitleaks counts ?= and := as assignments) Makefile and shell
+# assignments `API_TOKEN ?= …`, `export API_KEY := …`, `::=` and `+=` printed their value: only a
+# bare `:` or `=` separated a name from its value. `!=` stays out -- `if password != other` is a
+# comparison, not a value. Every rule routes through this one name, so all of them see it. Check 473.
+_KV_SEP = r"(?:[?:+]{1,2}=|[:=\uFF1A\uFF1D])"
 
 _KEY_RUN = r"[\w-]{0,%d}" % KEY_RUN_MAX
 
@@ -2831,7 +2875,7 @@ def _is_a_template_under_a_weak_name(key_part, value):
     has to carry nothing credential-shaped for the exemption to apply.
     """
     name = key_part.rstrip().rstrip("=:").rstrip().strip("\"'` ")
-    if not _WEAK_SECRET_WORD.search(name) or not _TEMPLATED.search(value):
+    if not _WEAK_SECRET_WORD.search(name) or not _TEMPLATED.search(value) or _holds_a_literal_default(value):
         return False
     literal = _TEMPLATED.sub("", value)
     if _LONG_MIXED_VALUE.search(literal) or _CREDENTIAL_PREFIX.search(literal):
@@ -2904,7 +2948,7 @@ def _is_only_a_template(value):
     stuck to the front of it, and this rule is not a way through.
     """
     stripped = (value or "").strip()
-    if not stripped:
+    if not stripped or _holds_a_literal_default(stripped):
         return False
     return bool(re.fullmatch(r"\$?\{\{?[^{}]*\}\}?", stripped))
 
@@ -3628,6 +3672,7 @@ def scrub(text, windowed=True, *, _unmask=True):
         or _is_documented_field_name(m)
         or _is_documented_prose(m)
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
+        or _is_unspaced_prose(m.group(2))
         or _names_where_it_lives(m.group(2))
         or _is_a_code_reference(m)
         # 🐛 [2026-09-30] (R165 acc2, 2026-09-30) A count is not a credential: `output_tokens:

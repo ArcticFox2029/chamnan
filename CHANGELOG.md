@@ -21,6 +21,16 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Makefile and shell assignments are redacted.** `API_TOKEN ?= …`, `export API_KEY := …`, `::=`
+  and `+=` printed their value; only a plain `=` or `:` was read as an assignment. A comparison
+  such as `password != other` is still left alone.
+- **A sentence in Thai, Japanese or Chinese after a password word is kept.** These scripts put no
+  spaces between words, so a whole sentence was taken for one token and redacted, while the same
+  sentence in English was kept. Mixed values such as `Tr0ub4dorภาษา99xx` are still redacted.
+- **A secret held as a shell default is redacted.** `API_KEY=${API_KEY:-<secret>}` and
+  `${DB_PASS:=<secret>}` were treated as pure indirection; a default that looks like a credential
+  is now replaced, while `${PORT:-8080}` and `${API_KEY:-changeme}` stay readable.
+
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.
   Each record now carries the host's call id, and a call already recorded is skipped.
