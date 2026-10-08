@@ -52,15 +52,43 @@ OPENSSL_PUBLIC = frozenset({"x509", "s_client", "verify", "crl", "version", "cip
 REGISTRY_CONFIGS = frozenset({".npmrc", ".pypirc", "pip.conf", "pip.ini", ".yarnrc", ".yarnrc.yml"})
 # The same idea for files whose name only means a registry config inside one directory.
 REGISTRY_CONFIGS_IN = frozenset({(".docker", "config.json"), (".m2", "settings.xml"),
-                                 ("pypoetry", "auth.toml"), (".bundle", "config")})
+                                 ("pypoetry", "auth.toml"), (".bundle", "config"),
+                                 (".cursor", "mcp.json"), (".vscode", "mcp.json"), (".gemini", "settings.json"),
+                                 ("Claude", "claude_desktop_config.json")})
+# 🐛 [2026-10-08] (R59 acc1, 2026-10-08: 24,008 secrets in MCP config files on public GitHub) An MCP
+# server config keeps the server's API key in its `env` block beside the command that starts it, the
+# same mix as a registry config, and `cat .mcp.json` brought the key into the session. Check 477.
+MCP_CONFIGS = frozenset({".mcp.json", "mcp.json", "mcp_config.json"})
+# 🐛 [2026-10-08] (R59 acc1, 2026-10-08: the s1ngularity malware enumerated exactly these files; R53
+# acc1, 2026-10-08: a pod's service-account token) Where agent CLIs and cloud tools keep the user's
+# sign-in -- Claude Code's `.credentials.json`, Codex's `auth.json`, Gemini's `oauth_creds.json`, gh,
+# Copilot, gcloud's application-default login -- and the token Kubernetes mounts into a pod. Each was
+# read into the session whole. Refused when the file really holds a token, like a registry config;
+# the tool that owns the file reads it itself. Check 477.
+TOOL_LOGINS_IN = frozenset({(".claude", ".credentials.json"), (".codex", "auth.json"),
+                            (".gemini", "oauth_creds.json"), ("gh", "hosts.yml"),
+                            ("github-copilot", "apps.json"), ("github-copilot", "hosts.json"),
+                            ("gcloud", "application_default_credentials.json"), ("serviceaccount", "token")})
 _REGISTRY_READ_CAP = 256 * 1024
+# Lower-cased once: the directory names above are written as the tools spell them (`Claude`).
+_REGISTRY_PAIRS = frozenset((d.lower(), n.lower()) for d, n in REGISTRY_CONFIGS_IN)
+_TOOL_LOGIN_PAIRS = frozenset((d.lower(), n.lower()) for d, n in TOOL_LOGINS_IN)
 
 
 def _is_registry_config(path):
     # Judged on the real file too when the leaf is a link or a directory-qualified name, so a
     # symlinked `.docker` directory is still `.docker` (check 466).
     for p in redact._with_resolved(path, *{n for _d, n in REGISTRY_CONFIGS_IN}):
-        if p.name.lower() in REGISTRY_CONFIGS or (p.parent.name.lower(), p.name.lower()) in REGISTRY_CONFIGS_IN:
+        if (p.name.lower() in REGISTRY_CONFIGS or p.name.lower() in MCP_CONFIGS
+                or (p.parent.name.lower(), p.name.lower()) in _REGISTRY_PAIRS):
+            return True
+    return False
+
+
+def _is_tool_login(path):
+    """True for a file where an agent CLI, a cloud tool or Kubernetes keeps a sign-in token."""
+    for p in redact._with_resolved(path, *{n for _d, n in TOOL_LOGINS_IN}):
+        if (p.parent.name.lower(), p.name.lower()) in _TOOL_LOGIN_PAIRS:
             return True
     return False
 
@@ -96,7 +124,7 @@ def _is_credential(token, root):
     try:
         if redact.is_never_opened(path):
             return token
-        if _is_registry_config(path) and _registry_carries_a_secret(path):
+        if (_is_registry_config(path) or _is_tool_login(path)) and _registry_carries_a_secret(path):
             return token
     except (OSError, ValueError):
         return None
@@ -247,11 +275,16 @@ def refusal(name):
     """The reason handed back to the model when a read is refused."""
     import mdblock
     shown = mdblock.as_quoted(Path(name).name, 80)
+    if _is_tool_login(Path(str(name).strip("'\""))):
+        return (f"chamnan: `{shown}` is where a tool keeps its sign-in token, so it is not read into the "
+                f"session. The tool that owns it reads it itself -- run that tool (claude, codex, gemini, "
+                f"gh, gcloud, kubectl) rather than opening the file. If you need to know what it holds, "
+                f"ask the user.")
     if _is_registry_config(Path(str(name).strip("'\""))):
-        return (f"chamnan: `{shown}` carries a registry token, so it is not read into the session raw. "
+        return (f"chamnan: `{shown}` carries a registry or server token, so it is not read into the session raw. "
                 f"`chamnan-peek {mdblock.as_quoted(str(name), 200)}` shows the same file with the token "
                 f"replaced -- registry URLs, scopes and settings stay readable. To USE the token, run the "
-                f"tool that reads this file (npm, pip, twine, docker, mvn); it reads the file itself.")
+                f"tool that reads this file (npm, pip, twine, docker, mvn, an MCP host); it reads the file itself.")
     # 🎯 [2026-10-07] (R60 acc4, 2026-10-07: use a secret without seeing it) A refusal that only says
     # "ask the user" stops work that never needed the value in the session: a command needs the
     # value, the model does not. So the reason says how to hand the file to the program that uses

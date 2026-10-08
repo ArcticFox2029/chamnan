@@ -43,6 +43,11 @@ already reports the last released number while running newer code.
   chosen it: `output_byte_ceiling` stayed at 9000 after the default became 9500. A value still equal
   to a default an earlier release shipped now follows the current one, and is rewritten in the
   file; a value you changed is kept as you wrote it.
+- **Agent tools' sign-in files and MCP configs are not read into the session.** `cat` of Claude
+  Code's `.credentials.json`, Codex's `auth.json`, Gemini's `oauth_creds.json`, gh's `hosts.yml`,
+  Copilot's `apps.json`, gcloud's application-default login, a pod's service-account token, or an
+  `.mcp.json` holding a server key brought the token into the conversation. Each is now refused when
+  it really holds a token, and read as before when it does not.
 
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.
