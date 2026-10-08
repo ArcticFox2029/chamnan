@@ -48,6 +48,9 @@ already reports the last released number while running newer code.
   Copilot's `apps.json`, gcloud's application-default login, a pod's service-account token, or an
   `.mcp.json` holding a server key brought the token into the conversation. Each is now refused when
   it really holds a token, and read as before when it does not.
+- **A token right after an escape sequence is redacted.** `\nghp_…` inside a JSON string,
+  `%22ghp_…` in a URL-encoded body and `"sk-…` printed whole, because the letter or digit of the
+  escape was read as part of a longer word. A token glued to a real word is still left alone.
 
 - **One failed command is remembered once.** The failure log could record a single failed call
   twice, and the repeat warning then announced a first failure as one that had happened before.

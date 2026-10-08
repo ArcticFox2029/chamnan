@@ -465,15 +465,25 @@ def _declares_a_type(match):
 AUTH_SCHEME_SECRET = _lazy(lambda: re.compile(
     r"(?<![A-Za-z0-9_-])(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{12,})"))
 
+# 🐛 [2026-10-08] (R59 acc1, 2026-10-08: scanners missed live secrets through over-strict word
+# boundaries) A vendor token is anchored on "no letter or digit before it", so the token after an
+# escape -- `\nghp_…` in a JSON string, `%22ghp_…` in a URL-encoded body, `\u0022sk-…` -- printed
+# whole: the `n` of `\n` and the `2` of `%22` are letters and digits. Those escapes are boundaries.
+# A token glued to a real word (`xghp_…`) still is not, which keeps identifiers out. Check 478.
+_ESCAPED_BEFORE = r"(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})"
+_TOKEN_START = r"(?:(?<![A-Za-z0-9])|" + _ESCAPED_BEFORE + ")"
+# The same, for the two vendors whose own boundary also excludes `_`, `.` and `-`.
+_STRICT_TOKEN_START = r"(?:(?<![A-Za-z0-9_.-])|" + _ESCAPED_BEFORE + ")"
+
 PATTERNS = [
     # Provider tokens with unambiguous prefixes — no false positives worth worrying about.
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}")),
     # 🐛 [2026-09-08] `xoxe-` and `xoxe.` are Slack's rotation-era refresh and access
     # tokens, introduced 2021, and neither matched `xox[baprs]-` -- so a rotated token
     # leaked in full with the word "token" on the same line (R2 agent 2, 2026-09-08).
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])xox[baprse]-[A-Za-z0-9-]{10,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])xoxe\.xox[bp]-[A-Za-z0-9.-]{10,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"xox[baprse]-[A-Za-z0-9-]{10,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"xoxe\.xox[bp]-[A-Za-z0-9.-]{10,}")),
     # \U0001f41b [2026-09-09] Six vendor prefixes that this module NAMES in `_CREDENTIAL_PREFIX` and
     # never enforced anywhere. Measured with each vendor's documented body length and charset,
     # computed rather than typed: a Google OAuth token, a DigitalOcean personal token, a Shopify
@@ -491,12 +501,12 @@ PATTERNS = [
     # nothing.
     #
     # Dots are in the body for the two that need them — `ya29.` and `SG.` — and nowhere else.
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9_.-])ya29\.[A-Za-z0-9_.\-]{20,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])dop_v1_[A-Za-z0-9]{32,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])shp(?:at|ca|pa|ss)_[A-Za-z0-9]{24,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])dckr_pat_[A-Za-z0-9_-]{24,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])phc_[A-Za-z0-9]{32,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9_.-])SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}")),
+    _lazy(lambda: re.compile(_STRICT_TOKEN_START + r"ya29\.[A-Za-z0-9_.\-]{20,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"dop_v1_[A-Za-z0-9]{32,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"shp(?:at|ca|pa|ss)_[A-Za-z0-9]{24,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"dckr_pat_[A-Za-z0-9_-]{24,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"phc_[A-Za-z0-9]{32,}")),
+    _lazy(lambda: re.compile(_STRICT_TOKEN_START + r"SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}")),
     # 🐛 `AKIA` alone. AWS issues access key IDs under four prefixes and the commonest one in CI is
     # `ASIA` — the temporary credential every assumed role hands out — which sailed straight through
     # (R5 agent 2, against gitleaks' and detect-secrets' own fixtures).
@@ -511,32 +521,32 @@ PATTERNS = [
     # untouched. A key ID is exactly 20 characters of its own alphabet: what may not follow it is
     # MORE of that alphabet, which would make it a longer token — not an underscore, which makes it
     # a suffixed name around the same key. (R3.1 boundary mutation, found by the right-edge grid.)
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{30,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"AIza[0-9A-Za-z_-]{30,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),
     # 🐛 [2026-10-08] (R51 acc1, 2026-10-08: a leaked pipeline trigger token runs pipelines) GitLab
     # issues a family of prefixed tokens and only the personal one, glpat-, was known: a pipeline
     # trigger token (glptt-), deploy token (gldt-), runner token (glrt-), CI job token (glcbt-),
     # feed token (glft-) and the rest printed whole. Kept in step with _CREDENTIAL_PREFIX. Check 474.
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])gl(?:pat|ptt|dt|rt|rtr|cbt|ft|imt|agent|soat|oas|ffct|wt)-"
+    _lazy(lambda: re.compile(_TOKEN_START + r"gl(?:pat|ptt|dt|rt|rtr|cbt|ft|imt|agent|soat|oas|ffct|wt)-"
                              r"[A-Za-z0-9_-]{16,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])npm_[A-Za-z0-9]{30,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])GOCSPX-[A-Za-z0-9_-]{16,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])hf_[A-Za-z0-9]{30,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"npm_[A-Za-z0-9]{30,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"GOCSPX-[A-Za-z0-9_-]{16,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"hf_[A-Za-z0-9]{30,}")),
     # 🎯 [2026-09-30] (R22 acc4, 2026-09-30) Two 2025-2026 provider formats that stood alone in
     # text with no secret word nearby and passed clear. Cloudflare's `cfk_`, `cfut_` and `cfat_`
     # tokens are 40 alphanumeric characters plus an 8-hex CRC32 checksum (Cloudflare DLP predefined
     # profiles). Supabase's `sb_secret_` key is 22 base64url characters, an underscore and an
     # 8-character checksum. `sb_publishable_` is PUBLIC by design and deliberately has no rule.
     # The right edge refuses more of the alphabet, so a longer run is not half-matched.
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])cf(?:k|ut|at)_[A-Za-z0-9]{40}[0-9a-f]{8}(?![A-Za-z0-9])")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])sb_secret_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{8}(?![A-Za-z0-9_-])")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"cf(?:k|ut|at)_[A-Za-z0-9]{40}[0-9a-f]{8}(?![A-Za-z0-9])")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"sb_secret_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{8}(?![A-Za-z0-9_-])")),
     # 🐛 [2026-09-30] (R71 acc2, 2026-09-30) A NuGet API key is `oy2` plus 43 lowercase letters or
     # digits (46 characters; the shape TruffleHog's NuGet detector and GitHub's `nuget_api_key`
     # pattern use). Standing alone, with no secret word nearby, it passed clear. Hard edges on both
     # sides, so a longer run or an ordinary word ending in `oy2` is not touched.
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])oy2[a-z0-9]{43}(?![A-Za-z0-9])")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"oy2[a-z0-9]{43}(?![A-Za-z0-9])")),
     # An Authorization header names its scheme and then hands over the credential. Matching this
     # explicitly is not a nicety: the bare-assignment rule below sees "Authorization:" as a secret
     # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
@@ -551,7 +561,7 @@ PATTERNS = [
     # floor stays on the first two segments, which is what stops `a.b.c` prose from matching; the
     # signature may now be empty, and a trailing dot is required so a two-segment string still is
     # not a token. (R3 agent 2, 2026-09-08.)
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+    _lazy(lambda: re.compile(_TOKEN_START + r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
                r"(?![A-Za-z0-9_-])")),
     # Private key and certificate blocks.
     # "BLOCK" is not decoration: a PGP secret key is delimited "PRIVATE KEY BLOCK-----", so a
@@ -577,8 +587,8 @@ PATTERNS = [
 # Prefixes added after the original list was written, and two shapes where the secret is not a
 # value at all but a path segment — no `key=` and no `user:pass@` for the other patterns to find.
 LATE_PREFIXES = [
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])xapp-[A-Za-z0-9-]{10,}")),                      # Slack app-level, not xox[baprs]-
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])pypi-[A-Za-z0-9_-]{20,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"xapp-[A-Za-z0-9-]{10,}")),                      # Slack app-level, not xox[baprs]-
+    _lazy(lambda: re.compile(_TOKEN_START + r"pypi-[A-Za-z0-9_-]{20,}")),
     _lazy(lambda: re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]{20,}")),
     _lazy(lambda: re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{20,}")),
     # 🐛 [2026-10-08] (R51 acc1, 2026-10-08: "anyone with the URL can trigger the Zap") An IFTTT Maker
@@ -602,9 +612,9 @@ LATE_PREFIXES = [
     # age's is the interesting one: it is the private half of an age keypair, the whole point of
     # which is that it never leaves the machine, and its fixed `AGE-SECRET-KEY-1` prefix makes it
     # the least ambiguous credential shape in this list. R8 agent 9.
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])AGE-SECRET-KEY-1[0-9A-Za-z]{50,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])pscale_(?:pw|tkn|oauth)_[A-Za-z0-9_.-]{20,}")),
-    _lazy(lambda: re.compile(r"(?<![A-Za-z0-9])dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9_-]{20,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"AGE-SECRET-KEY-1[0-9A-Za-z]{50,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"pscale_(?:pw|tkn|oauth)_[A-Za-z0-9_.-]{20,}")),
+    _lazy(lambda: re.compile(_TOKEN_START + r"dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9_-]{20,}")),
 ]
 
 # [R8 2026-09-13, closed out] The non-English credential words the ASSIGNMENT path
