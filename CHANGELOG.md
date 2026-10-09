@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A secret is hidden wherever it repeats, not only beside its name.** A value redacted as
+  `db_password = "…"` printed in full two lines later in `connect("…")` or an `echo`, because every
+  rule finds a value by the name next to it. Once a long, credential-shaped value has been found by
+  its name, every other whole occurrence of it in the same text is hidden too.
 - **The commit guard's warning is seen.** When a commit staged something shaped like a secret, the
   warning went only to the hook's error stream, which Claude Code does not show for a hook that
   succeeds — the guard found the key and nobody heard it. The warning, and the notice that a scan

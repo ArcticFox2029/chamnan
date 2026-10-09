@@ -3556,6 +3556,7 @@ def scrub(text, windowed=True, *, _unmask=True):
                 _src, _best = _cand, _cand_out
         if _best is not None:
             return _best
+    _given = text
     text = _redact_yaml_anchor_targets(text)
     text = _redact_secret_sections(text)
     text = _redact_secret_mappings(text)
@@ -3821,9 +3822,49 @@ def scrub(text, windowed=True, *, _unmask=True):
     # alone; NO space means the value ran straight into the continuation, so the first token of the
     # next line is its remainder. Runs on the result, so it fires only after a placeholder exists.
     # Tokens under 4 characters are too short to be a credential half and are left.
-    return _CONTINUED_VALUE_TAIL.sub(
+    return _mask_repeats(_given, _CONTINUED_VALUE_TAIL.sub(
         lambda m: m.group(0) if len(m.group(3)) < 4 else m.group(1) + "\\\n" + m.group(2) + PLACEHOLDER,
-        "".join(out))
+        "".join(out)))
+
+
+# A value worth hunting for elsewhere: long, unspaced, letters mixed with digits. A short or wordlike
+# value -- `hunter2`, `changeme` -- is left alone outside the place its name marked it.
+_REPEATABLE_SECRET = _lazy(lambda: re.compile(
+    r"^(?=[^\s]*[A-Za-z])(?=[^\s]*[0-9])[A-Za-z0-9_+/=.:~-]{12,}$"))
+
+
+def _mask_repeats(given, out):
+    """`out` with every other bare occurrence of a value the rules redacted masked as well.
+
+    🐛 [2026-10-09] (R106 acc4, 2026-10-09) Every rule finds a value by the NAME beside it, so
+    `db_password = "<value>"` lost its value and `connect("<value>")` two lines down printed it in
+    full. The values are recovered by aligning `out` against `given` at the placeholders -- the
+    rules only ever replace a span with PLACEHOLDER, so the text between two placeholders is shared
+    -- and any text that does not align (a placeholder already in the input, two placeholders
+    touching) leaves `out` as it was. Only a whole token is masked, never part of a longer one.
+    Check 487.
+    """
+    if PLACEHOLDER not in out or PLACEHOLDER in given:
+        return out
+    parts = out.split(PLACEHOLDER)
+    if not given.startswith(parts[0]) or not given.endswith(parts[-1]):
+        return out
+    values, pos = [], len(parts[0])
+    for part in parts[1:-1]:
+        at = given.find(part, pos + 1) if part else -1
+        if at < 0:
+            return out
+        values.append(given[pos:at])
+        pos = at + len(part)
+    end = len(given) - len(parts[-1])
+    if end <= pos:
+        return out
+    values.append(given[pos:end])
+    wanted = sorted({v for v in values if _REPEATABLE_SECRET.match(v) and v in out}, key=len, reverse=True)
+    if not wanted:
+        return out
+    return re.sub(r"(?<![A-Za-z0-9_+/=.~-])(?:" + "|".join(re.escape(v) for v in wanted)
+                  + r")(?![A-Za-z0-9_+/=~-])", PLACEHOLDER, out)
 
 
 _CONTINUED_VALUE_TAIL = _lazy(lambda: re.compile(
