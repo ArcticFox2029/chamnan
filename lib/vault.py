@@ -218,6 +218,35 @@ def _file_args(verb, args):
     return files
 
 
+# 🎯 [2026-10-09] (R82 acc4, 2026-10-08; R11 acc4, 2026-10-09; decided by the research skill's procedure,
+# acc4 consulted: option c) Commands that print every exported key or a stored password, rather than a
+# file holding one. Only the bulk forms: a named variable (`printenv PATH`) and a command run under an
+# environment (`env FOO=1 cmd`) stay allowed, because blocking those would need a policy over intent.
+# A short list of high-confidence hazards, not output redaction. Check 494.
+ENV_DUMP = "the whole environment"
+CREDENTIAL_HELPER = "git's stored credential"
+_ENV_FILE = re.compile(r"^/proc/[^/\s]+/environ$")
+_PS_LISTERS = frozenset({"get-childitem", "gci", "dir", "ls"})
+
+
+def _dumps_secrets(verb, args):
+    """ENV_DUMP or CREDENTIAL_HELPER when this command prints every secret at once, else None."""
+    if verb == "printenv":
+        return ENV_DUMP if not [a for a in args if not a.startswith("-")] else None
+    if verb == "env":
+        rest = [a for a in args if not a.startswith("-") and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", a)]
+        return ENV_DUMP if not rest else None
+    if verb in _PS_LISTERS and any(a.lower().rstrip("\\/") == "env:" for a in args):
+        return ENV_DUMP
+    if verb == "git":
+        positional = [a for a in args if not a.startswith("-")]
+        if positional[:1] == ["credential"] and positional[1:2] in (["fill"], ["get"]):
+            return CREDENTIAL_HELPER
+        if positional[:1] and positional[0].startswith("credential-") and "get" in positional[1:]:
+            return CREDENTIAL_HELPER
+    return None
+
+
 def bash_reads(command, root=None, posix=True):
     """The credential file a shell command would print, or None."""
     text = str(command or "")
@@ -227,6 +256,16 @@ def bash_reads(command, root=None, posix=True):
         words = _words(segment, posix)
         if not words:
             continue
+        if any(_ENV_FILE.match(w.lstrip("<")) for w in words):
+            return ENV_DUMP
+        # Before the wrapper loop below, which steps over a leading `env` as a prefix.
+        _w0 = 0
+        while _w0 < len(words) and words[_w0] in ("sudo", "command", "exec", "time"):
+            _w0 += 1
+        if _w0 < len(words):
+            _dump = _dumps_secrets(words[_w0].rsplit("/", 1)[-1].lower(), words[_w0 + 1:])
+            if _dump:
+                return _dump
         # `< .env` and `<.env` feed the file to whatever runs; that is a read whatever the verb.
         for i, w in enumerate(words):
             if w == "<" and i + 1 < len(words):
@@ -285,6 +324,14 @@ def tool_reads(tool, tool_input, root=None):
 def refusal(name):
     """The reason handed back to the model when a read is refused."""
     import mdblock
+    if name == ENV_DUMP:
+        return ("chamnan: this prints every exported variable, keys and tokens included, into the session, "
+                "so it is not run. Ask for the one you need by name -- `printenv PATH`, `echo \"$HOME\"` -- "
+                "which still works. This is a short list of bulk dumps, not a filter on what commands print.")
+    if name == CREDENTIAL_HELPER:
+        return ("chamnan: this prints the stored password or token in full, so it is not run. To USE the "
+                "credential, run the git command that needs it (`git fetch`, `git push`); git asks its helper "
+                "itself. If you need to know which helper is configured, `git config --get credential.helper`.")
     shown = mdblock.as_quoted(Path(name).name, 80)
     if _is_tool_login(Path(str(name).strip("'\""))):
         return (f"chamnan: `{shown}` is where a tool keeps its sign-in token, so it is not read into the "
