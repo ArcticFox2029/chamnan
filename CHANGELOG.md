@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`.geminiignore` and `.claudeignore` keep a file out of the map.** chamnan already left out what
+  `.aiignore`, `.cursorignore`, `.codeiumignore` and `.aiexclude` name; a file named only in one of
+  these two still had its opening comment summarised into every session.
 - **Cookie jars and gcloud's token cache are refused like the credentials beside them.** Firefox's
   `cookies.sqlite`, a `cookies.txt` jar and gcloud's `access_tokens.db` were read into the session
   whole, and `sqlite3` was not a command the guard knew. A page called `cookies.md` stays readable.

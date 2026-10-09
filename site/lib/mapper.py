@@ -173,7 +173,8 @@ _TRACKED_AMBIGUOUS = {}
 _GENERATED_GLOBS = {}
 SKIPPED_GENERATED = set()
 SKIPPED_AI_IGNORED = set()
-_AI_IGNORE_FILES = (".aiignore", ".cursorignore", ".codeiumignore", ".aiexclude")
+_AI_IGNORE_FILES = (".aiignore", ".cursorignore", ".codeiumignore", ".aiexclude", ".geminiignore",
+                    ".claudeignore")
 _AI_IGNORE_PATTERNS = {}
 
 
@@ -182,6 +183,9 @@ _AI_IGNORE_PATTERNS = {}
 # summary into `.chamnan/MAP.md`, which is injected into every session. Users keep these files so AI
 # tools stay away from a path, and chamnan read none of them. Four names, gitignore syntax, at the
 # repository root only: `.aiignore`, `.cursorignore`, `.codeiumignore`, `.aiexclude`.
+# 🐛 [2026-10-09] (R160 acc5, 2026-10-09) `.geminiignore`, which Gemini CLI documents, and
+# `.claudeignore`, which Claude Code users write although Claude Code does not read it, state the
+# same intent; a path named only in either had its first comment injected. Check 491.
 def _ai_ignore_patterns(root):
     """`(negated, pattern)` pairs from the AI-exclusion files at `root`, in file order."""
     key = str(root)
