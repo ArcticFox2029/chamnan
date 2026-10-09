@@ -79,8 +79,10 @@ def _tell(text, payload=None, root=None):
     except Exception:                                             # noqa: BLE001
         pass
     print(text, file=sys.stderr)
+    # Scrubbed and filtered for a terminal like every other hook's context (check 158): the guard
+    # prints no matched text, but a file name in its report is repository text all the same.
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                             "additionalContext": text}}))
+                                             "additionalContext": redact.for_a_terminal(redact.scrub(text))}}))
 
 
 def _is_commit(command):
