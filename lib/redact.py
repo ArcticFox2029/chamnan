@@ -1506,7 +1506,11 @@ BLOCKED_SUFFIXES = (
 # untouched and the files inside it are each judged on their own.
 BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc", "_netrc",
                  ".pgpass", "pgpass.conf", ".git-credentials",
-                 "credentials", "secrets")
+                 "credentials", "secrets",
+                 # 🐛 [2026-10-09] (R147 acc5, 2026-10-09) gcloud's token cache beside its refused
+                 # `credentials.db`, Firefox's plain-text session cookies, and a Netscape cookie jar
+                 # curl logs in with. Whole names, so `cookies.md` is still a page. Check 490.
+                 "access_tokens.db", "cookies.sqlite", "cookies.txt")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
 # database at all -- it indexes source, and a .sqlite is not source. peek is asked for one file by

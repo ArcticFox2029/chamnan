@@ -26,7 +26,7 @@ READERS = frozenset({
     "cat", "head", "tail", "less", "more", "bat", "batcat", "nl", "tac", "grep", "egrep", "fgrep",
     "rg", "ag", "sed", "awk", "gawk", "cut", "sort", "uniq", "strings", "xxd", "od", "hexdump",
     "base64", "diff", "jq", "yq", "type", "get-content", "gc", "view", "vim", "vi", "nano", "emacs",
-    "column", "paste", "fold", "fmt", "pr", "iconv", "openssl", "keytool",
+    "column", "paste", "fold", "fmt", "pr", "iconv", "openssl", "keytool", "sqlite3",
 })
 # `git` prints file contents only through these.
 GIT_READERS = frozenset({"diff", "show", "log", "blame", "grep", "cat-file"})

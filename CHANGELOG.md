@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Cookie jars and gcloud's token cache are refused like the credentials beside them.** Firefox's
+  `cookies.sqlite`, a `cookies.txt` jar and gcloud's `access_tokens.db` were read into the session
+  whole, and `sqlite3` was not a command the guard knew. A page called `cookies.md` stays readable.
 - **Reading a credential file through PowerShell is refused, as it is through Bash.** The guard
   already knew `Get-Content`, `gc` and `type`, but the PowerShell tool on native Windows was never
   routed to it, so a credential file read that way reached the session whole.
