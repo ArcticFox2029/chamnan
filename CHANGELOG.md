@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The commit guard's warning is seen.** When a commit staged something shaped like a secret, the
+  warning went only to the hook's error stream, which Claude Code does not show for a hook that
+  succeeds — the guard found the key and nobody heard it. The warning, and the notice that a scan
+  ran out of time, now reach the session before the commit runs. The commit is still never blocked.
 - **A key split by an invisible joiner is no longer printed whole.** ZWNJ, ZWJ, the soft hyphen
   and the other invisible format characters that Indic scripts and emoji need were kept in
   everything chamnan prints, so a key with one of them inside was not recognised and printed in

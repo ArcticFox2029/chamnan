@@ -58,6 +58,20 @@ _SHELL_TOOLS = ("Bash", "PowerShell")
 _GIT_NAMES = ("git", "git.exe")
 
 
+def _tell(text):
+    """Say `text` where the session will see it, and on stderr for a terminal and the transcript.
+
+    🐛 [2026-10-09] (R103 claudeaccount1, 2026-10-09) This went to stderr alone, and Claude Code
+    shows a PreToolUse hook's stderr on exit 0 to nobody: every flagged commit in this workspace's
+    transcripts is a `hook_success` attachment with the warning in `stderr` and `content` empty.
+    `additionalContext` is what the model reads before the commit runs, which is the one moment
+    the warning can still change anything. The exit stays 0 -- this warns, it never blocks. Check 486.
+    """
+    print(text, file=sys.stderr)
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                             "additionalContext": text}}))
+
+
 def _is_commit(command):
     """True when this command line actually RUNS `git commit`, not merely contains the words."""
     for segment in canonical.segments(command):
@@ -126,12 +140,11 @@ def main():
         # staged minified bundle past ~4 MB ran the guard out of time and the commit passed
         # unscanned with nothing said: a timeout and a clean scan looked identical. Check 425.
         if type(_err).__name__ == "TimeoutExpired":
-            print(f"chamnan: the commit guard did not finish in {GUARD_TIMEOUT:g} s, so this commit "
-                  f"was not scanned. Run `chamnan-guard` by hand to check what is staged.",
-                  file=sys.stderr)
+            _tell(f"chamnan: the commit guard did not finish in {GUARD_TIMEOUT:g} s, so this commit "
+                  f"was not scanned. Run `chamnan-guard` by hand to check what is staged.")
         return 0
     if out:
-        print(out, file=sys.stderr)
+        _tell(out)
         try:
             ws.append_jsonl(root, "logs/commit_guard.jsonl",
                             # 🐛 [2026-09-24] (self-measured) This asked for `ws.now_iso`, which
