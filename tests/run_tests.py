@@ -40136,7 +40136,11 @@ finally:
 import re as _re257                                                          # noqa: E402
 import redact as _rd257                                                      # noqa: E402
 
-_class257 = _re257.fullmatch(r"\[(.*)\]", _rd257._KV_SEP)
+# 🐛 [2026-10-09] (self-measured, the pool run) `_KV_SEP` became `(?:[?:+]{1,2}=|[:=\uFF1A\uFF1D])` on
+# 2026-10-08 to carry Makefile and shell operators, and a fullmatch on `[...]` then found no class at
+# all: this check passed vacuously in nobody's view and failed only when the pool ran. The
+# single-character class is the last one in the pattern, so it is read from there.
+_class257 = _re257.search(r"\[([^\[\]]*)\]\)?$", _rd257._KV_SEP)
 _seps257 = sorted(set(_class257.group(1).encode().decode("unicode_escape"))) if _class257 else []
 _value257 = "q7Rw" * 5                   # an assignment's value, not any provider's key shape
 _missed257 = []
@@ -53517,6 +53521,329 @@ check("...and leaves it on disk for the real session start", _digest471.is_file(
 _rw471 = _start471(False)
 check("...which shows it once more and then removes it, as before",
       "Repeated last session and never kept" in _rw471 and not _digest471.is_file())
+# ---- 472_one_failure_one_row_and_url_query_tokens.py
+# ------------------ one failed call is one row; a credential in a URL query parameter is redacted
+# 🐛 [2026-10-08] (R12 acc5, 2026-10-08: dedupe at-least-once events on their id) The failure hook is
+# registered for two events, and a real 265-row log held 3 same-second pairs; gotcha then called a
+# single failure a repeat. (R17 acc4, 2026-10-08: CWE-598) `?token=`, `&key=`, `?session=`, `?sid=`
+# kept credential-shaped values. Fixture values built here.
+import importlib as _il472
+import json as _json472
+import random as _r472
+import string as _s472
+import subprocess as _sp472
+import sys as _sys472
+import tempfile as _tf472
+from pathlib import Path as _P472
+
+_red472 = _il472.import_module("redact")
+_gotcha472 = _il472.import_module("gotcha")
+_root472 = _P472(_tf472.mkdtemp()) / "r"
+(_root472 / ".git").mkdir(parents=True)
+ws.ensure(_root472)
+_pl472 = {"cwd": str(_root472), "hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+          "tool_use_id": "toolu_472", "tool_input": {"command": "make build"},
+          "error": "Exit code 2\nmake: *** No rule to make target 'build'.  Stop."}
+for _ in range(2):
+    _sp472.run([_sys472.executable, str(ROOT / "hooks" / "chamnan_tool_failed.py")], input=_json472.dumps(_pl472),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_rows472 = [l for l in (_root472 / ".chamnan" / "logs" / "failures.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+check("one failed call delivered twice is recorded once", len(_rows472) == 1, saw=len(_rows472))
+check("...so it is not announced as a repeat",
+      _gotcha472.about_to_repeat(_root472 / ".chamnan", "Bash", "make build") is None)
+_pl472["tool_use_id"] = "toolu_473"
+_sp472.run([_sys472.executable, str(ROOT / "hooks" / "chamnan_tool_failed.py")], input=_json472.dumps(_pl472),
+           capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("...while the same command failing again in a new call is a real repeat",
+      _gotcha472.about_to_repeat(_root472 / ".chamnan", "Bash", "make build") is not None)
+
+_g472 = _r472.Random(472)
+_v472 = "".join(_g472.choice(_s472.ascii_letters) for _ in range(20)) + "".join(_g472.choice(_s472.digits) for _ in range(8))
+_leak472 = [f"https://h.example/cb?token={_v472}", f"https://h.example/reset?key={_v472}",
+            f"https://h.example/x?a=1&session={_v472}", f"wss://h.example/ws?sid={_v472}"]
+check("a credential in a token, key, session or sid query parameter is redacted, once",
+      all(_v472 not in _red472.scrub(u) and _red472.scrub(_red472.scrub(u)) == _red472.scrub(u) for u in _leak472),
+      saw=[_red472.scrub(u) for u in _leak472])
+_keep472 = ["https://h.example/search?key=user_settings", "https://h.example/?page=2&key=2024-01-01",
+            "see ?token= in the docs", "https://h.example/?token=${API_TOKEN}", "https://h.example/?sessionid=abc",
+            "token: string  # a schema, not a URL"]
+check("...while ordinary values, placeholders and the bare words outside a URL are left alone",
+      all(_red472.scrub(k) == k for k in _keep472), saw=[k for k in _keep472 if _red472.scrub(k) != k])
+# ---- 473_make_assignments_unspaced_prose_and_shell_defaults.py
+# ------------------ Make assignments, prose in unspaced scripts, and secrets held as ${VAR:-default}
+# 🐛 [2026-10-08] (R37 acc1) `API_TOKEN ?= …`, `export API_KEY := …`, `::=`, `+=` printed the value.
+# (R39 acc1: Python's \w is Unicode) A Thai or Japanese sentence after a password word was redacted --
+# no spaces, so the whole sentence read as one token -- while an English one was kept.
+# (R27 acc4: compose-lint) `${API_KEY:-<secret>}` and `${DB_PASS:=<secret>}` were waved through as
+# indirection. Fixture values built here.
+import importlib as _il473
+import random as _r473
+import string as _s473
+
+_red473 = _il473.import_module("redact")
+_g473 = _r473.Random(473)
+_v473 = "".join(_g473.choice(_s473.ascii_lowercase) for _ in range(12)) + "".join(
+    _g473.choice(_s473.digits) for _ in range(6)) + "".join(_g473.choice(_s473.ascii_uppercase) for _ in range(6))
+_cases473 = [
+    (f"API_TOKEN ?= {_v473}", True), (f"export API_KEY := {_v473}", True), (f"SECRET_KEY ::= {_v473}", True),
+    (f"PASSWORD += {_v473}", True), ("CFLAGS ?= -O2", False), ("TOKEN_TYPE ?= bearer", False),
+    ("token := $(shell cat .token)", False), ("if password != confirm_password:", False),
+    ("password: ใช้รหัสผ่านที่ตั้งไว้ในระบบ", False), ("รหัสผ่าน = ดูในตู้เซฟของบริษัทเท่านั้น", False),
+    ("api_key: ขอจากผู้ดูแลระบบ", False), ("password: パスワードは管理者に聞いてください", False),
+    ("password: Tr0ub4dorภาษา99xx", True), ("password: ก" + _v473, True),
+    (f"API_KEY=${{API_KEY:-{_v473}}}", True), (f"      - DB_PASS=${{DB_PASS:={_v473}}}", True),
+    ("API_KEY=${API_KEY}", False), ("API_KEY=${API_KEY:-}", False), ("PORT=${PORT:-8080}", False),
+    ("API_KEY=${API_KEY:-changeme}", False),
+]
+_wrong473 = [(s, _red473.scrub(s)) for s, want in _cases473 if (_red473.scrub(s) != s) != want]
+check("Make assignments are redacted, unspaced-script prose is kept, a literal ${VAR:-default} is redacted",
+      not _wrong473, saw=_wrong473)
+check("...and each redaction is final on a second scrub",
+      all(_red473.scrub(_red473.scrub(s)) == _red473.scrub(s) for s, _w in _cases473))
+
+# 🐛 [2026-10-08] (self-scan) With `:=` a separator, prose describing expansions lost its tail: the
+# bare rule read `DB_PASS:=` inside `${DB_PASS:=<secret>}` as a key. A safe default stays readable.
+_prose473 = ["`${DB_PASS:=<secret>}` were treated as pure indirection",
+             "while `${PORT:-8080}` and `${API_KEY:-changeme}` stay readable."]
+check("...and a ${NAME:-default} expansion written in prose keeps its tail when the default is not a secret",
+      all(_red473.scrub(p) == p for p in _prose473), saw=[_red473.scrub(p) for p in _prose473])
+check("...while the same expansion with a credential-shaped default is still redacted",
+      _v473 not in _red473.scrub(f"x `${{API_KEY:-{_v473}}}` y"))
+# ---- 474_gitlab_token_family_and_webhook_urls.py
+# ------------------ GitLab's whole token family, and webhook URLs that are their own credential
+# 🐛 [2026-10-08] (R51 acc1, 2026-10-08) Only glpat- was known: glptt- (pipeline trigger), gldt-,
+# glrt-, glcbt-, glft- … printed whole. An IFTTT Maker URL (the account key in its path) and a Zapier
+# catch hook (unauthenticated) were kept. Fixture values built here.
+import importlib as _il474
+import random as _r474
+import string as _s474
+
+_red474 = _il474.import_module("redact")
+_g474 = _r474.Random(474)
+
+
+def _a474(n, al=_s474.ascii_letters + _s474.digits):
+    return "".join(_g474.choice(al) for _ in range(n))
+
+
+_leak474 = [f"{p}-{_a474(20)}" for p in ("glpat", "glptt", "gldt", "glrt", "glcbt", "glft", "glsoat", "gloas")]
+_leak474 += [f"https://maker.ifttt.com/trigger/door/with/key/{_a474(22)}", f"https://maker.ifttt.com/use/{_a474(22)}",
+             f"https://hooks.zapier.com/hooks/catch/{_a474(7, _s474.digits)}/{_a474(6).lower()}/"]
+_bad474 = [x for x in _leak474 if _red474.scrub(x) == x or _red474.scrub(_red474.scrub(x)) != _red474.scrub(x)]
+check("every GitLab token prefix and the IFTTT and Zapier webhook URLs are redacted, once", not _bad474, saw=_bad474)
+_keep474 = ["https://maker.ifttt.com/", "see https://zapier.com/apps/webhook", "the glpat- prefix", "gl-dt-thing",
+            "https://hooks.zapier.com/hooks/catch/"]
+check("...while the bare hosts, the prefix named in prose and lookalikes are left alone",
+      all(_red474.scrub(k) == k for k in _keep474), saw=[k for k in _keep474 if _red474.scrub(k) != k])
+# ---- 475_a_replaced_default_reaches_existing_workspaces.py
+# ------------------ a default a release replaced reaches workspaces that still hold the old one
+# 🐛 [2026-10-08] (R4 acc4, 2026-10-08; owner's decision, "เลือกสิ่งที่ดีที่สุด สำหรับ chamnan และ
+# ต่อผู้ใช้งาน คนอื่นๆด้วย") ensure() writes every default into config.json, so 9,000 -> 9,500 for
+# output_byte_ceiling never reached a workspace made before it. PAST_DEFAULTS lists what each
+# release replaced; this derives the same list from the release tags, so a default changed without
+# being listed fails here, and pins that the old value follows while a chosen one is kept.
+import ast as _ast475
+import json as _json475
+import subprocess as _sp475
+import tempfile as _tf475
+from pathlib import Path as _P475
+
+import workspace as _ws475
+
+
+def _defaults_at475(tag):
+    src = _sp475.run(["git", "-C", str(ROOT), "show", f"{tag}:lib/workspace.py"], capture_output=True,
+                     text=True, encoding="utf-8", errors="replace").stdout
+    try:
+        tree = _ast475.parse(src)
+    except SyntaxError:
+        return {}
+    for node in tree.body:
+        if (isinstance(node, _ast475.Assign) and isinstance(node.value, _ast475.Dict)
+                and any(isinstance(t, _ast475.Name) and t.id == "DEFAULT_CONFIG" for t in node.targets)):
+            out = {}
+            for k, v in zip(node.value.keys, node.value.values):
+                try:
+                    out[_ast475.literal_eval(k)] = _ast475.literal_eval(v)
+                except (ValueError, TypeError, SyntaxError):
+                    continue
+            return out
+    return {}
+
+
+_tags475 = [t for t in _sp475.run(["git", "-C", str(ROOT), "tag", "--list"], capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace").stdout.split() if t]
+_unlisted475 = []
+for _t475 in _tags475:
+    for _k475, _v475 in _defaults_at475(_t475).items():
+        _now475 = _ws475.DEFAULT_CONFIG.get(_k475)
+        if (_k475 in _ws475.DEFAULT_CONFIG and type(_v475) is type(_now475) and _v475 != _now475
+                and _v475 not in _ws475.PAST_DEFAULTS.get(_k475, ())):
+            _unlisted475.append((_t475, _k475, _v475, _now475))
+# A clone without tags has nothing to derive from; the behaviour checks below still run.
+check("every default a release tag shipped and HEAD replaced is listed in PAST_DEFAULTS",
+      not _unlisted475, saw=_unlisted475[:6])
+
+_repo475 = _P475(_tf475.mkdtemp())
+_sp475.run(["git", "-C", str(_repo475), "init", "-q"], capture_output=True)
+(_repo475 / ".chamnan").mkdir()
+_cfg475 = dict(_ws475.DEFAULT_CONFIG, output_byte_ceiling=9000, index_token_budget=4321)
+(_repo475 / ".chamnan" / "config.json").write_text(_json475.dumps(_cfg475), encoding="utf-8")
+_loaded475 = _ws475.load_config(_repo475)
+check("a config still at a replaced default is read as the current default",
+      _loaded475["output_byte_ceiling"] == _ws475.DEFAULT_CONFIG["output_byte_ceiling"]
+      and _loaded475["index_token_budget"] == 4321, saw=_loaded475.get("output_byte_ceiling"))
+_ws475.ensure(_repo475)
+_disk475 = _json475.loads((_repo475 / ".chamnan" / "config.json").read_text(encoding="utf-8"))
+check("...and ensure() writes the current default in its place, keeping a value the user chose",
+      _disk475.get("output_byte_ceiling") == _ws475.DEFAULT_CONFIG["output_byte_ceiling"]
+      and _disk475.get("index_token_budget") == 4321, saw=_disk475)
+(_repo475 / ".chamnan" / "config.json").write_text(
+    _json475.dumps(dict(_ws475.DEFAULT_CONFIG, output_byte_ceiling=7000)), encoding="utf-8")
+check("...while a ceiling that was never a default is kept as written",
+      _ws475.load_config(_repo475)["output_byte_ceiling"] == 7000)
+# ---- 476_a_value_closing_an_inline_code_span_is_judged_without_its_backtick.py
+# ------------------ a value that closes an inline code span is judged without the backtick
+# 🐛 [2026-10-08] (self-measured: chamnan's own pointer hook quoted a workspace.py comment) Inside
+# Markdown backticks, `{"index_token_budget": true}` and `{"index_token_budget": 5000}` came back
+# with `<REDACTED>` for the boolean and the count: the closing backtick rode on the value, so neither
+# was a code word nor a plain count any more. A credential in the same span is still redacted.
+import importlib as _il476
+import random as _r476
+import string as _s476
+
+_red476 = _il476.import_module("redact")
+_keep476 = ['`{"index_token_budget": true}`', '`{"index_token_budget": 5000}`', '`{"state_token_budget": 1_700}`',
+            '`{"output_tokens": 88123}`', '`{"refresh_token": null}`']
+_bad476 = [k for k in _keep476 if _red476.scrub(k) != k]
+check("a boolean, null or count closing an inline code span is kept", not _bad476, saw=_bad476)
+_g476 = _r476.Random(476)
+_v476 = "".join(_g476.choice(_s476.ascii_letters + _s476.digits) for _ in range(24)) + "9"
+_leak476 = [f'`{{"api_token": {_v476}}}`', f"`password: {_v476}`", f'`{{"refresh_token": {_v476}}}`']
+check("...while a credential-shaped value in the same position is still redacted",
+      all(_v476 not in _red476.scrub(x) for x in _leak476), saw=[_red476.scrub(x) for x in _leak476])
+# ---- 477_agent_tool_logins_and_mcp_configs_are_not_read_raw.py
+# ------------------ agent-tool sign-in stores and MCP configs carrying a token are not read raw
+# 🐛 [2026-10-08] (R59 acc1, 2026-10-08; R53 acc1, 2026-10-08) `cat ~/.claude/.credentials.json`,
+# Codex's auth.json, Gemini's oauth_creds.json, gh's hosts.yml, Copilot's apps.json, gcloud's
+# application-default login, a pod's service-account token and an MCP config's `env` key all reached
+# the session in clear. Refused now when the file holds a token; the same files without one are read.
+# Fixture values are built here.
+import base64 as _b64477
+import json as _json477
+import random as _r477
+import string as _s477
+import tempfile as _tf477
+from pathlib import Path as _P477
+
+import vault as _vault477
+
+_g477 = _r477.Random(477)
+
+
+def _a477(n):
+    return "".join(_g477.choice(_s477.ascii_letters + _s477.digits) for _ in range(n))
+
+
+def _seg477(obj):
+    return _b64477.urlsafe_b64encode(_json477.dumps(obj).encode()).decode().rstrip("=")
+
+
+_jwt477 = _seg477({"alg": "RS256"}) + "." + _seg477({"sub": "system:serviceaccount:default:x"}) + "." + _a477(86)
+_with477 = {
+    ".claude/.credentials.json": _json477.dumps({"claudeAiOauth": {"accessToken": "sk-ant-oat01-" + _a477(90)}}),
+    ".codex/auth.json": _json477.dumps({"tokens": {"access_token": _jwt477, "refresh_token": "rt_" + _a477(40)}}),
+    ".gemini/oauth_creds.json": _json477.dumps({"access_token": "ya29." + _a477(100)}),
+    ".config/gh/hosts.yml": "github.com:\n    oauth_token: gho_" + _a477(36) + "\n    user: x\n",
+    ".config/github-copilot/apps.json": _json477.dumps({"github.com": {"oauth_token": "ghu_" + _a477(36)}}),
+    ".config/gcloud/application_default_credentials.json": _json477.dumps({"refresh_token": "1//" + _a477(60),
+                                                                           "type": "authorized_user"}),
+    "run/secrets/kubernetes.io/serviceaccount/token": _jwt477,
+    "proj/.mcp.json": _json477.dumps({"mcpServers": {"s": {"command": "npx", "env": {"API_KEY": "k_" + _a477(32)}}}}),
+    "proj/.cursor/mcp.json": _json477.dumps({"mcpServers": {"s": {"env": {"GITHUB_TOKEN": "ghp_" + _a477(36)}}}}),
+}
+_without477 = {
+    "w/.config/gh/hosts.yml": "github.com:\n    user: x\n    git_protocol: https\n",
+    "w/proj/.mcp.json": _json477.dumps({"mcpServers": {"s": {"command": "npx", "args": ["-y", "server"]}}}),
+    "w/.codex/auth.json": _json477.dumps({"OPENAI_API_KEY": None}),
+}
+_root477 = _P477(_tf477.mkdtemp())
+for _rel477, _text477 in {**_with477, **_without477}.items():
+    (_root477 / _rel477).parent.mkdir(parents=True, exist_ok=True)
+    (_root477 / _rel477).write_text(_text477, encoding="utf-8")
+_read477 = [r for r in _with477 if not _vault477._is_credential(str(_root477 / r), _root477)]
+check("every agent-tool sign-in store, the service-account token and an MCP config with a key are refused",
+      not _read477, saw=_read477)
+_refused477 = [r for r in _without477 if _vault477._is_credential(str(_root477 / r), _root477)]
+check("...while the same files holding no token are read as before", not _refused477, saw=_refused477)
+_why477 = _vault477.refusal(str(_root477 / ".claude/.credentials.json"))
+check("...and the refusal says the owning tool reads its own sign-in, not to ask for the value",
+      "sign-in" in _why477 and "codex" in _why477, saw=_why477)
+# ---- 478_a_token_after_an_escape_is_redacted.py
+# ------------------ a vendor token right after an escape sequence is redacted
+# 🐛 [2026-10-08] (R59 acc1, 2026-10-08: scanners missed live secrets through over-strict word
+# boundaries) `\nghp_…` inside a JSON string, `%22ghp_…` in a URL-encoded body and `"sk-…` printed
+# whole: every vendor pattern required no letter or digit before the token, and the `n` of `\n` and
+# the `2` of `%22` are both. Pinned for the whole set of prefix patterns, not one vendor.
+import importlib as _il478
+import random as _r478
+import string as _s478
+
+_red478 = _il478.import_module("redact")
+_g478 = _r478.Random(478)
+
+
+def _a478(n, al=_s478.ascii_letters + _s478.digits):
+    return "".join(_g478.choice(al) for _ in range(n))
+
+
+_tok478 = ["ghp_" + _a478(36), "sk-ant-api03-" + _a478(90), "AKIA" + _a478(16, _s478.ascii_uppercase + _s478.digits),
+           "glptt-" + _a478(20), "npm_" + _a478(36), "ya29." + _a478(60), "xoxb-" + _a478(30)]
+_leak478 = [f"{pre}{t}{post}" for t in _tok478
+            for pre, post in (("\\n", ""), ("%22", "%22"), ("\\u0022", "\\u0022"), ("\\t", ""), ("\\x22", ""))]
+_bad478 = [x for x in _leak478 if any(t in _red478.scrub(x) for t in _tok478)]
+check("a vendor token after \\n, \\t, %22, \\u0022 or \\x22 is redacted", not _bad478, saw=_bad478[:6])
+_glued478 = ["x" + _tok478[0], "see %20sk-learn docs", "50%25sk_live_abc"]
+check("...while a token glued to a word and look-alike prose are left alone",
+      all(_red478.scrub(k) == k for k in _glued478), saw=[_red478.scrub(k) for k in _glued478])
+# The set: every prefix pattern anchored on a letter-or-digit boundary must also accept an escape.
+_missing478 = [p.pattern[:50] for p in _red478.PATTERNS + _red478.LATE_PREFIXES
+               if p.pattern.startswith("(?") and "(?<![A-Za-z0-9" in p.pattern
+               and _red478._ESCAPED_BEFORE not in p.pattern
+               and not p.pattern.startswith("(?<![A-Za-z0-9_-])(?:Bearer")]
+check("...and every vendor prefix pattern accepts an escape before the token", not _missing478, saw=_missing478)
+# ---- 479_a_comment_that_says_see_a_name_names_one_that_exists.py
+# ------------------ a comment that says "see `name`" names something that exists
+# 🐛 [2026-10-08] (R62 acc1, 2026-10-08: about 10% of links in code comments are dead and rarely
+# updated, Hata et al., ICSE 2019) Counted here: of 107 private names cited in comments, two were
+# present-tense pointers to functions that no longer existed -- chamnan-report said "see
+# `_one_session_warning` in main()" and redact.py that "`_secret_word_stems` PARSES SECRET_WORDS".
+# A reader following either finds nothing. Comment blocks are joined so a pointer split across two
+# lines is still read.
+import re as _re479
+
+_files479 = [f for f in list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))
+             + list((ROOT / "bin").glob("chamnan-*")) if f.suffix != ".cmd"]
+_text479 = {f: f.read_text(encoding="utf-8", errors="replace") for f in _files479}
+_all479 = "\n".join(_text479.values())
+_defs479 = (set(_re479.findall(r"^\s*(?:def|class)\s+([A-Za-z_]\w*)", _all479, _re479.M))
+            | set(_re479.findall(r"^\s*([A-Za-z_]\w*)\s*=", _all479, _re479.M)))
+_seen479, _bad479 = 0, []
+for _f479, _t479 in _text479.items():
+    _block479 = []
+    for _line479 in _t479.splitlines() + [""]:
+        _s479 = _line479.strip()
+        if _s479.startswith("#"):
+            _block479.append(_s479.lstrip("#").strip())
+            continue
+        _joined479 = " ".join(_block479)
+        _block479 = []
+        for _m479 in _re479.finditer(r"\b[Ss]ee\s+`([A-Za-z_][\w.]*?)(?:\(\))?`", _joined479):
+            _seen479 += 1
+            if _m479.group(1).split(".")[-1] not in _defs479:
+                _bad479.append((_f479.name, _m479.group(1)))
+check("every 'see `name`' pointer in a comment names a function or value that exists",
+      _seen479 > 20 and not _bad479, saw=(_seen479, _bad479[:6]))
 # ---- 47_the_state_cut_marker_names_what_is_missing.py
 # ------------------------------------- a number is not a reason to go and read; a name is
 # 🐛 [2026-09-10] When `STATE.md` overran its budget the marker said only "…9.3k more — read
@@ -53569,6 +53896,378 @@ check("...and the ellipsis counts what was LOST, so a complete list does not cla
 check("a STATE.md that fits its budget produces no marker at all",
       _st47.render(_t_text47, 400, ".chamnan/STATE.md")[1] == "",
       saw=_st47.render(_t_text47, 400, ".chamnan/STATE.md")[1] or None)
+# ---- 480_an_editor_copy_of_a_credential_file_is_refused_like_the_file.py
+# ------------------ an editor's backup, auto-save or swap copy of a credential file is refused like it
+# 🐛 [2026-10-08] (R92 acc4, 2026-10-08: Vim swap files and Emacs backup and auto-save copies keep a
+# secret after the file is cleaned) `.env~`, `#.env#`, `.id_rsa.swp`, `credentials~` and `server.key~`
+# were opened while the files they copy were refused. The copy is judged as the file it stands for.
+from pathlib import Path as _P480
+
+import redact as _red480
+
+_copies480 = [".env~", "#.env#", "..env.swp", ".id_rsa.swp", "id_ed25519~", "credentials~", ".netrc~",
+              "server.key~", "#deploy.pem#", ".git-credentials.swo"]
+_open480 = [n for n in _copies480 if not _red480.is_never_opened(_P480("/repo") / n)]
+check("an editor copy of a credential file is refused like the file itself", not _open480, saw=_open480)
+_plain480 = ["notes.txt~", "#scratch#", ".main.py.swp", "README.md~", ".env.example~", "~", "#"]
+_shut480 = [n for n in _plain480 if _red480.is_never_opened(_P480("/repo") / n)]
+check("...while copies of ordinary files and of a template are read as before", not _shut480, saw=_shut480)
+check("...and the indexer skips the same key copies it skips as originals",
+      _red480.is_blocked(_P480("/repo/.id_rsa.swp")) and _red480.is_blocked(_P480("/repo/server.key~")))
+# ---- 481_a_hook_whose_stdin_stays_open_still_exits.py
+# ------------------ a hook whose host leaves stdin open still reads its event and exits
+# 🐛 [2026-10-09] (R2 acc4, 2026-10-09: a hook blocked reading stdin outlived its declared timeout for
+# hours when the host left the pipe open) Every hook read its event with `json.load`, which waits for
+# end of file: given an event on a pipe that stayed open, all of them were still waiting after 12 s,
+# holding the tool call. Derived from the hooks directory, like check 264, so a new hook is covered.
+import json as _json481
+import os as _os481
+import subprocess as _sp481
+import threading as _th481
+import time as _tm481
+
+import workspace as _ws481
+
+_event481 = _json481.dumps({"session_id": "c481", "hook_event_name": "PreToolUse", "tool_name": "Read",
+                            "tool_input": {"file_path": str(ROOT / "README.md")}, "cwd": str(ROOT)}).encode()
+_hung481 = []
+_hooks481 = sorted((ROOT / "hooks").glob("chamnan_*.py"))
+for _h481 in _hooks481:
+    _p481 = _sp481.Popen([sys.executable, str(_h481)], stdin=_sp481.PIPE, stdout=_sp481.PIPE,
+                         stderr=_sp481.PIPE, cwd=str(ROOT))
+    _p481.stdin.write(_event481)
+    _p481.stdin.flush()                      # and never closed
+    try:
+        _p481.wait(timeout=30)
+    except _sp481.TimeoutExpired:
+        _hung481.append(_h481.name)
+        _p481.kill()
+    finally:
+        for _f481 in (_p481.stdin, _p481.stdout, _p481.stderr):
+            _f481.close()
+check("there are hooks to try, so the next check is not vacuous", len(_hooks481) >= 8, saw=len(_hooks481))
+check("EVERY HOOK GIVEN ITS EVENT ON A PIPE LEFT OPEN EXITS ON ITS OWN", not _hung481, saw=_hung481)
+
+# An event written in two pieces is read whole, not cut at the first brace that closes something.
+_r481, _w481 = _os481.pipe()
+
+
+def _writer481():
+    _os481.write(_w481, b'{"a": {"b": 1}')
+    _tm481.sleep(0.3)
+    _os481.write(_w481, b', "c": 2}')
+
+
+_th481.Thread(target=_writer481, daemon=True).start()
+_got481 = _ws481._read_one_json_event(_r481, _json481)
+check("...and an event that arrives in two writes is read whole", _got481 == {"a": {"b": 1}, "c": 2}, saw=_got481)
+_os481.close(_w481)
+_os481.close(_r481)
+# ---- 482_a_secret_named_on_another_line_is_still_found.py
+# ------------------ a secret whose name sits on another line is found, in a file and at commit time
+# 🐛 [2026-10-09] (R27 acc4, 2026-10-09: a scanner limited to changed lines misses a credential whose
+# key name sits on an unchanged line) Two halves of one gap. The redactor had no rule for a YAML
+# mapping nested under a secret-named key (`password:` then `  value: <secret>`), and the commit
+# guard read each added line alone, so `api_token: >-` with the value on the next line passed it
+# although a whole-file scrub caught it. Fixture values are built here.
+import random as _r482
+import shutil as _sh482
+import string as _s482
+import subprocess as _sp482
+import tempfile as _tf482
+from pathlib import Path as _P482
+
+import redact as _red482
+
+_g482 = _r482.Random(482)
+_v482 = "Zq8" + "".join(_g482.choice(_s482.ascii_letters + _s482.digits) for _ in range(23))
+_nested482 = ["database:\n  password:\n    value: %s\n  host: db\n" % _v482,
+              "auth:\n  apiKey:\n    value: \"%s\"\n" % _v482,
+              "- password:\n    value: %s\n" % _v482,
+              "tokens:\n  github: %s\n" % _v482]
+_leak482 = [n.split("\n")[0] for n in _nested482 if _v482 in _red482.scrub(n)]
+check("a credential nested under a secret-named YAML key is redacted", not _leak482, saw=_leak482)
+_plain482 = ["password:\n  min_length: 12\n  require_symbols: true\n",
+             "env:\n  - name: DB\n    valueFrom:\n      secretKeyRef:\n        name: my-secret\n        key: password\n",
+             "tokens:\n  primary: \"#ffffff\"\n  spacing: 8px\n",
+             "other:\n  value: %s\n" % _v482]
+_changed482 = [p.split("\n")[0] for p in _plain482 if _red482.scrub(p) != p]
+check("...while policy settings, secret references, design tokens and other parents stay as written",
+      not _changed482, saw=_changed482)
+
+_d482 = _P482(_tf482.mkdtemp())
+_git482 = lambda *a: _sp482.run(["git", "-C", str(_d482), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+_git482("init", "-q")
+_git482("config", "user.email", "t@t")
+_git482("config", "user.name", "t")
+(_d482 / "block.yml").write_text("api_token: >-\n  placeholder\nother: 1\n", encoding="utf-8")
+_git482("add", "-A")
+_git482("commit", "-qm", "base")
+(_d482 / "block.yml").write_text("api_token: >-\n  %s\nother: 1\n" % _v482, encoding="utf-8")
+_git482("add", "-A")
+_out482 = _sp482.run([sys.executable, str(ROOT / "bin" / "chamnan-guard")], cwd=str(_d482),
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("...and the commit guard names a staged value whose key sits on an unchanged line",
+      "block.yml" in _out482.stderr and _v482 not in _out482.stderr + _out482.stdout,
+      saw=_out482.stderr[-300:])
+_sh482.rmtree(_d482, ignore_errors=True)
+# ---- 483_a_gcm_plaintext_credential_is_refused.py
+# ------------------ Git Credential Manager's plaintext store is refused and never indexed
+# 🐛 [2026-10-09] (R11 acc4, 2026-10-09: GCM's plaintext store "is NOT secure") One file per credential,
+# `~/.gcm/store/<service>/<account>.credential`, the secret alone on its first line and no key for a
+# rule to read it by -- opened in clear. Refused by suffix, by both lists that judge a file name.
+from pathlib import Path as _P483
+
+import redact as _red483
+
+_store483 = _P483("/home/u/.gcm/store/git/https/github.com/me.credential")
+check("a GCM plaintext credential file is refused before a read and skipped by the indexer",
+      _red483.is_never_opened(_store483) and _red483.is_blocked(_store483))
+_plain483 = ["/repo/docs/credential.md", "/repo/src/credential_store.py", "/repo/credentials.py"]
+check("...while files that only mention credentials in their name stay readable",
+      not any(_red483.is_never_opened(_P483(p)) for p in _plain483),
+      saw=[p for p in _plain483 if _red483.is_never_opened(_P483(p))])
+# ---- 484_no_file_is_left_open_to_the_collector.py
+# ------------------ no file is opened and read without being closed
+# 🐛 [2026-10-09] (R48 acc5, 2026-10-09: ResourceWarning made fatal exposes leaked files) `lib/drift.py`
+# read each instruction file with a bare `open(...).read()`; run with PYTHONWARNINGS=error, the
+# session-start hook printed "unclosed file" for AGENTS.md and CLAUDE.md. Asserted over the whole
+# package, so the next one-line read cannot reintroduce it.
+import re as _re484
+
+_bare484 = _re484.compile(r"(?<![\w.])open\([^)\n]*\)\.(?:read|readline|readlines)\(")
+_found484 = []
+for _f484 in sorted(list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").glob("*.py"))
+                    + [p for p in (ROOT / "bin").glob("chamnan-*") if p.suffix != ".cmd"]):
+    for _n484, _line484 in enumerate(_f484.read_text(encoding="utf-8").split("\n"), 1):
+        if not _line484.lstrip().startswith("#") and _bare484.search(_line484):
+            _found484.append("%s:%d" % (_f484.relative_to(ROOT), _n484))
+check("NO FILE IN LIB, HOOKS OR BIN IS OPENED AND READ WITHOUT BEING CLOSED", not _found484, saw=_found484)
+# ---- 485_a_joiner_kept_for_scripts_does_not_carry_a_credential_through.py
+# ------------------ a joiner kept for other scripts does not carry a credential through whole
+# 🐛 [2026-10-09] (R72 acc4, 2026-10-09) `for_a_terminal` keeps ZWNJ, ZWJ and the soft hyphen on
+# purpose -- Indic conjuncts and emoji families need the joiners -- so check 426, which pins every
+# character it DELETES, never saw them. A key split by one of them was not a key to the scrub and
+# nothing removed the splitter, so the whole value printed with one invisible character inside: a
+# reader that ignores the character reads the complete, valid credential. Between two ASCII token
+# characters these have no use, so they are dropped there and the text is scrubbed again. The
+# population is every format character the terminal pass keeps; Indic and emoji text must not move.
+import contextlib as _cl485
+import importlib as _il485
+import io as _io485
+import random as _rnd485
+import string as _st485
+import sys as _sys485
+import unicodedata as _ud485
+
+_redact485 = _il485.import_module("redact")
+_r485 = _rnd485.Random(485)
+_key485 = "gh" + "p_" + "".join(_r485.choice(_st485.ascii_letters + _st485.digits) for _ in range(36))
+_kept485 = [chr(c) for c in range(0x80, 0x110000)
+            if _ud485.category(chr(c)) == "Cf" and chr(c).translate(_redact485._TERMINAL_SAFE) == chr(c)]
+check("the terminal pass keeps some format characters (the population is not empty)",
+      len(_kept485) >= 3, saw=[hex(ord(c)) for c in _kept485])
+_leaks485 = []
+for _ch485 in _kept485:
+    for _shape485 in ("{k}", "token: {k}", "api_key = '{k}'"):
+        _v485 = _shape485.format(k=_key485[:10] + _ch485 + _key485[10:])
+        _map485 = _redact485.for_a_terminal(_redact485.scrub(_v485))
+        _buf485 = _io485.StringIO()
+        with _cl485.redirect_stdout(_buf485):
+            _redact485.emit(_v485)
+        for _out485 in (_map485, _buf485.getvalue()):
+            if _key485[12:30] in _out485.replace(_ch485, ""):
+                _leaks485.append((hex(ord(_ch485)), _shape485))
+check("no kept format character carries a credential through the map path or emit",
+      not _leaks485, saw=_leaks485[:6])
+_scripts485 = "क्‍ष เด็ก \U0001f468‍\U0001f469‍\U0001f467 हिन्‌दी"
+check("Indic conjuncts and emoji families keep their joiners",
+      _redact485.for_a_terminal(_scripts485) == _scripts485, saw=repr(_redact485.for_a_terminal(_scripts485)))
+# ---- 486_a_commit_guard_warning_reaches_the_session.py
+# ------------------ a commit guard's warning reaches the session, not only stderr
+# 🐛 [2026-10-09] (R103 claudeaccount1, 2026-10-09) The hook printed the guard's warning to stderr
+# and exited 0. Claude Code shows a PreToolUse hook's stderr on exit 0 to nobody: the transcripts
+# of this workspace hold every flagged commit they still contain (three) as `hook_success` attachments with the warning in
+# `stderr` and an empty `content`, so neither the model nor the person saw that a key was staged.
+# The guard warned into a void -- the same failure its own 2026-09-23 note fixed by reading the
+# guard's stderr, one hop further on. This pins that both the finding and the timeout notice also
+# arrive as PreToolUse `additionalContext`, without the matched text, and that a clean commit
+# still says nothing on either stream.
+import contextlib as _cl486
+import importlib.util as _ilu486
+import io as _io486
+import json as _json486
+import random as _rnd486
+import string as _st486
+import subprocess as _sp486
+import sys as _sys486
+import tempfile as _tf486
+from pathlib import Path as _P486
+
+_spec486 = _ilu486.spec_from_file_location("_cg486", ROOT / "hooks" / "chamnan_commit_guard.py")
+_cg486 = _ilu486.module_from_spec(_spec486)
+_spec486.loader.exec_module(_cg486)
+
+
+def _repo486(text):
+    _d = _P486(_tf486.mkdtemp())
+    _g = lambda *a: _sp486.run(["git", "-C", str(_d), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _g("init", "-q")
+    (_d / ".chamnan").mkdir()
+    (_d / "cfg.py").write_text(text, encoding="utf-8")
+    _g("add", "cfg.py")
+    return _d
+
+
+def _run486(d, timeout=60):
+    _payload = _json486.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"},
+                               "cwd": str(d), "session_id": "t486"})
+    _out, _err = _io486.StringIO(), _io486.StringIO()
+    _old_in, _old_t = _sys486.stdin, _cg486.GUARD_TIMEOUT
+    _sys486.stdin = _io486.StringIO(_payload)
+    _cg486.GUARD_TIMEOUT = timeout
+    try:
+        with _cl486.redirect_stderr(_err), _cl486.redirect_stdout(_out):
+            _rc = _cg486.main()
+    finally:
+        _sys486.stdin, _cg486.GUARD_TIMEOUT = _old_in, _old_t
+    return _rc, _out.getvalue(), _err.getvalue()
+
+
+def _context486(stdout):
+    try:
+        _j = _json486.loads(stdout.strip().splitlines()[-1])
+        _h = _j["hookSpecificOutput"]
+        return _h["additionalContext"] if _h.get("hookEventName") == "PreToolUse" else ""
+    except Exception:                                             # noqa: BLE001
+        return ""
+
+
+_r486 = _rnd486.Random(486)
+_key486 = "gh" + "p_" + "".join(_r486.choice(_st486.ascii_letters + _st486.digits) for _ in range(36))
+_rc486, _o486, _e486 = _run486(_repo486("token = '%s'\n" % _key486))
+_ctx486 = _context486(_o486)
+check("a staged key reaches the session as PreToolUse additionalContext naming the file",
+      "cfg.py" in _ctx486 and "chamnan-guard" in _ctx486, saw=(_o486[-300:], _e486[-200:]))
+check("...without the matched text on either stream",
+      _key486[6:30] not in _o486 + _e486, saw="key text present")
+check("...and the commit is still not blocked", _rc486 == 0, saw=_rc486)
+_rc486t, _o486t, _e486t = _run486(_repo486("print(1)\n"), timeout=0.001)
+check("a guard that ran out of time says so in additionalContext too",
+      "did not finish" in _context486(_o486t), saw=_o486t[-300:])
+_rc486c, _o486c, _e486c = _run486(_repo486("print(1)\n"))
+check("a clean commit says nothing on either stream", _o486c.strip() == "" and _e486c.strip() == "",
+      saw=(_o486c[-200:], _e486c[-200:]))
+# ---- 487_a_named_secret_is_masked_wherever_it_repeats.py
+# ------------------ a secret found by its name is masked wherever the same value repeats
+# 🐛 [2026-10-09] (R106 acc4, 2026-10-09) Every rule anchors a value on the NAME beside it, so
+# `db_password = "<value>"` lost the value and the same value two lines down -- `connect("<value>")`,
+# a URL, an echo -- printed in full: the name was on one occurrence only. Azure Pipelines documents
+# the opposite contract, masking a registered secret everywhere it appears. The population is the
+# shapes a value repeats in; the guards are a short or wordlike value, which is not masked
+# elsewhere, and a second scrub, which changes nothing.
+import importlib as _il487
+import random as _rnd487
+import string as _st487
+
+_redact487 = _il487.import_module("redact")
+_r487 = _rnd487.Random(487)
+_v487 = "".join(_r487.choice(_st487.ascii_letters) for _ in range(9)) + "7" + "".join(
+    _r487.choice(_st487.ascii_letters + _st487.digits) for _ in range(10))
+_shapes487 = [
+    'db_password = "{v}"\nconnect("{v}")\n',
+    "password: {v}\nlater the value {v} was used\n",
+    "export API_TOKEN={v}\necho {v}\n",
+    "secret = '{v}'  # also in notes: {v}.\n",
+]
+_left487 = [s for s in _shapes487 if _v487 in _redact487.scrub(s.format(v=_v487))]
+check("a value redacted by its name is masked where it repeats bare", not _left487, saw=_left487)
+_twice487 = [s for s in _shapes487
+             if _redact487.scrub(_redact487.scrub(s.format(v=_v487))) != _redact487.scrub(s.format(v=_v487))]
+check("...and a second scrub changes nothing", not _twice487, saw=_twice487)
+_word487 = "password: hunter2\nthe word hunter2 again\n"
+check("a short value is not hunted elsewhere in the text",
+      _redact487.scrub(_word487).count("hunter2") == 1, saw=repr(_redact487.scrub(_word487)))
+_part487 = 'db_password = "{v}"\nthe prefix {p}X is a different word\n'.format(v=_v487, p=_v487)
+check("a longer token that merely contains the value is left whole",
+      (_v487 + "X") in _redact487.scrub(_part487), saw=repr(_redact487.scrub(_part487)))
+# ---- 488_the_read_guard_sees_the_powershell_tool.py
+# ------------------ the read guard sees a credential read made through the PowerShell tool
+# 🐛 [2026-10-09] (R124 claudeaccount1, 2026-10-09: a host's tool set changes under a hook's matcher)
+# `vault.READERS` already lists `get-content`, `gc` and `type`, and the commit guard learned the
+# PowerShell tool in check 422 -- but the read guard's matcher and its hook both named only Read,
+# Bash and Grep, so on native Windows `Get-Content ~/.aws/credentials` through the PowerShell tool
+# reached the session whole. The verbs were taught and never routed. This pins the route (hooks.json
+# and the hook), the shapes, a PowerShell path keeping its backslashes, and that an ordinary
+# PowerShell command is left alone.
+import importlib as _il488
+import io as _io488
+import contextlib as _cl488
+import json as _json488
+import re as _re488
+import sys as _sys488
+import tempfile as _tf488
+import importlib.util as _ilu488
+from pathlib import Path as _P488
+
+_vault488 = _il488.import_module("vault")
+_hooks488 = _json488.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+_matchers488 = [g.get("matcher", "") for g in _hooks488.get("PreToolUse", [])
+                if any("chamnan_bulk_read_notice.py" in h.get("command", "") for h in g.get("hooks", []))]
+check("hooks.json routes the PowerShell tool to the read guard",
+      any(_re488.fullmatch(m, "PowerShell") for m in _matchers488), saw=_matchers488)
+_shapes488 = ["Get-Content ~/.aws/credentials", "gc ~/.aws/credentials", "type ~/.netrc",
+              "Get-Content -Path ~/.ssh/id_ed25519 -Raw", "cat ~/.aws/credentials | Select-String key"]
+_missed488 = [c for c in _shapes488 if not _vault488.tool_reads("PowerShell", {"command": c}, None)]
+check("each PowerShell way of printing a credential file is refused", not _missed488, saw=_missed488)
+check("...and an ordinary PowerShell command is not",
+      not _vault488.tool_reads("PowerShell", {"command": "Get-ChildItem -Recurse src"}, None))
+check("a PowerShell path keeps its backslashes when split into words",
+      "C:\\Users\\me\\.netrc" in [w.strip("'\"") for w in _vault488._words('gc "C:\\Users\\me\\.netrc"', posix=False)],
+      saw=_vault488._words('gc "C:\\Users\\me\\.netrc"', posix=False))
+_spec488 = _ilu488.spec_from_file_location("_br488", ROOT / "hooks" / "chamnan_bulk_read_notice.py")
+_br488 = _ilu488.module_from_spec(_spec488)
+_spec488.loader.exec_module(_br488)
+_d488 = _P488(_tf488.mkdtemp())
+_old488 = _sys488.stdin
+_sys488.stdin = _io488.StringIO(_json488.dumps({"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+                                                "tool_input": {"command": "Get-Content ~/.aws/credentials"},
+                                                "cwd": str(_d488), "session_id": "t488"}))
+_out488 = _io488.StringIO()
+try:
+    with _cl488.redirect_stdout(_out488):
+        _br488.main()
+finally:
+    _sys488.stdin = _old488
+check("the hook denies the PowerShell read before it runs",
+      '"permissionDecision": "deny"' in _out488.getvalue(), saw=_out488.getvalue()[-300:])
+# ---- 489_a_git_config_holding_a_token_is_refused.py
+# ------------------ a repository's .git/config holding a token is refused like a registry config
+# 🐛 [2026-10-09] (R119 claudeaccount1, 2026-10-09: actions/checkout persists its token in .git) A
+# remote cloned with a personal access token in its URL, or a CI checkout's `extraheader`, leaves the
+# credential in `.git/config`, and reading that file put it into the session whole. It is refused
+# the way a registry config is -- only when the file really carries a credential -- so an ordinary
+# `.git/config` stays readable.
+import importlib as _il489
+import random as _rnd489
+import string as _st489
+import tempfile as _tf489
+from pathlib import Path as _P489
+
+_vault489 = _il489.import_module("vault")
+_r489 = _rnd489.Random(489)
+_tok489 = "gh" + "p_" + "".join(_r489.choice(_st489.ascii_letters + _st489.digits) for _ in range(36))
+_d489 = _P489(_tf489.mkdtemp())
+(_d489 / ".git").mkdir()
+_cfg489 = _d489 / ".git" / "config"
+_cfg489.write_text('[remote "origin"]\n\turl = https://me:%s@github.com/me/app.git\n' % _tok489, encoding="utf-8")
+check("a .git/config with a token in its remote URL is refused to Read",
+      bool(_vault489.tool_reads("Read", {"file_path": str(_cfg489)}, _d489)))
+check("...and to `cat`", bool(_vault489.tool_reads("Bash", {"command": "cat .git/config"}, _d489)))
+_cfg489.write_text('[core]\n\tbare = false\n[remote "origin"]\n\turl = https://github.com/me/app.git\n',
+                   encoding="utf-8")
+check("an ordinary .git/config stays readable",
+      not _vault489.tool_reads("Read", {"file_path": str(_cfg489)}, _d489))
 # ---- 48_the_always_injected_ledger_line_means_todays_date.py
 # --------------------------- "today" meant "within 24 hours of noon UTC", which is not what it says
 # 🐛 [2026-09-10] `_age` divided elapsed seconds by 86400 while `_ymd_to_ts` anchors a written date
@@ -53625,6 +54324,195 @@ check("...and the days still count: two calendar days back reads as 2 days ago, 
 _t_one48 = _lg48._age(_noon_utc48(_t_yest48), _local_hour48(_t_today48, 3))
 check("...and one calendar day back is singular, which is the wording the block actually prints",
       _t_one48 == "1 day ago", saw=_t_one48)
+# ---- 490_cookie_jars_and_gcloud_tokens_are_refused.py
+# ------------------ cookie jars and gcloud's token cache are refused like the credentials beside them
+# 🐛 [2026-10-09] (R147 acc5, 2026-10-09: stealers enumerate browser cookie stores, Google calls gcloud's
+# local database an endpoint-theft risk) gcloud keeps `credentials.db` and `access_tokens.db` side by
+# side; the first was refused through the `credentials` stem and the second was read whole. Firefox
+# keeps session cookies in plain text in `cookies.sqlite`, and a Netscape `cookies.txt` jar is what
+# curl and downloaders log in with -- both were read, and `sqlite3` was not a verb the guard knew.
+# Exact names, not stems: `cookies.md`, a site's cookie policy, stays readable.
+import importlib as _il490
+from pathlib import Path as _P490
+
+_vault490 = _il490.import_module("vault")
+_home490 = "/Users/someone"
+_refused490 = [
+    _home490 + "/.config/gcloud/access_tokens.db",
+    _home490 + "/.config/gcloud/credentials.db",
+    _home490 + "/Library/Application Support/Firefox/Profiles/x.default/cookies.sqlite",
+    _home490 + "/.mozilla/firefox/x.default/cookies.sqlite",
+    _home490 + "/Downloads/cookies.txt",
+]
+_missed490 = [p for p in _refused490 if not _vault490.tool_reads("Read", {"file_path": p}, None)]
+check("each cookie jar and gcloud token cache is refused to Read", not _missed490, saw=_missed490)
+check("...and to sqlite3 through the shell",
+      bool(_vault490.tool_reads("Bash", {"command": "sqlite3 '%s' 'select * from moz_cookies'" % _refused490[2]}, None)))
+_open490 = [_home490 + "/site/docs/cookies.md", _home490 + "/site/app.sqlite", _home490 + "/site/src/cookies.py"]
+_wrong490 = [p for p in _open490 if _vault490.tool_reads("Read", {"file_path": p}, None)]
+check("a cookie policy page, an app database and a cookies module stay readable", not _wrong490, saw=_wrong490)
+check("...and sqlite3 on an ordinary database is not refused",
+      not _vault490.tool_reads("Bash", {"command": "sqlite3 app.sqlite .tables"}, None))
+# ---- 491_every_ai_ignore_file_keeps_a_path_out_of_the_map.py
+# ------------------ every AI-exclusion file a person writes keeps that path out of the map
+# 🐛 [2026-10-09] (R160 acc5, 2026-10-09: Gemini CLI documents `.geminiignore`; `.claudeignore` is what
+# Claude Code users write and Claude Code itself does not read) The map honoured `.aiignore`,
+# `.cursorignore`, `.codeiumignore` and `.aiexclude`, and a path named only in `.geminiignore` or
+# `.claudeignore` had its first comment injected into every session through MAP.md. Either file states
+# the same intent as the four. The population is every name in the list, each tested alone.
+import importlib as _il491
+import subprocess as _sp491
+import sys as _sys491
+import tempfile as _tf491
+from pathlib import Path as _P491
+
+_mapper491 = _il491.import_module("mapper")
+_names491 = list(_mapper491._AI_IGNORE_FILES)
+check("the list carries .geminiignore and .claudeignore",
+      ".geminiignore" in _names491 and ".claudeignore" in _names491, saw=_names491)
+_leaked491 = []
+for _n491 in _names491:
+    _d491 = _P491(_tf491.mkdtemp())
+    _sp491.run(["git", "init", "-q", str(_d491)], capture_output=True)
+    (_d491 / "app.py").write_text('"""Public app."""\n', encoding="utf-8")
+    (_d491 / "private_notes.py").write_text('"""MARKER491 the confidential plan."""\n', encoding="utf-8")
+    (_d491 / _n491).write_text("private_notes.py\n", encoding="utf-8")
+    _sp491.run(["git", "-C", str(_d491), "add", "-A"], capture_output=True)
+    _sp491.run([_sys491.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_d491, capture_output=True,
+               timeout=120)
+    _m491 = _d491 / ".chamnan" / "MAP.md"
+    if not _m491.is_file() or "MARKER491" in _m491.read_text(encoding="utf-8"):
+        _leaked491.append(_n491)
+check("a path named in any one of them alone stays out of MAP.md", not _leaked491, saw=_leaked491)
+# ---- 492_a_thai_typo_gets_a_whole_word_suggestion.py
+# ------------------ a misspelt Thai word gets a whole-word suggestion, never a fragment
+# 🐛 [2026-10-09] (R176 acc4, 2026-10-09: 68.87% of students misspelt Thai technical loanwords) The
+# did-you-mean took its vocabulary from `[^\W\d_]{3,}`, and a Thai vowel or tone mark is not a word
+# character, so `รีสตาร์ทเซิร์ฟเวอร์หลังแก้คอนฟิก` came apart into pieces cut before each mark:
+# `คอนฟิค` was answered with `คอนฟ`, and `เซิฟเวอร์` or `รีสตาท` with nothing. Thai is written without
+# spaces, so a word cannot be taken from the title by splitting; the closest stretch of the title,
+# cut only where a character is not a combining mark, is offered instead.
+import subprocess as _sp492
+import sys as _sys492
+import tempfile as _tf492
+import unicodedata as _ud492
+from pathlib import Path as _P492
+
+_d492 = _P492(_tf492.mkdtemp())
+_sp492.run(["git", "init", "-q", str(_d492)], capture_output=True)
+_title492 = "รีสตาร์ทเซิร์ฟเวอร์หลังแก้คอนฟิก"
+(_d492 / ".chamnan" / "memory" / "lessons").mkdir(parents=True)
+(_d492 / ".chamnan" / "memory" / "lessons" / "server.md").write_text(
+    "# " + _title492 + "\n\nทุกครั้งที่แก้ไฟล์คอนฟิกต้องรีสตาร์ท\n", encoding="utf-8")
+(_d492 / ".chamnan" / "memory" / "lessons" / "backup.md").write_text(
+    "# Database backups\n\nRun the nightly backup.\n", encoding="utf-8")
+_run492 = lambda *a: _sp492.run([_sys492.executable, str(ROOT / "bin" / "chamnan-recall"), *a], cwd=_d492,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=120)
+_run492("--reindex")
+_want492 = {"เซิฟเวอร์": "เซิร์ฟเวอร์", "คอนฟิค": "คอนฟิก", "รีสตาท": "รีสตาร์ท"}
+_got492 = {}
+for _q492, _w492 in _want492.items():
+    _out492 = _run492(_q492).stdout
+    _got492[_q492] = next((l.strip() for l in _out492.splitlines() if "did you mean" in l), "")
+# A suggestion is useful when it finds the note: a non-ASCII query matches as a substring, so a
+# stretch of the title one consonant short (`คอนฟิ` for `คอนฟิค`) still finds it. Two of the three
+# must name the whole word; all three must find the note when run as the query.
+_whole_word492 = [q for q, g in _got492.items() if _want492[q] in g]
+check("misspelt Thai loanwords are answered with the word the title holds", len(_whole_word492) >= 2,
+      saw=_got492)
+_finds492 = {}
+for _q492, _g492 in _got492.items():
+    _s492 = _g492.replace("did you mean", "").strip(" ?").split(",")[0].strip().strip("`'\"")
+    _finds492[_q492] = bool(_s492) and "server.md" in _run492(_s492).stdout
+check("...and every suggestion, run as the query, finds the note", all(_finds492.values()),
+      saw=(_got492, _finds492))
+
+
+def _whole492(line):
+    for _part in line.replace("did you mean", "").strip(" ?").split(","):
+        _s = _part.strip().strip("`'\"")
+        if not _s:
+            continue
+        _at = _title492.find(_s)
+        if _at < 0 or _ud492.category(_s[0]).startswith("M"):
+            return False
+        _end = _at + len(_s)
+        if _end < len(_title492) and _ud492.category(_title492[_end]).startswith("M"):
+            return False
+    return True
+
+
+check("...and no suggestion is cut before a vowel or tone mark",
+      all(_whole492(g) for g in _got492.values() if g), saw=_got492)
+_none492 = _run492("ทะเลสาบ").stdout
+check("a Thai word with nothing close gets the plain answer and no guess",
+      "did you mean" not in _none492, saw=_none492[-200:])
+# ---- 493_a_utf16_file_of_any_extension_is_read_as_text.py
+# ------------------ a UTF-16 file is read as text whatever its extension
+# 🐛 [2026-10-09] (R177 acc4, 2026-10-09: git and ripgrep take UTF-16 text for binary, and an agent
+# reproduced the failure at ingestion) peek honoured a UTF-16 or UTF-32 byte-order mark on the paths
+# that asked for it -- text, CSV, JSON, source -- but an extension it did not know went straight to
+# the binary describer, so a `.reg` export or a `.ps1` saved by Windows PowerShell 5.1 came back as
+# "unrecognised; 48% printable" with a CRC and no line of its content. The population is every
+# BOM-bearing encoding, on a known and an unknown extension.
+import subprocess as _sp493
+import sys as _sys493
+import tempfile as _tf493
+from pathlib import Path as _P493
+
+_d493 = _P493(_tf493.mkdtemp())
+_text493 = "MARKER493 configure the build agent\nsecond line\n"
+_cases493 = {"setup.ps1": "utf-16", "keys.reg": "utf-16", "notes.txt": "utf-16",
+             "big.reg": "utf-16-be", "wide.reg": "utf-32"}
+_bad493 = {}
+for _n493, _enc493 in _cases493.items():
+    _raw493 = _text493.encode(_enc493)
+    if _enc493 == "utf-16-be":
+        _raw493 = b"\xfe\xff" + _raw493
+    (_d493 / _n493).write_bytes(_raw493)
+    _out493 = _sp493.run([_sys493.executable, str(ROOT / "bin" / "chamnan-peek"), _n493], cwd=_d493,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60).stdout
+    if "MARKER493" not in _out493 or "unrecognised" in _out493:
+        _bad493[_n493] = _out493.strip().splitlines()[2:4]
+check("every BOM-marked UTF-16 or UTF-32 file is shown as its text", not _bad493, saw=_bad493)
+(_d493 / "blob.reg").write_bytes(b"\x00\x01\x02binary\x00\x00\xff" * 40)
+_blob493 = _sp493.run([_sys493.executable, str(ROOT / "bin" / "chamnan-peek"), "blob.reg"], cwd=_d493,
+                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60).stdout
+check("...and a real binary with that extension is still described as binary",
+      "unrecognised" in _blob493 or "printable" in _blob493, saw=_blob493[-200:])
+# ---- 494_a_command_that_dumps_every_secret_is_refused.py
+# ------------------ a command that dumps the whole environment or a stored credential is refused
+# 🎯 [2026-10-09] (R82 acc4, 2026-10-08; R11 acc4, 2026-10-09; decided by the skill's procedure with acc4
+# consulted, option c) The read guard refused credential FILES, while `printenv`, `env`,
+# `/proc/*/environ` and `git credential fill` print every exported key or the stored password straight
+# into the session. Refused: the bulk forms nobody needs for ordinary debugging. Allowed: a named
+# variable (`printenv PATH`) and running a command under an environment (`env FOO=1 cmd`), which
+# still could print a secret -- this is a short list of high-confidence hazards, not output redaction,
+# and the refusal says what narrower command works instead.
+import importlib as _il494
+
+_vault494 = _il494.import_module("vault")
+_refused494 = [
+    ("Bash", "printenv"), ("Bash", "env"), ("Bash", "env | sort"), ("Bash", "/usr/bin/env"),
+    ("Bash", "cat /proc/self/environ"), ("Bash", "strings /proc/1234/environ"),
+    ("Bash", "tr '\\0' '\\n' < /proc/self/environ"), ("Bash", "git credential fill"),
+    ("Bash", "echo 'protocol=https' | git credential fill"), ("Bash", "git credential get"),
+    ("PowerShell", "Get-ChildItem Env:"), ("PowerShell", "gci env:"), ("PowerShell", "dir Env:"),
+]
+_missed494 = [c for t, c in _refused494 if not _vault494.tool_reads(t, {"command": c}, None)]
+check("every bulk environment dump and credential-helper read is refused", not _missed494, saw=_missed494)
+_allowed494 = [
+    ("Bash", "printenv PATH"), ("Bash", "env FOO=1 python3 app.py"), ("Bash", "env -i bash -c true"),
+    ("Bash", "echo $PATH"), ("Bash", "git credential-cache exit"), ("Bash", "grep environ notes.txt"),
+    ("PowerShell", "$env:PATH"), ("PowerShell", "Get-ChildItem src"),
+]
+_wrong494 = [c for t, c in _allowed494 if _vault494.tool_reads(t, {"command": c}, None)]
+check("...while a named variable, a command run under an environment and ordinary commands are not",
+      not _wrong494, saw=_wrong494)
+_why494 = _vault494.refusal(_vault494.tool_reads("Bash", {"command": "printenv"}, None) or "")
+check("...and the refusal names a narrower command that still works", "printenv PATH" in _why494,
+      saw=_why494[-300:])
 # ---- 49_one_calendar_for_every_day_a_record_is_filed_under.py
 # ------------------------- two calendars in one function, and the percentage compared across them
 # 🐛 [2026-09-10] `chamnan-report`'s scan filed each record's day as `ts[:10]` — the raw timestamp
