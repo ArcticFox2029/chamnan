@@ -50,7 +50,11 @@ KINDS = (
 
 # Where a match is worth more. A term in the title is the document being ABOUT that thing; a term
 # in the body may be an aside.
-FIELD_WEIGHT = {"title": 6.0, "blurb": 3.0, "body": 1.0}
+# 🎯 [2026-10-09] (R8 acc4, 2026-10-09) Was 6/3/1. Known-item queries over five seeds: a query made
+# of body words found its note at MRR 0.834 against 0.912 at 3/2/1, title-word queries lost
+# 0.949 to 0.937, and a mixed query gained 0.904 to 0.922 — a title six times a body word buried
+# the note a person half-remembers by what it said behind every note that only names the word.
+FIELD_WEIGHT = {"title": 3.0, "blurb": 2.0, "body": 1.0}
 
 MAX_BODY_TERMS = 400        # per document, by frequency: the tail of a long skill is noise
 SNIPPET = 90

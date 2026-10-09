@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Recall finds a note by what it said, not only by its title.** A word in a note's title counted
+  six times a word in its body, so a note remembered by its content ranked behind every note that
+  merely named the word. Titles now count three times, and over synthetic known-item queries a
+  search by body words put its note higher (mean reciprocal rank 0.834 to 0.912) while a search by
+  title words moved from 0.949 to 0.937.
 - **A hook no longer hangs when the host leaves its input open.** Every hook waited for the end of
   its input before reading the event, so a host that wrote the event and kept the pipe open held
   the hook, and the tool call behind it, until something killed it. A hook now stops reading as
