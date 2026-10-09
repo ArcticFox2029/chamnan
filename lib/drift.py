@@ -75,7 +75,11 @@ def gone_since(root, rel):
     """
     p = os.path.join(str(root), rel)
     try:
-        text = open(p, "r", encoding="utf-8", errors="replace").read()
+        # 🐛 [2026-10-09] (R48 acc5, 2026-10-09: ResourceWarning made fatal exposes leaked files) A bare
+        # `open(...).read()` left the handle to the collector: under PYTHONWARNINGS=error the
+        # session-start hook printed "unclosed file" for AGENTS.md and CLAUDE.md. Check 484.
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
     except OSError:
         return [], 0
     code, out = _git(root, ["log", "-1", "--format=%H", "--", rel])
