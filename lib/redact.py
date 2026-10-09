@@ -5016,6 +5016,21 @@ def _redact_personal_data(text):
         out.append("".join(rebuilt))
     return "".join(out)
 
+def _drop_invisibles_inside_ascii_tokens(text):
+    # 🐛 [2026-10-09] (R72 acc4, 2026-10-09) `_TERMINAL_SAFE` keeps ZWNJ, ZWJ, the soft hyphen and
+    # the other format characters scripts need (Indic conjuncts, emoji families, Arabic signs), so a
+    # key split by one of them was neither found by the scrub nor rejoined here: the whole value
+    # printed with one invisible character inside, which a reader simply reads past. Between two
+    # ASCII token characters none of them has a use, so they are dropped there only -- the caller
+    # then sees the length change and scrubs again. Distinct characters first, as above: text with
+    # no format character pays one set() and nothing else. Check 485.
+    found = {ch for ch in set(text) if ch > "\x7f" and _is_planted_invisible(ch)}
+    if not found:
+        return text
+    return re.sub("(?<=[A-Za-z0-9_+/=-])[" + "".join(re.escape(ch) for ch in sorted(found))
+                  + "]+(?=[A-Za-z0-9_+/=-])", "", text)
+
+
 def for_a_terminal(text):
     """Repository text with the characters that rewrite what a reader sees removed.
 
@@ -5023,7 +5038,7 @@ def for_a_terminal(text):
     `_CHAT_TEMPLATE_SENTINEL` above.
     """
     text = _CHAT_TEMPLATE_SENTINEL.sub("<¦\\1¦>", text)
-    out = text.translate(_TERMINAL_SAFE)
+    out = _drop_invisibles_inside_ascii_tokens(text.translate(_TERMINAL_SAFE))
     # 🐛 [2026-10-05] (R148 acc4, 2026-10-05) Callers scrub first and strip second, so a credential
     # split by an invisible or control character (U+200B, U+2060, U+FEFF, NUL...) was two harmless
     # halves to the scrub and one complete, valid key once this deleted the splitter. Scrubbing again

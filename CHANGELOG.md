@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A key split by an invisible joiner is no longer printed whole.** ZWNJ, ZWJ, the soft hyphen
+  and the other invisible format characters that Indic scripts and emoji need were kept in
+  everything chamnan prints, so a key with one of them inside was not recognised and printed in
+  full with one invisible character in it. Between two letters or digits of a token they are now
+  removed and the text checked again; Thai, Indic and emoji text is unchanged.
 - **Recall finds a note by what it said, not only by its title.** A word in a note's title counted
   six times a word in its body, so a note remembered by its content ranked behind every note that
   merely named the word. Titles now count three times, and over synthetic known-item queries a
