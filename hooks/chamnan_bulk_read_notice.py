@@ -421,7 +421,7 @@ def main():
     except Exception:
         return 0
     _tool = payload.get("tool_name") or ""
-    if _tool not in ("Read", "Bash", "Grep"):
+    if _tool not in ("Read", "Bash", "Grep", "PowerShell"):
         return 0
     root = ws.hook_root(payload)
     # 🎯 [2026-10-07] (owner, 2026-10-07) A credential file read by the agent's OWN tool reaches the
@@ -440,7 +440,8 @@ def main():
                 return 0
     except Exception:      # noqa: BLE001 -- the guard failing must never break the call it inspects
         pass
-    if _tool == "Grep":
+    # PowerShell is here for the credential guard above only; the bulk-read notice reads Bash syntax.
+    if _tool in ("Grep", "PowerShell"):
         return 0
     if not ws.workspace(root).is_dir() or not ws.load_config(root).get("warn_on_bulk_reads", True):
         return 0

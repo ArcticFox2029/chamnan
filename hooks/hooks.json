@@ -72,7 +72,7 @@
         ]
       },
       {
-        "matcher": "Read|Bash|Grep",
+        "matcher": "Read|Bash|Grep|PowerShell",
         "hooks": [
           {
             "type": "command",

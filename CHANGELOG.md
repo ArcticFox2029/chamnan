@@ -21,6 +21,12 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Reading a credential file through PowerShell is refused, as it is through Bash.** The guard
+  already knew `Get-Content`, `gc` and `type`, but the PowerShell tool on native Windows was never
+  routed to it, so a credential file read that way reached the session whole.
+- **A `.git/config` holding a token is refused.** A remote cloned with a token in its URL, or a CI
+  checkout's stored header, keeps the credential in `.git/config`; reading it is now refused, and
+  an ordinary `.git/config` stays readable.
 - **A secret is hidden wherever it repeats, not only beside its name.** A value redacted as
   `db_password = "…"` printed in full two lines later in `connect("…")` or an `echo`, because every
   rule finds a value by the name next to it. Once a long, credential-shaped value has been found by

@@ -68,7 +68,11 @@ MCP_CONFIGS = frozenset({".mcp.json", "mcp.json", "mcp_config.json"})
 TOOL_LOGINS_IN = frozenset({(".claude", ".credentials.json"), (".codex", "auth.json"),
                             (".gemini", "oauth_creds.json"), ("gh", "hosts.yml"),
                             ("github-copilot", "apps.json"), ("github-copilot", "hosts.json"),
-                            ("gcloud", "application_default_credentials.json"), ("serviceaccount", "token")})
+                            ("gcloud", "application_default_credentials.json"), ("serviceaccount", "token"),
+                            # 🐛 [2026-10-09] (R119 claudeaccount1, 2026-10-09) A remote cloned with a
+                            # token in its URL, or a CI checkout's `extraheader`, keeps the credential
+                            # here; refused only when the file carries one. Check 489.
+                            (".git", "config")})
 _REGISTRY_READ_CAP = 256 * 1024
 # Lower-cased once: the directory names above are written as the tools spell them (`Claude`).
 _REGISTRY_PAIRS = frozenset((d.lower(), n.lower()) for d, n in REGISTRY_CONFIGS_IN)
@@ -131,9 +135,11 @@ def _is_credential(token, root):
     return None
 
 
-def _words(segment):
+def _words(segment, posix=True):
+    # `posix=False` for PowerShell: POSIX splitting reads `\` as an escape and turns
+    # `C:\Users\me\.netrc` into `C:Usersme.netrc`, a path nobody has.
     try:
-        return shlex.split(segment, posix=True)
+        return shlex.split(segment, posix=posix)
     except ValueError:
         return segment.split()
 
@@ -212,13 +218,13 @@ def _file_args(verb, args):
     return files
 
 
-def bash_reads(command, root=None):
+def bash_reads(command, root=None, posix=True):
     """The credential file a shell command would print, or None."""
     text = str(command or "")
     if not text.strip():
         return None
     for segment in _segments(_without_heredoc_bodies(text)):
-        words = _words(segment)
+        words = _words(segment, posix)
         if not words:
             continue
         # `< .env` and `<.env` feed the file to whatever runs; that is a read whatever the verb.
@@ -268,6 +274,11 @@ def tool_reads(tool, tool_input, root=None):
         return _is_credential(str(tool_input.get("path") or ""), root)
     if tool == "Bash":
         return bash_reads(tool_input.get("command"), root)
+    # 🐛 [2026-10-09] (R124 claudeaccount1, 2026-10-09) READERS has carried `get-content`, `gc` and
+    # `type` all along, and nothing ever routed the PowerShell tool here: `Get-Content` of a
+    # credential file on native Windows reached the session whole. Check 488.
+    if tool == "PowerShell":
+        return bash_reads(tool_input.get("command"), root, posix=False)
     return None
 
 
