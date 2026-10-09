@@ -941,6 +941,12 @@ def _peek(path, find=None, budget=DEFAULT_BUDGET):
             body = peek_text(path, find)
         elif ext in mapper.EXT_LANG:
             body = peek_source(path, find)
+        # 🐛 [2026-10-09] (R177 acc4, 2026-10-09) A byte-order mark is a positive statement that the
+        # file is text, and only the extensions above ever asked: a `.reg` export or a `.ps1` from
+        # Windows PowerShell 5.1 went to the binary describer as "unrecognised; 48% printable".
+        # Check 493.
+        elif _text_encoding(path) in ("utf-16", "utf-32"):
+            body = peek_text(path, find)
         else:
             body = peek_binary(path)
     except Exception as err:                     # a malformed file must not crash the caller

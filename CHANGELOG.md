@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **`chamnan-peek` reads a UTF-16 file whatever its extension.** A `.reg` export or a `.ps1` saved by
+  Windows PowerShell 5.1 was described as "unrecognised; 48% printable" with no line of its content,
+  because only known text extensions checked for a byte-order mark.
 - **A misspelt Thai word gets a usable suggestion.** Recall's "did you mean" cut Thai titles apart at
   every vowel and tone mark, so `คอนฟิค` was answered with `คอนฟ` and `เซิฟเวอร์` with nothing. Thai has
   no spaces to split on, so the closest stretch of a stored title is offered instead, never cut before
