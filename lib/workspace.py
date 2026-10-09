@@ -1874,7 +1874,58 @@ def read_hook_payload(stream=None):
         print("chamnan: this is a hook -- it reads one JSON event on stdin from the host. "
               "To try it by hand: echo '{\"cwd\": \".\"}' | python3 <hook>", file=sys.stderr)
         return {}
-    return _json.load(stream)
+    # 🐛 [2026-10-09] (R2 acc4, 2026-10-09: a hook blocked reading stdin outlived its declared timeout
+    # for hours when the host left the pipe open) `json.load` waits for end of file, so a host that
+    # wrote the event and kept stdin open held every chamnan hook -- and the tool call behind it --
+    # until something killed it. Measured: all four hooks tried were still waiting after 12 s. The
+    # event is complete as soon as it parses, so the read stops there; a pipe that goes quiet with
+    # nothing parseable is treated as no event. Check 481.
+    try:
+        fd = stream.fileno()
+    except (AttributeError, ValueError, OSError):
+        return _json.load(stream)
+    return _read_one_json_event(fd, _json)
+
+
+# How long a hook waits for more of its event once the pipe has gone quiet. Hosts write the whole
+# event at once, so this is reached only when one never finishes writing.
+HOOK_STDIN_IDLE_SECONDS = 5.0
+
+
+def _read_one_json_event(fd, _json):
+    """The first complete JSON value read from `fd`, without waiting for end of file."""
+    import queue
+    import threading
+    chunks = queue.Queue()
+
+    def pump():
+        while True:
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                data = b""
+            chunks.put(data)
+            if not data:
+                return
+
+    threading.Thread(target=pump, daemon=True).start()
+    buf = b""
+    while True:
+        try:
+            data = chunks.get(timeout=HOOK_STDIN_IDLE_SECONDS)
+        except queue.Empty:
+            return {}
+        if not data:
+            # End of file: the old behaviour exactly, including raising on a malformed event.
+            return _json.loads(buf.decode("utf-8", "replace") or "{}") if buf.strip() else {}
+        buf += data
+        # Only a buffer that could end a JSON object is worth parsing; a large event arrives in
+        # many chunks and re-parsing each prefix would be quadratic.
+        if buf.rstrip().endswith((b"}", b"]")):
+            try:
+                return _json.loads(buf.decode("utf-8", "replace"))
+            except ValueError:
+                continue
 
 
 def hook_root(payload=None):

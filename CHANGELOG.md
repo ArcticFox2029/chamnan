@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A hook no longer hangs when the host leaves its input open.** Every hook waited for the end of
+  its input before reading the event, so a host that wrote the event and kept the pipe open held
+  the hook, and the tool call behind it, until something killed it. A hook now stops reading as
+  soon as the event is complete, and treats a pipe that goes quiet with nothing readable as no event.
 - **Makefile and shell assignments are redacted.** `API_TOKEN ?= …`, `export API_KEY := …`, `::=`
   and `+=` printed their value; only a plain `=` or `:` was read as an assignment. A comparison
   such as `password != other` is still left alone.
