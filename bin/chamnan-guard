@@ -314,6 +314,51 @@ def scan(diff):
     return found
 
 
+# The whole staged file is read for its context only up to this size, and only this much in total
+# per run: the guard runs inside `git commit`, where a slow hook gets bypassed.
+CONTEXT_FILE_CAP = 512_000
+CONTEXT_TOTAL_CAP = 2_000_000
+
+
+def scan_in_context(root, diff):
+    """`{path: [line numbers]}` for added lines the redactor rewrites only with the file around them.
+
+    🐛 [2026-10-09] (R27 acc4, 2026-10-09: a scanner limited to changed lines misses a credential
+    whose key name sits on an unchanged line) `scan` reads each added line alone, from a `-U0` diff.
+    A value whose name is on a line that did not change -- `api_token: >-` with the value on the
+    next line, a nested `password:` block -- was redacted when the whole file was scrubbed and
+    passed the guard in silence. Each staged file is scrubbed whole and the ADDED lines it rewrote
+    are reported; a scrub that changes the line count gives no line map, so that file keeps the
+    line-by-line answer. Check 482.
+    """
+    if not ws.git_can_speak_for(root):
+        return {}
+    wanted = {}
+    for path, lineno, text in _added_lines(diff):
+        if text.strip():
+            wanted.setdefault(path, set()).add(lineno)
+    found, spent = {}, 0
+    for path in sorted(wanted):
+        try:
+            blob = subprocess.run(["git", "-C", str(root), "cat-file", "blob", ":" + path],
+                                  capture_output=True, stdin=subprocess.DEVNULL, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if not blob or len(blob) > CONTEXT_FILE_CAP or b"\0" in blob[:8000]:
+            continue
+        spent += len(blob)
+        if spent > CONTEXT_TOTAL_CAP:
+            break
+        text = blob.decode("utf-8", "replace")
+        before, after = text.split("\n"), redact.scrub(text).split("\n")
+        if len(before) != len(after):
+            continue
+        hits = sorted(n for n in wanted[path] if 0 < n <= len(before) and before[n - 1] != after[n - 1])
+        if hits:
+            found[path] = hits
+    return found
+
+
 def scan_bytecode(root):
     """`{path: count}` of staged files git shows as binary whose text the redactor would rewrite.
 
@@ -645,6 +690,8 @@ def main(argv):
         return 0
 
     found = scan(diff)
+    for _p, _ns in scan_in_context(root, diff).items():
+        found[_p] = sorted(set(found.get(_p, [])) | set(_ns))
     bytecode_found = scan_bytecode(root)
     mcp_found = scan_mcp_changes(diff)
     supply_found = scan_supply_changes(diff)

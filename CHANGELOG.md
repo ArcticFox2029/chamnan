@@ -25,6 +25,10 @@ already reports the last released number while running newer code.
   its input before reading the event, so a host that wrote the event and kept the pipe open held
   the hook, and the tool call behind it, until something killed it. A hook now stops reading as
   soon as the event is complete, and treats a pipe that goes quiet with nothing readable as no event.
+- **A secret whose name is on another line is found.** A YAML value nested under a secret-named key
+  (`password:` then `  value: …`) printed whole, and the commit guard, which read each changed line
+  alone, missed a value whose key sat on an unchanged line (`api_token: >-` with the value below).
+  Both are caught now; `min_length: 12` under `password:` and a `secretKeyRef` name are left alone.
 - **Makefile and shell assignments are redacted.** `API_TOKEN ?= …`, `export API_KEY := …`, `::=`
   and `+=` printed their value; only a plain `=` or `:` was read as an assignment. A comparison
   such as `password != other` is still left alone.

@@ -3553,6 +3553,7 @@ def scrub(text, windowed=True, *, _unmask=True):
             return _best
     text = _redact_yaml_anchor_targets(text)
     text = _redact_secret_sections(text)
+    text = _redact_secret_mappings(text)
     text = _redact_kubernetes_secret_data(text)
     for pattern in PATTERNS + [DELIMITED_AFTER_SECRET_WORD] + LATE_PREFIXES:
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
@@ -4734,6 +4735,50 @@ def _redact_secret_sections(text):
             if a and not _names_a_mechanism(a.group(2).strip("'\"")) and _reads_like_a_credential(a.group(4)):
                 lines[i] = a.group(1) + a.group(3) + PLACEHOLDER + a.group(3) + a.group(5)
         i += 1
+    return "\n".join(lines)
+
+
+# 🐛 [2026-10-09] (R27 acc4, 2026-10-09: a credential whose key name sits on another line is missed
+# by a line-limited reader) The TOML/INI header above had a YAML twin with no rule: a secret-named
+# key holding a nested mapping -- `password:` then `  value: <secret>`, the shape Helm values and
+# Kubernetes manifests use -- printed the value whole, because `value` names nothing. Under such a
+# key, a child value that reads like a credential is redacted unless its own key names a
+# mechanism; `min_length: 12` and `name: my-secret` stay. Check 482.
+_YAML_PARENT = _lazy(lambda: re.compile(r"^(\s*)(-\s+)?([A-Za-z0-9_.\-\"']+)\s*:\s*(?:#.*)?$"))
+_YAML_CHILD = _lazy(lambda: re.compile(
+    r"^(\s*)([A-Za-z0-9_.\-\"']+)(\s*:\s+)(['\"]?)([^'\"\s#][^'\"#]*?)\4(\s*(?:#.*)?)$"))
+_NESTED_MAPPING = _lazy(lambda: re.compile(r":[ \t]*(?:#[^\n]*)?\r?\n[ \t]+[A-Za-z0-9_\"']"))
+
+
+def _redact_secret_mappings(text):
+    """Credential-shaped values in a YAML mapping nested under a secret-named key."""
+    if not _NESTED_MAPPING.search(text) or not _may_name_a_secret(text):
+        return text
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        p = _YAML_PARENT.match(lines[i].rstrip("\r"))
+        # The same parents a TOML header may name: a bare `token`/`tokens` too, never `keys`.
+        if not p or not (_secret_named_yaml_key(p.group(3))
+                         or p.group(3).strip("'\"").lower() in ("token", "tokens")):
+            i += 1
+            continue
+        parent = len(p.group(1)) + len(p.group(2) or "")
+        j = i + 1
+        while j < len(lines):
+            line = lines[j].rstrip("\r")
+            if not line.strip() or line.lstrip().startswith("#"):
+                j += 1
+                continue
+            if len(line) - len(line.lstrip()) <= parent:
+                break
+            c = _YAML_CHILD.match(line)
+            if (c and not _names_a_mechanism(c.group(2).strip("'\""))
+                    and _reads_like_a_credential(c.group(5))):
+                tail = lines[j][len(line):]
+                lines[j] = c.group(1) + c.group(2) + c.group(3) + c.group(4) + PLACEHOLDER + c.group(4) + c.group(6) + tail
+            j += 1
+        i = j
     return "\n".join(lines)
 
 
