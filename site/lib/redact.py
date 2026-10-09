@@ -1483,6 +1483,7 @@ ASSIGNED_SECRET_CALL = _lazy(lambda: re.compile(
 BLOCKED_SUFFIXES = (
     ".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der", ".jks", ".keystore",
     ".db", ".sqlite", ".sqlite3", ".mdb", ".bak", ".dump",
+    ".credential",       # Git Credential Manager's plaintext store; see NEVER_OPENED_SUFFIXES. Check 483.
 )
 # 🐛 `.netrc` was here and its siblings were not, so the same class of file was refused or read
 # depending on which platform's spelling it used. `_netrc` is the Windows name for exactly `.netrc`;
@@ -1512,8 +1513,12 @@ BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".ne
 # name, and a database's table and column names are exactly the useful answer, with no row ever
 # printed. Refusing those too cost peek one of its better features for no gain. What stays refused
 # is the set whose contents ARE the secret: keys, certificates, and credential files.
+# 🐛 [2026-10-09] (R11 acc4, 2026-10-09: Git Credential Manager's plaintext store "is NOT secure")
+# GCM's plaintext store keeps one file per credential, `~/.gcm/store/<service>/<account>.credential`,
+# with the secret alone on the first line and no key for any rule to read it by; the file was opened
+# in clear. Check 483.
 NEVER_OPENED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der",
-                         ".jks", ".keystore", ".asc", ".gpg")
+                         ".jks", ".keystore", ".asc", ".gpg", ".credential")
 
 
 def _has_source_extension(name):

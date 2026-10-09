@@ -29,6 +29,8 @@ already reports the last released number while running newer code.
   (`password:` then `  value: …`) printed whole, and the commit guard, which read each changed line
   alone, missed a value whose key sat on an unchanged line (`api_token: >-` with the value below).
   Both are caught now; `min_length: 12` under `password:` and a `secretKeyRef` name are left alone.
+- **Git Credential Manager's plaintext store is refused.** Its files (`~/.gcm/store/…/*.credential`)
+  hold the secret alone on the first line, and were opened in clear.
 - **Makefile and shell assignments are redacted.** `API_TOKEN ?= …`, `export API_KEY := …`, `::=`
   and `+=` printed their value; only a plain `=` or `:` was read as an assignment. A comparison
   such as `password != other` is still left alone.
