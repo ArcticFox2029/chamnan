@@ -58,7 +58,7 @@ _SHELL_TOOLS = ("Bash", "PowerShell")
 _GIT_NAMES = ("git", "git.exe")
 
 
-def _tell(text):
+def _tell(text, payload=None, root=None):
     """Say `text` where the session will see it, and on stderr for a terminal and the transcript.
 
     🐛 [2026-10-09] (R103 claudeaccount1, 2026-10-09) This went to stderr alone, and Claude Code
@@ -66,7 +66,18 @@ def _tell(text):
     transcripts is a `hook_success` attachment with the warning in `stderr` and `content` empty.
     `additionalContext` is what the model reads before the commit runs, which is the one moment
     the warning can still change anything. The exit stays 0 -- this warns, it never blocks. Check 486.
+
+    It claims the tool call like every other PreToolUse notice (lib/turn.py), so a pointer that
+    comes later stays quiet -- and it speaks even when the claim was already taken. The claim ranks
+    advice against advice; a staged secret held silent behind a pointer is the failure this hook
+    exists to prevent, and one extra notice on a commit is the cheaper mistake.
     """
+    try:
+        import turn
+        if payload is not None and root is not None:
+            turn.claim(payload, ws.workspace(root))
+    except Exception:                                             # noqa: BLE001
+        pass
     print(text, file=sys.stderr)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "additionalContext": text}}))
@@ -141,10 +152,10 @@ def main():
         # unscanned with nothing said: a timeout and a clean scan looked identical. Check 425.
         if type(_err).__name__ == "TimeoutExpired":
             _tell(f"chamnan: the commit guard did not finish in {GUARD_TIMEOUT:g} s, so this commit "
-                  f"was not scanned. Run `chamnan-guard` by hand to check what is staged.")
+                  f"was not scanned. Run `chamnan-guard` by hand to check what is staged.", payload, root)
         return 0
     if out:
-        _tell(out)
+        _tell(out, payload, root)
         try:
             ws.append_jsonl(root, "logs/commit_guard.jsonl",
                             # 🐛 [2026-09-24] (self-measured) This asked for `ws.now_iso`, which
