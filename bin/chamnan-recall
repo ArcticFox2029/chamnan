@@ -183,8 +183,19 @@ def main(argv):
             if isinstance(_e, dict) and isinstance(_e.get("title"), str):
                 _vocab.update(w.lower() for w in re.findall(r"[^\W\d_]{3,}", _e["title"]))
         _close = []
+        _titles = None
         for _w in words:
-            if _w.lower() not in _vocab:
+            if not _w.isascii():
+                # A script written without spaces has no words to split a title into -- see
+                # recall.closest_stretch (R176 acc4, 2026-10-09).
+                if _titles is None:
+                    _titles = [_e["title"] for _e in (index.get("entries") or [])
+                               if isinstance(_e, dict) and isinstance(_e.get("title"), str)
+                               and not _e["title"].isascii()]
+                _c = recall.closest_stretch(_w, _titles)
+                if _c and _c not in _close:
+                    _close.append(_c)
+            elif _w.lower() not in _vocab:
                 _close += [c for c in difflib.get_close_matches(_w.lower(), _vocab, n=1, cutoff=0.8)
                            if c not in _close]
         if _close:

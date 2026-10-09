@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A misspelt Thai word gets a usable suggestion.** Recall's "did you mean" cut Thai titles apart at
+  every vowel and tone mark, so `คอนฟิค` was answered with `คอนฟ` and `เซิฟเวอร์` with nothing. Thai has
+  no spaces to split on, so the closest stretch of a stored title is offered instead, never cut before
+  a mark: `เซิฟเวอร์` now suggests `เซิร์ฟเวอร์`, and `รีสตาท` suggests `รีสตาร์ท`.
 - **`.geminiignore` and `.claudeignore` keep a file out of the map.** chamnan already left out what
   `.aiignore`, `.cursorignore`, `.codeiumignore` and `.aiexclude` name; a file named only in one of
   these two still had its opening comment summarised into every session.

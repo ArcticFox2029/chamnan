@@ -703,6 +703,47 @@ def _hits(entry, wanted, phrases, idf=None, pidf=None):
     return score * float(entry.get("weight", 1.0)), why
 
 
+def closest_stretch(word, texts, cutoff=0.8):
+    """The stretch of `texts` most like `word`, for a did-you-mean in a script written without spaces.
+
+    🐛 [2026-10-09] (R176 acc4, 2026-10-09: 68.87% of students misspelt Thai technical loanwords)
+    Thai is written without spaces, so a title cannot be split into words, and a vowel or tone mark
+    is not a word character, so splitting on `\\w` cut `คอนฟิก` to `คอนฟ`. Windows a little shorter
+    and longer than `word` are compared instead, each starting and ending where the next character
+    is not a combining mark. Only texts sharing half of `word`'s character pairs are windowed, which
+    keeps this to a few titles on a store of a thousand. Check 492.
+    """
+    import difflib
+    pairs = {word[i:i + 2] for i in range(len(word) - 1)}
+    if not pairs:
+        return None
+    best, best_key = None, (0, cutoff)
+    for text in texts:
+        if sum(p in text for p in pairs) < max(2, len(pairs) // 2):
+            continue
+        cuts = [i for i in range(len(text) + 1)
+                if i == len(text) or not unicodedata.category(text[i]).startswith("M")]
+        for a in cuts:
+            for b in cuts:
+                if b <= a or abs((b - a) - len(word)) > 3:
+                    continue
+                piece = text[a:b]
+                if not piece.strip() or piece != piece.strip():
+                    continue
+                sm = difflib.SequenceMatcher(None, word, piece)
+                if sm.quick_ratio() < cutoff:
+                    continue
+                ratio = sm.ratio()
+                if ratio < cutoff:
+                    continue
+                # More of the typed word explained first, then the closer spelling: `รีสตาท` should
+                # find `รีสตาร์ท`, not the shorter `รีสตา` that happens to score a higher ratio.
+                key = (sum(m.size for m in sm.get_matching_blocks()), ratio)
+                if key > best_key:
+                    best, best_key = piece, key
+    return best
+
+
 def query(index, words, limit=6):
     """Rank entries against `words`. Pure: takes a loaded index and reads nothing.
 
