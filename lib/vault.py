@@ -120,6 +120,25 @@ def _history_carries_a_secret(path):
     return redact.scrub(text) != text
 
 
+# 🐛 [2026-10-10] (R39 acc4, 2026-10-10: whole-home scans find service-account JSON in ~/Downloads) A
+# cloud key downloads as `<project>-<hash>.json`, so a name list cannot know it; the file says what it
+# is in its first few hundred bytes. Only the head is read, and only for a .json the guard is asked
+# about. Check 497.
+_SA_HEAD = 8192
+
+
+def _is_service_account_key(path):
+    if path.suffix.lower() != ".json":
+        return False
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_SA_HEAD)
+    except (OSError, ValueError):
+        return False
+    return (b'"service_account"' in head and b'"private_key"' in head
+            and b"PRIVATE KEY-----" in head)
+
+
 def _registry_carries_a_secret(path):
     try:
         if not path.is_file() or path.stat().st_size > _REGISTRY_READ_CAP:
@@ -154,6 +173,8 @@ def _is_credential(token, root):
         if (_is_registry_config(path) or _is_tool_login(path)) and _registry_carries_a_secret(path):
             return token
         if path.name.lower() in SHELL_HISTORIES and _history_carries_a_secret(path):
+            return token
+        if _is_service_account_key(path):
             return token
     except (OSError, ValueError):
         return None
@@ -363,6 +384,11 @@ def refusal(name):
                 f"session. The tool that owns it reads it itself -- run that tool (claude, codex, gemini, "
                 f"gh, gcloud, kubectl) rather than opening the file. If you need to know what it holds, "
                 f"ask the user.")
+    if _is_service_account_key(Path(str(name).strip("'\"")).expanduser()):
+        return (f"chamnan: `{shown}` is a cloud service-account key, private key included, so it is not "
+                f"read into the session. To USE it, point the client at the file and let it read it "
+                f"(`GOOGLE_APPLICATION_CREDENTIALS={mdblock.as_quoted(str(name), 200)} <command>`); "
+                f"to know which account it is, ask the user.")
     if Path(str(name).strip("'\"")).name.lower() in SHELL_HISTORIES:
         return (f"chamnan: `{shown}` is a command history and it holds a credential somebody typed or "
                 f"pasted, so it is not read into the session. `grep -c <word> {mdblock.as_quoted(str(name), 200)}` "

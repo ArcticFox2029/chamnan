@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A cloud service-account key is refused whatever it is called.** Google names a downloaded key
+  after the project and a hash, so the guard, which judged JSON by name, read it whole under that name
+  or as `key.json`. A JSON file that declares itself a service account and carries a private key is now
+  refused, with the way to hand it to the client instead.
 - **A symlinked file is mapped once.** A link inside the repository to a file the map already reads,
   such as `alias.py -> src/real.py`, put the same module into the index twice under two names, each
   with its own summary and functions. The link is now skipped and the file it points to is mapped.
