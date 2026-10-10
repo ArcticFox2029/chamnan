@@ -163,6 +163,13 @@ def _walk(root):
                     if (_resolved.parts[:len(_base_resolved.parts)]
                             != _base_resolved.parts):
                         continue
+                    # 🐛 [2026-10-10] (R30 acc4, 2026-10-10: search tools list a file once per link
+                    # to it) A link to a file this walk yields on its own put the same module into
+                    # MAP.md twice under two names. Kept only when its target sits in a pruned
+                    # directory, where the link is the one way in. Check 496.
+                    if _resolved.is_file() and not any(
+                            _p in PRUNE_DIRS for _p in _resolved.parts[len(_base_resolved.parts):-1]):
+                        continue
             except (OSError, RuntimeError):
                 # RuntimeError as well as OSError, and it is not defensive padding: a symlink loop
                 # (`a -> b -> a`, or a link to itself) makes Path.resolve() raise

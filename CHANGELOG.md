@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A symlinked file is mapped once.** A link inside the repository to a file the map already reads,
+  such as `alias.py -> src/real.py`, put the same module into the index twice under two names, each
+  with its own summary and functions. The link is now skipped and the file it points to is mapped.
 - **A shell or REPL history that holds a secret is refused.** `.zsh_history`, `.bash_history`,
   PowerShell's `ConsoleHost_history.txt`, `.psql_history` and the like keep every token somebody typed
   or pasted, and reading one put them all into the session. A history with nothing secret in it stays
