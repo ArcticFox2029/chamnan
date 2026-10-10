@@ -97,6 +97,29 @@ def _is_tool_login(path):
     return False
 
 
+# 🐛 [2026-10-10] (R186 acc4, 2026-10-09: shells and REPLs persist pasted inline credentials) A history
+# file keeps every `export TOKEN=...` and `-H 'Authorization: ...'` typed or pasted; this workspace's
+# owner's own `.zsh_history` held 5 lines the redactor changes. Refused when it carries one, like a
+# registry config. A history past the read cap is refused unread: it is long enough to hold anything.
+SHELL_HISTORIES = frozenset({".bash_history", ".zsh_history", ".sh_history", ".history", "fish_history",
+                             "consolehost_history.txt", ".python_history", ".psql_history",
+                             ".mysql_history", ".node_repl_history", ".sqlite_history", ".rediscli_history",
+                             ".irb_history", ".lesshst"})
+_HISTORY_READ_CAP = 1024 * 1024
+
+
+def _history_carries_a_secret(path):
+    try:
+        if not path.is_file():
+            return False
+        if path.stat().st_size > _HISTORY_READ_CAP:
+            return True
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return False
+    return redact.scrub(text) != text
+
+
 def _registry_carries_a_secret(path):
     try:
         if not path.is_file() or path.stat().st_size > _REGISTRY_READ_CAP:
@@ -129,6 +152,8 @@ def _is_credential(token, root):
         if redact.is_never_opened(path):
             return token
         if (_is_registry_config(path) or _is_tool_login(path)) and _registry_carries_a_secret(path):
+            return token
+        if path.name.lower() in SHELL_HISTORIES and _history_carries_a_secret(path):
             return token
     except (OSError, ValueError):
         return None
@@ -338,6 +363,10 @@ def refusal(name):
                 f"session. The tool that owns it reads it itself -- run that tool (claude, codex, gemini, "
                 f"gh, gcloud, kubectl) rather than opening the file. If you need to know what it holds, "
                 f"ask the user.")
+    if Path(str(name).strip("'\"")).name.lower() in SHELL_HISTORIES:
+        return (f"chamnan: `{shown}` is a command history and it holds a credential somebody typed or "
+                f"pasted, so it is not read into the session. `grep -c <word> {mdblock.as_quoted(str(name), 200)}` "
+                f"says whether a command is there without printing it; for the command itself, ask the user.")
     if _is_registry_config(Path(str(name).strip("'\""))):
         return (f"chamnan: `{shown}` carries a registry or server token, so it is not read into the session raw. "
                 f"`chamnan-peek {mdblock.as_quoted(str(name), 200)}` shows the same file with the token "

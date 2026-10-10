@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A shell or REPL history that holds a secret is refused.** `.zsh_history`, `.bash_history`,
+  PowerShell's `ConsoleHost_history.txt`, `.psql_history` and the like keep every token somebody typed
+  or pasted, and reading one put them all into the session. A history with nothing secret in it stays
+  readable, and `grep -c` still answers whether a command is there.
 - **Commands that dump every secret at once are refused.** `printenv` or `env` with no variable named,
   reading `/proc/*/environ`, PowerShell's `Get-ChildItem Env:`, and `git credential fill`/`get` print
   every exported key or the stored password into the session. They are refused with the narrower
