@@ -109,8 +109,11 @@ PLACEHOLDER = "<REDACTED>"
 # version accepted -- same answer on all of them.
 # 🐛 [2026-10-07] (R16 acc4, 2026-10-07) `}` added to the trailing closers: a word ending a JSON string
 # (`auth blocks"}`) is still one word. Check 455.
+# 🐛 [2026-10-10] (self-scan) `*` and `_` added too: Markdown emphasis ending a word (`a secret is
+# refused.**`, `__the api key is missing__`) is still one word, and the prose rule redacted it -- in this
+# repository's own CHANGELOG. Check 499.
 _PLAIN_WORD = _lazy(lambda: re.compile(
-    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]}\u2026\"'`]*$"))
+    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]}\u2026\"'`*_]*$"))
 
 
 def _is_a_default_credential(value):
@@ -1484,6 +1487,7 @@ BLOCKED_SUFFIXES = (
     ".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der", ".jks", ".keystore",
     ".db", ".sqlite", ".sqlite3", ".mdb", ".bak", ".dump",
     ".credential",       # Git Credential Manager's plaintext store; see NEVER_OPENED_SUFFIXES. Check 483.
+    ".ppk",              # a PuTTY private key; see NEVER_OPENED_SUFFIXES. Check 498.
 )
 # 🐛 `.netrc` was here and its siblings were not, so the same class of file was refused or read
 # depending on which platform's spelling it used. `_netrc` is the Windows name for exactly `.netrc`;
@@ -1521,8 +1525,10 @@ BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".ne
 # GCM's plaintext store keeps one file per credential, `~/.gcm/store/<service>/<account>.credential`,
 # with the secret alone on the first line and no key for any rule to read it by; the file was opened
 # in clear. Check 483.
+# 🐛 [2026-10-10] (R55 acc4, 2026-10-10: PuTTY PPK is text but not PEM) `.ppk` is a PuTTY private key
+# and nothing else; the redactor hid its body when chamnan printed it, but a Read took it whole. Check 498.
 NEVER_OPENED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der",
-                         ".jks", ".keystore", ".asc", ".gpg", ".credential")
+                         ".jks", ".keystore", ".asc", ".gpg", ".credential", ".ppk")
 
 
 def _has_source_extension(name):

@@ -72,7 +72,10 @@ TOOL_LOGINS_IN = frozenset({(".claude", ".credentials.json"), (".codex", "auth.j
                             # 🐛 [2026-10-09] (R119 claudeaccount1, 2026-10-09) A remote cloned with a
                             # token in its URL, or a CI checkout's `extraheader`, keeps the credential
                             # here; refused only when the file carries one. Check 489.
-                            (".git", "config")})
+                            (".git", "config"),
+                            # 🐛 [2026-10-10] (R55 acc4, 2026-10-10) sops keeps age identities here, and
+                            # an `AGE-SECRET-KEY-1...` line is the whole private key. Check 498.
+                            ("age", "keys.txt")})
 _REGISTRY_READ_CAP = 256 * 1024
 # Lower-cased once: the directory names above are written as the tools spell them (`Claude`).
 _REGISTRY_PAIRS = frozenset((d.lower(), n.lower()) for d, n in REGISTRY_CONFIGS_IN)
@@ -270,13 +273,13 @@ def _file_args(verb, args):
 # environment (`env FOO=1 cmd`) stay allowed, because blocking those would need a policy over intent.
 # A short list of high-confidence hazards, not output redaction. Check 494.
 ENV_DUMP = "the whole environment"
-CREDENTIAL_HELPER = "git's stored credential"
+STORED_GIT_LOGIN = "git's stored credential"
 _ENV_FILE = re.compile(r"^/proc/[^/\s]+/environ$")
 _PS_LISTERS = frozenset({"get-childitem", "gci", "dir", "ls"})
 
 
 def _dumps_secrets(verb, args):
-    """ENV_DUMP or CREDENTIAL_HELPER when this command prints every secret at once, else None."""
+    """ENV_DUMP or STORED_GIT_LOGIN when this command prints every secret at once, else None."""
     if verb == "printenv":
         return ENV_DUMP if not [a for a in args if not a.startswith("-")] else None
     if verb == "env":
@@ -287,9 +290,9 @@ def _dumps_secrets(verb, args):
     if verb == "git":
         positional = [a for a in args if not a.startswith("-")]
         if positional[:1] == ["credential"] and positional[1:2] in (["fill"], ["get"]):
-            return CREDENTIAL_HELPER
+            return STORED_GIT_LOGIN
         if positional[:1] and positional[0].startswith("credential-") and "get" in positional[1:]:
-            return CREDENTIAL_HELPER
+            return STORED_GIT_LOGIN
     return None
 
 
@@ -374,7 +377,7 @@ def refusal(name):
         return ("chamnan: this prints every exported variable, keys and tokens included, into the session, "
                 "so it is not run. Ask for the one you need by name -- `printenv PATH`, `echo \"$HOME\"` -- "
                 "which still works. This is a short list of bulk dumps, not a filter on what commands print.")
-    if name == CREDENTIAL_HELPER:
+    if name == STORED_GIT_LOGIN:
         return ("chamnan: this prints the stored password or token in full, so it is not run. To USE the "
                 "credential, run the git command that needs it (`git fetch`, `git push`); git asks its helper "
                 "itself. If you need to know which helper is configured, `git config --get credential.helper`.")
