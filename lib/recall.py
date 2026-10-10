@@ -721,8 +721,14 @@ def closest_stretch(word, texts, cutoff=0.8):
     for text in texts:
         if sum(p in text for p in pairs) < max(2, len(pairs) // 2):
             continue
+        # 🐛 [2026-10-10] (R181 acc4, 2026-10-09: Thai Character Cluster rules) Cutting only before
+        # a combining mark still split a leading vowel from its consonant (`แค` out of `เพิ่มแคช` gave
+        # `พิ่มแค`, 82 of 270 sampled suggestions). TCC's floor: never cut after a leading vowel
+        # (เ แ โ ใ ไ) or before a following one (ะ า ำ ๅ), which are written apart but read as one.
         cuts = [i for i in range(len(text) + 1)
-                if i == len(text) or not unicodedata.category(text[i]).startswith("M")]
+                if (i == len(text) or (not unicodedata.category(text[i]).startswith("M")
+                                       and text[i] not in "\u0e30\u0e32\u0e33\u0e45"))
+                and (i == 0 or text[i - 1] not in "\u0e40\u0e41\u0e42\u0e43\u0e44")]
         for a in cuts:
             for b in cuts:
                 if b <= a or abs((b - a) - len(word)) > 3:
