@@ -21,6 +21,10 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A macOS in-place `sed` edit is no longer refused for what its script says.** In
+  `sed -i '' 's/…/…/' notes.md` the empty backup suffix was taken for the script, and the script for
+  a file; one ending in something like `.env/` was refused as a read of `.env`.
+
 ## What's new in 1.36.0
 
 _A minor release about what reaches the session: the agent's own reads and commands now meet the same guard chamnan's commands always had, the redactor recognises secrets in the forms text actually carries them, and a long run of whitespace can no longer stall a scan._

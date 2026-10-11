@@ -326,9 +326,14 @@ def _file_args(verb, args):
     if verb not in _PROGRAM_FIRST:
         return args
     files, program_seen, skip = [], False, False
-    for a in args:
+    for i, a in enumerate(args):
         if skip:
             skip = False
+            continue
+        # 🐛 [2026-10-12] (self-measured) BSD sed's `-i` takes the backup suffix as the next word, and
+        # `sed -i '' 's/…/…/' file` is how every in-place edit is written on macOS. The empty word was
+        # taken for the program, so the real script was judged as a file. Check 520.
+        if verb == "sed" and a == "" and i and args[i - 1] == "-i":
             continue
         if a in _TAKES_VALUE:
             program_seen = program_seen or a in _PROGRAM_GIVEN
