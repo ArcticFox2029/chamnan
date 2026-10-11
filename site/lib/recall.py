@@ -85,9 +85,17 @@ def scrubber_id():
     """
     global _SCRUBBER_ID
     if _SCRUBBER_ID is None:
+        # 🐛 [2026-10-11] (R92 acc4, 2026-10-10; R32 acc4, 2026-10-11: Python upgrades replace the
+        # Unicode database) The stored terms are folded too, so a change to this module's folding or
+        # to the interpreter's Unicode version left an index built the old way: a zero-width space
+        # taught to `fold` would not reach notes indexed before it. Both join the fingerprint.
         try:
-            with open(redact.__file__, "rb") as fh:
-                _SCRUBBER_ID = hashlib.sha1(fh.read()).hexdigest()[:12]
+            h = hashlib.sha1()
+            for path in (redact.__file__, __file__):
+                with open(path, "rb") as fh:
+                    h.update(fh.read())
+            h.update(unicodedata.unidata_version.encode())
+            _SCRUBBER_ID = h.hexdigest()[:12]
         except OSError:
             return "unknown"
     return _SCRUBBER_ID
@@ -142,11 +150,18 @@ def _drop_marks(text):
 # folding function now runs on BOTH the stored and the query side. Marks are dropped only after
 # a Latin, Greek or Cyrillic letter; after any other script they are kept, because in Thai a tone
 # mark changes the word (ทำ / ท้า, คำ / ค้า) and stripping it would merge different words.
+# 🐛 [2026-10-11] (R92 acc4, 2026-10-10: a zero-width space is a Thai word-break hint) Text pasted
+# from the web or a Thai editor carries U+200B between words, and NFKC keeps it, so `ค้น\u200bหา` in a
+# note was not `ค้นหา` to a search -- which found nothing and then suggested the same word back.
+# The zero-width characters carry no letter; folding drops them on both sides. Check 507.
+_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
+
+
 def fold(text):
     """NFKC, casefold, then drop accents on Latin/Greek/Cyrillic letters only."""
     if _ASCII_ONLY.match(text):
         return text.lower()
-    return _drop_marks(unicodedata.normalize("NFKC", text).casefold())
+    return _drop_marks(unicodedata.normalize("NFKC", text).casefold()).translate(_ZERO_WIDTH)
 
 
 # An identifier's parts. `_` and `.` split on the word pattern's own boundaries; a camelCase hump

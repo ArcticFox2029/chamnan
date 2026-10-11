@@ -588,6 +588,17 @@ PATTERNS = [
     # the first line that is none of those, so the prose after it stays. Check 438.
     _lazy(lambda: re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
                r"(?:\r?\n[ \t]*(?:[A-Za-z0-9+/=]+|[A-Za-z-]+:[^\n]*|)[ \t]*(?=\r?\n|\Z))*")),
+    # 🐛 [2026-10-11] (R79 acc4, 2026-10-10: GitGuardian detects base64-only private keys) A private
+    # key with its armour stripped -- `PRIVATE_KEY=MIIEv…` in a CI variable, a JSON field named
+    # `key` -- has no BEGIN line to find, and under a name no rule reads it went through whole. The
+    # DER encoding of a private key opens with bytes no public key or certificate shares: PKCS#8 RSA
+    # (`…IBADANBgkqhkiG9w0BAQEFAASC`, an OCTET STRING where a public key has a BIT STRING), PKCS#1
+    # RSA (`…IBAAK`), PKCS#8 and SEC1 EC, and PKCS#8 Ed25519. Read off keys generated for the
+    # purpose; a long base64 run must follow, so the prefix quoted in prose is left. Check 506.
+    _lazy(lambda: re.compile(
+        _TOKEN_START + r"(?:MII[A-Za-z0-9+/]{3}IBADANBgkqhkiG9w0BAQEFAASC|MII[A-Za-z0-9+/]{3}IBAAK[BC]"
+        r"|MI[GH][A-Za-z0-9+/]AgEAMB[AM]GByqGSM49AgEG|MHcCAQEEI|MIGkAgEBBDA|MC4CAQAwBQYDK2VwBCIEI)"
+        r"[A-Za-z0-9+/]{60,}={0,2}")),
 ]
 # scheme://user:password@host — the password is replaced, the rest is left readable because
 # "this talks to postgres on db.internal" is exactly the kind of thing the index should say.
@@ -854,7 +865,13 @@ _LATIN_SECRET_WORDS = (
     # `APICRED=` beside `DB_PWD=` and `API_CRED=`, which were. A prefix is REQUIRED here, unlike
     # `PASS` above, because three and four letters land inside real words too easily to give up the
     # left boundary; `SACRED` is the one English word that ends in `CRED` and it is excluded by name.
-    r"|(?-i:(?<![A-Za-z0-9])[A-Z0-9]+PWDS?)(?![A-Za-z])"
+    # `OLDPWD` is the shell's previous working directory, a path and never a password; excluded by
+    # name like `SACRED` below (found by check 505's control, 2026-10-11).
+    r"|(?-i:(?<![A-Za-z0-9])(?!OLDPWD(?![A-Z0-9]))[A-Z0-9]+PWDS?)(?![A-Za-z])"
+    # 🐛 [2026-10-11] (R91 acc4, 2026-10-10: Azure publish profiles are XML credential containers)
+    # The same PWD after a lower-case prefix: an App Service publish profile's `userPWD="…"` kept its
+    # password, because the rule above wants the prefix in capitals. Check 505.
+    r"|(?-i:(?<![A-Za-z0-9])[a-z][a-z0-9]*PWDS?)(?![A-Za-z])"
     r"|(?-i:(?<![A-Za-z0-9])(?!SACRED(?![A-Z0-9]))[A-Z0-9]+CREDS?)(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.

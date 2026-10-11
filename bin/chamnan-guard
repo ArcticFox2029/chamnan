@@ -717,6 +717,12 @@ def main(argv):
             print(f"    +{len(found) - 6} more file(s)", file=sys.stderr)
         print("  Nothing is printed from those lines on purpose — reading them out would copy the "
               "secret into this terminal and its transcript.", file=sys.stderr)
+        # 🎯 [2026-10-11] (R40 acc4, 2026-10-11: removing a flagged secret took 6.6 attempts against
+        # 2.6 to bypass it; an actionable warning moved 8 of 11 to a secure fix against 1 of 22) The
+        # binary-file branch below says what to do and this one, the common case, did not.
+        print("  Move the value out of the file before committing (read it from the environment or "
+              "an ignored file) and unstage it with `git restore --staged <file>`. If it was ever "
+              "pushed, revoke and replace it.", file=sys.stderr)
 
     if bytecode_found:
         print(f"chamnan-guard: {len(bytecode_found)} staged file(s) that git shows as binary carry text "

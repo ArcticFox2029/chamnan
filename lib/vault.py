@@ -75,7 +75,29 @@ TOOL_LOGINS_IN = frozenset({(".claude", ".credentials.json"), (".codex", "auth.j
                             (".git", "config"),
                             # 🐛 [2026-10-10] (R55 acc4, 2026-10-10) sops keeps age identities here, and
                             # an `AGE-SECRET-KEY-1...` line is the whole private key. Check 498.
-                            ("age", "keys.txt")})
+                            ("age", "keys.txt"),
+                            # 🐛 [2026-10-11] (R47 acc4, 2026-10-11: Azure CLI's token cache is plain text
+                            # off Windows; Terraform keeps its registry tokens in plain JSON) Both were
+                            # read whole. Check 508.
+                            (".azure", "accessTokens.json"), (".azure", "msal_token_cache.json"),
+                            (".terraform.d", "credentials.tfrc.json")})
+# 🐛 [2026-10-11] (R1 acc4, 2026-10-11: the SSO cache holds access and refresh tokens; R8 acc4,
+# 2026-10-11: kubelogin and the GKE auth plugin cache tokens on disk) Some tools keep their sign-in in
+# a cache directory under hash-named files, so no (directory, file) pair above can name them: the
+# AWS CLI's SSO and assumed-role caches and kubelogin's OIDC cache were read whole while
+# `~/.aws/credentials` beside them was refused. Matched by the trailing directories instead, and
+# refused like the files above only when the file really holds a token. Check 508.
+TOOL_LOGIN_CACHES = ((".aws", "sso", "cache"), (".aws", "cli", "cache"), (".kube", "cache", "oidc-login"))
+TOOL_LOGIN_NAMES = frozenset({"gke_gcloud_auth_plugin_cache"})
+# 🐛 [2026-10-11] (R11 acc4, 2026-10-11: HashiCorp says local state holds secrets even when they are
+# marked sensitive; R7 acc4, 2026-10-11: an `.env*` glob misses direnv's `.envrc`) Settings files that
+# carry a credential among ordinary values: Terraform state and variable files, and direnv's `.envrc`,
+# which exports keys for the shell. All were read whole. Refused when the file holds a value the
+# scrubber would remove, with peek offered for the rest; a state file past the read cap is refused
+# unread, because state is where Terraform keeps every resource's secrets. Check 509.
+SETTINGS_FILE_NAMES = frozenset({".envrc"})
+SETTINGS_FILE_SUFFIXES = (".tfstate", ".tfstate.backup", ".tfvars", ".tfvars.json")
+_STATE_SUFFIXES = (".tfstate", ".tfstate.backup")
 _REGISTRY_READ_CAP = 256 * 1024
 # Lower-cased once: the directory names above are written as the tools spell them (`Claude`).
 _REGISTRY_PAIRS = frozenset((d.lower(), n.lower()) for d, n in REGISTRY_CONFIGS_IN)
@@ -95,9 +117,27 @@ def _is_registry_config(path):
 def _is_tool_login(path):
     """True for a file where an agent CLI, a cloud tool or Kubernetes keeps a sign-in token."""
     for p in redact._with_resolved(path, *{n for _d, n in TOOL_LOGINS_IN}):
-        if (p.parent.name.lower(), p.name.lower()) in _TOOL_LOGIN_PAIRS:
+        if (p.parent.name.lower(), p.name.lower()) in _TOOL_LOGIN_PAIRS or p.name.lower() in TOOL_LOGIN_NAMES:
+            return True
+        if any(tuple(x.lower() for x in p.parent.parts[-len(t):]) == t for t in TOOL_LOGIN_CACHES):
             return True
     return False
+
+
+def _is_settings_file(path):
+    """True for a settings file that keeps a credential among ordinary values (see the list above)."""
+    name = path.name.lower()
+    return name in SETTINGS_FILE_NAMES or name.endswith(SETTINGS_FILE_SUFFIXES)
+
+
+def _settings_carry_a_value(path):
+    try:
+        if (path.name.lower().endswith(_STATE_SUFFIXES) and path.is_file()
+                and path.stat().st_size > _REGISTRY_READ_CAP):
+            return True
+    except OSError:
+        return False
+    return _registry_carries_a_secret(path)
 
 
 # 🐛 [2026-10-10] (R186 acc4, 2026-10-09: shells and REPLs persist pasted inline credentials) A history
@@ -176,6 +216,8 @@ def _is_credential(token, root):
         if (_is_registry_config(path) or _is_tool_login(path)) and _registry_carries_a_secret(path):
             return token
         if path.name.lower() in SHELL_HISTORIES and _history_carries_a_secret(path):
+            return token
+        if _is_settings_file(path) and _settings_carry_a_value(path):
             return token
         if _is_service_account_key(path):
             return token
@@ -273,6 +315,16 @@ def _file_args(verb, args):
 # environment (`env FOO=1 cmd`) stay allowed, because blocking those would need a policy over intent.
 # A short list of high-confidence hazards, not output redaction. Check 494.
 ENV_DUMP = "the whole environment"
+# 🐛 [2026-10-11] (R31 acc4, 2026-10-11: Docker says `compose config` output must never be stored raw)
+# The same kind of bulk dump through another door: `docker compose config` prints the merged Compose
+# file with every `${VAR}` filled in from `.env` and the shell, so a refused `.env` came back through it.
+# `--no-interpolate` and the listing flags print no value and stay allowed. Check 511.
+COMPOSE_RESOLVED = "the Compose file with its variables filled in"
+_COMPOSE_SAFE_FLAGS = frozenset({"--no-interpolate", "--services", "--volumes", "--profiles", "--images",
+                                 "--networks", "--hash", "-q", "--quiet", "--variables"})
+# Flags that take the next word as their value, so `-f a.yml` is not read as a subcommand.
+_COMPOSE_VALUE_FLAGS = frozenset({"-f", "--file", "-p", "--project-name", "--env-file", "--profile",
+                                  "--project-directory", "--format", "-o", "--output", "--context", "-c"})
 STORED_GIT_LOGIN = "git's stored credential"
 _ENV_FILE = re.compile(r"^/proc/[^/\s]+/environ$")
 _PS_LISTERS = frozenset({"get-childitem", "gci", "dir", "ls"})
@@ -287,6 +339,18 @@ def _dumps_secrets(verb, args):
         return ENV_DUMP if not rest else None
     if verb in _PS_LISTERS and any(a.lower().rstrip("\\/") == "env:" for a in args):
         return ENV_DUMP
+    _sub, _skip = [], False
+    for a in args:
+        if _skip:
+            _skip = False
+        elif a.startswith("-"):
+            _skip = a in _COMPOSE_VALUE_FLAGS
+        else:
+            _sub.append(a)
+    if ((verb in ("docker", "podman") and _sub[:2] == ["compose", "config"])
+            or (verb in ("docker-compose", "podman-compose") and _sub[:1] == ["config"])):
+        if not any(a.split("=", 1)[0] in _COMPOSE_SAFE_FLAGS for a in args):
+            return COMPOSE_RESOLVED
     if verb == "git":
         positional = [a for a in args if not a.startswith("-")]
         if positional[:1] == ["credential"] and positional[1:2] in (["fill"], ["get"]):
@@ -377,6 +441,10 @@ def refusal(name):
         return ("chamnan: this prints every exported variable, keys and tokens included, into the session, "
                 "so it is not run. Ask for the one you need by name -- `printenv PATH`, `echo \"$HOME\"` -- "
                 "which still works. This is a short list of bulk dumps, not a filter on what commands print.")
+    if name == COMPOSE_RESOLVED:
+        return ("chamnan: this prints the Compose file with every `${VAR}` filled in from `.env` and the "
+                "shell, keys included, so it is not run. `docker compose config --no-interpolate` shows "
+                "the same merged file with the variables as written, and `--services` lists the services.")
     if name == STORED_GIT_LOGIN:
         return ("chamnan: this prints the stored password or token in full, so it is not run. To USE the "
                 "credential, run the git command that needs it (`git fetch`, `git push`); git asks its helper "
@@ -385,8 +453,13 @@ def refusal(name):
     if _is_tool_login(Path(str(name).strip("'\""))):
         return (f"chamnan: `{shown}` is where a tool keeps its sign-in token, so it is not read into the "
                 f"session. The tool that owns it reads it itself -- run that tool (claude, codex, gemini, "
-                f"gh, gcloud, kubectl) rather than opening the file. If you need to know what it holds, "
+                f"gh, gcloud, aws, kubectl) rather than opening the file. If you need to know what it holds, "
                 f"ask the user.")
+    if _is_settings_file(Path(str(name).strip("'\""))):
+        return (f"chamnan: `{shown}` keeps a credential among its settings, so it is not read into the "
+                f"session raw. `chamnan-peek {mdblock.as_quoted(str(name), 200)}` shows the same file with "
+                f"the value replaced. To USE it, run the tool that reads this file (terraform, direnv); "
+                f"it reads the file itself.")
     if _is_service_account_key(Path(str(name).strip("'\"")).expanduser()):
         return (f"chamnan: `{shown}` is a cloud service-account key, private key included, so it is not "
                 f"read into the session. To USE it, point the client at the file and let it read it "
@@ -405,8 +478,18 @@ def refusal(name):
     # "ask the user" stops work that never needed the value in the session: a command needs the
     # value, the model does not. So the reason says how to hand the file to the program that uses
     # it -- the shell or the tool reads it, the command line carries `$NAME`, and nothing prints it.
-    return (f"chamnan: `{shown}` holds credentials or a key, so it is not read into the session. "
-            f"Its variable NAMES, never values, are listed under `## Configuration` in "
-            f"`.chamnan/MAP.md`. To USE a value, let the program read the file itself and never print "
-            f"it: `set -a; . ./.env; set +a; <command using $NAME>`, a tool's `--env-file`, or "
-            f"`ssh -i <key>`. If you need to know a value itself, ask the user.")
+    # 🐛 [2026-10-11] (R29 claudeaccount3, 2026-10-11: an accurate cause in an error raised agent
+    # recovery from 59% to 82%) This sentence told the model that a refused `id_rsa`, `cookies.sqlite`
+    # or `.git-credentials` had its "variable NAMES" listed in MAP.md, which is true only of a `.env`.
+    # The variables sentence is kept for files that hold variables. Check 510.
+    _leaf = Path(str(name).strip("'\"")).name.lower()
+    if _leaf.startswith(".env") or _leaf.endswith(".env"):
+        return (f"chamnan: `{shown}` holds credentials or a key, so it is not read into the session. "
+                f"Its variable NAMES, never values, are listed under `## Configuration` in "
+                f"`.chamnan/MAP.md`. To USE a value, let the program read the file itself and never print "
+                f"it: `set -a; . ./.env; set +a; <command using $NAME>`, a tool's `--env-file`, or "
+                f"`ssh -i <key>`. If you need to know a value itself, ask the user.")
+    return (f"chamnan: `{shown}` holds credentials or a key, so it is not read into the session. To USE "
+            f"it, hand the file to the program that needs it and never print it: `ssh -i <key>`, the "
+            f"tool's own option for a key file, or the tool that owns the store. If you need to "
+            f"know a value itself, ask the user.")

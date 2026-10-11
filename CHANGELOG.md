@@ -21,6 +21,29 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A tool's token cache is refused when it holds a token.** The AWS CLI's SSO and assumed-role
+  caches, kubelogin's OIDC cache and the GKE auth plugin's cache name their files by a hash, so the
+  guard never recognised them and read the access and refresh tokens into the session while
+  `~/.aws/credentials` beside them was refused.
+- **Terraform state and variables, and direnv's `.envrc`, are refused when they hold a credential.**
+  Terraform keeps every resource's secrets in its state in clear, and an `.envrc` exports keys for the
+  shell; each was read whole. `chamnan-peek` shows the same file with the values replaced, and a file
+  that holds only settings stays readable.
+- **`docker compose config` is refused when it would fill in variables.** It prints the Compose file
+  with every `${VAR}` resolved from `.env`, so a refused `.env` came back through it.
+  `--no-interpolate` and `--services` still work.
+- **A private key without its BEGIN and END lines is redacted.** A key pasted into a CI variable or a
+  JSON field as bare base64 went through when its name was not one the redactor reads; the encoding of
+  a private key opens with bytes no public key shares, and that opening is now recognised.
+- **An Azure publish profile's `userPWD` is redacted.** A password named with a lower-case prefix
+  before `PWD` kept its value, and the shell's `OLDPWD`, a path, is no longer mistaken for one.
+- **A Thai word with a zero-width space in it is found by recall.** Text pasted from the web often
+  carries U+200B between Thai words, and a search for the word typed without it found nothing, then
+  suggested the same word back. The index rebuilds by itself after the upgrade.
+- **A refused key file is no longer told its variables are listed in the map.** That sentence is for
+  `.env` files; a key or a credential store now gets the advice that fits it.
+- **The staged-secret warning says what to do.** It named the file and line and stopped; it now says
+  to move the value out and unstage it, and to replace it if it was ever pushed.
 - **A long run of spaces no longer stalls a scan.** Six patterns could hand the same spaces to
   several parts of themselves and tried every split, so the cost grew with the cube of the run: a
   line of 2,000 spaces after `[` or `-` took 6 to 12 seconds to redact, an unclosed
