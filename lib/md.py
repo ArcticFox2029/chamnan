@@ -21,7 +21,11 @@ import re
 # are real prose.
 _FENCE = re.compile(r"^(?P<indent>[ ]{0,3})(?P<fence>`{3,}|~{3,})(?P<info>[^\n]*)$", re.M)
 
-_FRONT = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)", re.S)
+# 🐛 [2026-10-11] (R69 acc4, 2026-10-11: a BOM-prefixed SKILL.md was not recognised because the first-line
+# regex expected `^---`) A UTF-8 byte-order mark, which `read_text("utf-8")` keeps, or CRLF line ends put
+# anything before or after `---`, and the front matter was not front matter: `description:` was lost and
+# the entry was titled by its heading. Both are allowed now. Check 515.
+_FRONT = re.compile(r"\A\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 
 
 def fenced_spans(text):

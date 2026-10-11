@@ -290,6 +290,18 @@ def main(argv):
                     for _n in difflib.get_close_matches(target.rsplit("/", 1)[-1], list(_by_name),
                                                         n=2, cutoff=0.8):
                         _close += _by_name[_n][:2]
+                if not _close:
+                    # 🐛 [2026-10-11] (R46 acc4, 2026-10-11: edit distance recovers misspellings before
+                    # any other scoring) A name typed without its extension was compared with the name
+                    # WITH it, so `boundry` against `boundary.py` scored 0.78 and got nothing: of 311
+                    # one-letter typos of a bare name from this package's own index, 61 were answered.
+                    # Stems are compared last, and answer all 311. Check 513.
+                    _by_stem = {}
+                    for _k in _known:
+                        _by_stem.setdefault(_k.rsplit("/", 1)[-1].rsplit(".", 1)[0], []).append(_k)
+                    for _n in difflib.get_close_matches(target.rsplit("/", 1)[-1], list(_by_stem),
+                                                        n=2, cutoff=0.8):
+                        _close += _by_stem[_n][:2]
                 if _close:
                     print(f"  did you mean {', '.join(mdblock.as_quoted(_c, 100) for _c in _close[:2])}?")
         _why = _last_reason(root, resolved or target) if on_disk else None

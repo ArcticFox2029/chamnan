@@ -21,6 +21,17 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A file name typed without its extension gets a did-you-mean.** `chamnan-impact boundry` compared the
+  typo with `boundary.py` and found nothing; names are now compared without the extension too.
+- **NuGet, Composer and shell start-up files are refused when they hold a key.** A `NuGet.Config` with
+  a clear-text password, Composer's `auth.json`, and a `.zshrc`, `.bashrc` or fish `fish_variables` that
+  exports a token were read whole. Files holding only settings stay readable, and `chamnan-peek` shows
+  the rest with the value replaced.
+- **HashiCorp Vault tokens are kept out.** `hvs.`, `hvb.` and `hvr.` tokens are redacted and
+  `~/.vault-token` is refused; the Doppler and Bitwarden CLI configs and kubeadm's `admin.conf` are
+  refused when they hold a token.
+- **Front matter after a byte-order mark or with Windows line ends is read.** A skill or note saved
+  with a BOM or CRLF lost its `description:` and was titled by its first heading instead.
 - **A tool's token cache is refused when it holds a token.** The AWS CLI's SSO and assumed-role
   caches, kubelogin's OIDC cache and the GKE auth plugin's cache name their files by a hash, so the
   guard never recognised them and read the access and refresh tokens into the session while

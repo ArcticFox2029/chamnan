@@ -486,6 +486,10 @@ PATTERNS = [
     # Provider tokens with unambiguous prefixes — no false positives worth worrying about.
     _lazy(lambda: re.compile(_TOKEN_START + r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}")),
     _lazy(lambda: re.compile(_TOKEN_START + r"(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}")),
+    # 🐛 [2026-10-11] (R61 acc4, 2026-10-11: `vault login` caches its bearer token in ~/.vault-token)
+    # HashiCorp Vault's service, batch and recovery tokens carry `hvs.`, `hvb.` and `hvr.` and went
+    # through whole. Check 516.
+    _lazy(lambda: re.compile(_TOKEN_START + r"hv[sbr]\.[A-Za-z0-9_-]{24,}")),
     # 🐛 [2026-09-08] `xoxe-` and `xoxe.` are Slack's rotation-era refresh and access
     # tokens, introduced 2021, and neither matched `xox[baprs]-` -- so a rotated token
     # leaked in full with the word "token" on the same line (R2 agent 2, 2026-09-08).
@@ -1540,7 +1544,10 @@ BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".ne
                  # database. Saved passwords in `logins.json` are encrypted with it and, with no primary
                  # password set (the default), anyone holding both files can decrypt every one; refusing
                  # the key leaves `logins.json` ciphertext. Check 501.
-                 "key4.db", "key3.db")
+                 "key4.db", "key3.db",
+                 # 🐛 [2026-10-11] (R61 acc4, 2026-10-11) `vault login` writes its token here and
+                 # nothing else. Check 516.
+                 ".vault-token")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
 # database at all -- it indexes source, and a .sqlite is not source. peek is asked for one file by

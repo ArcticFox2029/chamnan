@@ -100,7 +100,8 @@ def snapshot_roots(home=None):
 
 def _describe(text):
     head = text[:1200]
-    if head.lstrip().startswith("---"):
+    # `lstrip()` leaves a byte-order mark, which is not whitespace (R69 acc4, 2026-10-11). Check 515.
+    if head.lstrip("\ufeff \t\r\n").startswith("---"):
         body = head.split("---", 2)
         if len(body) > 2:
             for line in body[1].splitlines():

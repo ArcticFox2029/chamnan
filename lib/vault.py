@@ -49,12 +49,18 @@ OPENSSL_PUBLIC = frozenset({"x509", "s_client", "verify", "crl", "version", "cip
 # is refused only when it really carries a value the scrubber would remove, and the refusal points
 # at peek: the settings stay readable, the token does not travel. A token-free `.npmrc` (just a
 # `registry=` line) is read as before. Check 463.
-REGISTRY_CONFIGS = frozenset({".npmrc", ".pypirc", "pip.conf", "pip.ini", ".yarnrc", ".yarnrc.yml"})
+REGISTRY_CONFIGS = frozenset({".npmrc", ".pypirc", "pip.conf", "pip.ini", ".yarnrc", ".yarnrc.yml",
+                              # 🐛 [2026-10-11] (R51 acc4, 2026-10-11: NuGet keeps ClearTextPassword
+                              # off Windows) A NuGet.Config, global or per project. Check 514.
+                              "nuget.config"})
 # The same idea for files whose name only means a registry config inside one directory.
 REGISTRY_CONFIGS_IN = frozenset({(".docker", "config.json"), (".m2", "settings.xml"),
                                  ("pypoetry", "auth.toml"), (".bundle", "config"),
                                  (".cursor", "mcp.json"), (".vscode", "mcp.json"), (".gemini", "settings.json"),
-                                 ("Claude", "claude_desktop_config.json")})
+                                 ("Claude", "claude_desktop_config.json"),
+                                 # 🐛 [2026-10-11] (R51 acc4, 2026-10-11: Composer's auth.json holds
+                                 # http-basic, bearer and GitHub tokens in plain JSON) Check 514.
+                                 (".composer", "auth.json"), ("composer", "auth.json")})
 # 🐛 [2026-10-08] (R59 acc1, 2026-10-08: 24,008 secrets in MCP config files on public GitHub) An MCP
 # server config keeps the server's API key in its `env` block beside the command that starts it, the
 # same mix as a registry config, and `cat .mcp.json` brought the key into the session. Check 477.
@@ -80,7 +86,12 @@ TOOL_LOGINS_IN = frozenset({(".claude", ".credentials.json"), (".codex", "auth.j
                             # off Windows; Terraform keeps its registry tokens in plain JSON) Both were
                             # read whole. Check 508.
                             (".azure", "accessTokens.json"), (".azure", "msal_token_cache.json"),
-                            (".terraform.d", "credentials.tfrc.json")})
+                            (".terraform.d", "credentials.tfrc.json"),
+                            # 🐛 [2026-10-11] (R61 acc4, 2026-10-11: Doppler and Bitwarden CLIs keep
+                            # tokens in their config; R67 acc4, 2026-10-11: kubeadm's admin kubeconfig
+                            # embeds a client key) Refused when they hold one. Check 516.
+                            (".doppler", ".doppler.yaml"), ("bitwarden cli", "data.json"),
+                            ("kubernetes", "admin.conf")})
 # 🐛 [2026-10-11] (R1 acc4, 2026-10-11: the SSO cache holds access and refresh tokens; R8 acc4,
 # 2026-10-11: kubelogin and the GKE auth plugin cache tokens on disk) Some tools keep their sign-in in
 # a cache directory under hash-named files, so no (directory, file) pair above can name them: the
@@ -95,7 +106,12 @@ TOOL_LOGIN_NAMES = frozenset({"gke_gcloud_auth_plugin_cache"})
 # which exports keys for the shell. All were read whole. Refused when the file holds a value the
 # scrubber would remove, with peek offered for the rest; a state file past the read cap is refused
 # unread, because state is where Terraform keeps every resource's secrets. Check 509.
-SETTINGS_FILE_NAMES = frozenset({".envrc"})
+# 🐛 [2026-10-11] (R58 acc4, 2026-10-11: 9.5% of 124,230 public dotfiles repositories leaked API keys,
+# .zshrc and .bashrc the commonest carriers; fish keeps `set -Ux` values in fish_variables) A shell
+# start-up file that exports a key put it into the session when read to debug a PATH. Refused like the
+# rest when it really holds one; peek shows the PATH lines with the key replaced. Check 514.
+SETTINGS_FILE_NAMES = frozenset({".envrc", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc",
+                                 ".bash_profile", ".bash_login", ".profile", "config.fish", "fish_variables"})
 SETTINGS_FILE_SUFFIXES = (".tfstate", ".tfstate.backup", ".tfvars", ".tfvars.json")
 _STATE_SUFFIXES = (".tfstate", ".tfstate.backup")
 _REGISTRY_READ_CAP = 256 * 1024
@@ -458,7 +474,8 @@ def refusal(name):
     if _is_settings_file(Path(str(name).strip("'\""))):
         return (f"chamnan: `{shown}` keeps a credential among its settings, so it is not read into the "
                 f"session raw. `chamnan-peek {mdblock.as_quoted(str(name), 200)}` shows the same file with "
-                f"the value replaced. To USE it, run the tool that reads this file (terraform, direnv); "
+                f"the value replaced. To USE it, run the tool that reads this file (terraform, direnv, "
+                f"your shell); "
                 f"it reads the file itself.")
     if _is_service_account_key(Path(str(name).strip("'\"")).expanduser()):
         return (f"chamnan: `{shown}` is a cloud service-account key, private key included, so it is not "
