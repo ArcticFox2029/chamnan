@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A misspelt Thai word is answered with the whole word.** When two stretches of a title explained the
+  typo equally, `chamnan-recall` offered the shorter one, so `คอนฟิค` got `คอนฟิ` rather than `คอนฟิก`.
+  The stretch closest in length to what was typed now wins.
 - **PuTTY `.ppk` keys and sops' age identities are refused.** Both were hidden when chamnan printed
   them, but reading `id.ppk` or `~/.config/sops/age/keys.txt` put the private key into the session.
 - **A cloud service-account key is refused whatever it is called.** Google names a downloaded key

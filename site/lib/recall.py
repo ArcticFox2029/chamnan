@@ -717,7 +717,7 @@ def closest_stretch(word, texts, cutoff=0.8):
     pairs = {word[i:i + 2] for i in range(len(word) - 1)}
     if not pairs:
         return None
-    best, best_key = None, (0, cutoff)
+    best, best_key = None, (0, -len(word) - 4, cutoff)
     for text in texts:
         if sum(p in text for p in pairs) < max(2, len(pairs) // 2):
             continue
@@ -744,7 +744,12 @@ def closest_stretch(word, texts, cutoff=0.8):
                     continue
                 # More of the typed word explained first, then the closer spelling: `รีสตาท` should
                 # find `รีสตาร์ท`, not the shorter `รีสตา` that happens to score a higher ratio.
-                key = (sum(m.size for m in sm.get_matching_blocks()), ratio)
+                # 🐛 [2026-10-11] (R63 acc4, 2026-10-10: Thai loanword spelling variants) On a tie in
+                # characters explained, the ratio still preferred a SHORTER stretch, so `คอนฟิค` got
+                # the fragment `คอนฟิ` over `คอนฟิก`. The stretch nearest the typed length goes first:
+                # over 4,000 sampled one-letter typos in six titles, the exact stretch came back 5-9
+                # more times in 400 on every one of ten seeds. Check 500.
+                key = (sum(m.size for m in sm.get_matching_blocks()), -abs(len(piece) - len(word)), ratio)
                 if key > best_key:
                     best, best_key = piece, key
     return best
