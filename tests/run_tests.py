@@ -54448,6 +54448,36 @@ check("...and no suggestion is cut before a vowel or tone mark",
 _none492 = _run492("ทะเลสาบ").stdout
 check("a Thai word with nothing close gets the plain answer and no guess",
       "did you mean" not in _none492, saw=_none492[-200:])
+# 🐛 [2026-10-10] (R181 acc4, 2026-10-09: Thai Character Cluster rules) Not cutting before a mark was
+# not enough: 82 of 270 sampled suggestions split a leading vowel from its consonant (`พิ่มแค` out of
+# `เพิ่มแคช`). The population: typo'd stretches of five titles, every suggestion checked for a cut after
+# เ แ โ ใ ไ or before ะ า ำ ๅ.
+import importlib as _il492
+import random as _rnd492b
+
+_recall492 = _il492.import_module("recall")
+_titles492 = ["รีสตาร์ทเซิร์ฟเวอร์หลังแก้คอนฟิก", "เพิ่มแคชให้เซิร์ฟเวอร์ใหม่", "โหลดไฟล์ใหญ่แล้วแอปค้าง",
+              "แก้ไขเอกสารประกอบการติดตั้ง", "เปลี่ยนโครงสร้างโฟลเดอร์โปรเจกต์"]
+_g492 = _rnd492b.Random(492)
+_split492, _n492 = [], 0
+for _ in range(200):
+    _t = _g492.choice(_titles492)
+    _a = _g492.randrange(0, len(_t) - 4)
+    _w = _t[_a:_a + _g492.randint(4, 9)]
+    _i = _g492.randrange(len(_w))
+    _w = _w[:_i] + _w[_i + 1:]
+    _p = _recall492.closest_stretch(_w, _titles492)
+    if not _p:
+        continue
+    _n492 += 1
+    _s = next(x for x in _titles492 if _p in x)
+    _k = _s.index(_p)
+    _after = _s[_k + len(_p)] if _k + len(_p) < len(_s) else ""
+    if (_p[-1] in "เแโใไ" or (_k and _s[_k - 1] in "เแโใไ") or _p[0] in "ะาำๅ"
+            or (_after and _after in "ะาำๅ")):
+        _split492.append((_w, _p))
+check("no suggestion splits a Thai vowel from the consonant it belongs to", _n492 > 100 and not _split492,
+      saw=(_n492, _split492[:5]))
 # ---- 493_a_utf16_file_of_any_extension_is_read_as_text.py
 # ------------------ a UTF-16 file is read as text whatever its extension
 # 🐛 [2026-10-09] (R177 acc4, 2026-10-09: git and ripgrep take UTF-16 text for binary, and an agent
@@ -54513,6 +54543,149 @@ check("...while a named variable, a command run under an environment and ordinar
 _why494 = _vault494.refusal(_vault494.tool_reads("Bash", {"command": "printenv"}, None) or "")
 check("...and the refusal names a narrower command that still works", "printenv PATH" in _why494,
       saw=_why494[-300:])
+# ---- 495_a_shell_history_holding_a_secret_is_refused.py
+# ------------------ a shell or REPL history that holds a secret is refused like a credential file
+# 🐛 [2026-10-10] (R186 acc4, 2026-10-09: Bash and PSReadLine persist commands with pasted inline
+# credentials) `export TOKEN=...`, a `curl -H 'Authorization: ...'` or a password typed into psql stays
+# in the history file, and reading that file put every one into the session. This workspace's owner's
+# own `.zsh_history` held 5 lines the redactor would change. Refused when the file carries a credential,
+# the way a registry config is; a clean history and a count-only grep stay allowed.
+import importlib as _il495
+import random as _rnd495
+import string as _st495
+import tempfile as _tf495
+from pathlib import Path as _P495
+
+_vault495 = _il495.import_module("vault")
+_r495 = _rnd495.Random(495)
+_tok495 = "gh" + "p_" + "".join(_r495.choice(_st495.ascii_letters + _st495.digits) for _ in range(36))
+_home495 = _P495(_tf495.mkdtemp())
+_names495 = [".bash_history", ".zsh_history", ".sh_history", ".local/share/fish/fish_history",
+             "AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt",
+             ".python_history", ".psql_history", ".mysql_history", ".node_repl_history"]
+_missed495, _wrong495 = [], []
+for _n495 in _names495:
+    _p495 = _home495 / _n495
+    _p495.parent.mkdir(parents=True, exist_ok=True)
+    _p495.write_text("ls -la\nexport GITHUB_TOKEN=%s\ngit status\n" % _tok495, encoding="utf-8")
+    if not _vault495.tool_reads("Read", {"file_path": str(_p495)}, None):
+        _missed495.append(_n495)
+    _p495.write_text("ls -la\ngit status\nmake test\n", encoding="utf-8")
+    if _vault495.tool_reads("Read", {"file_path": str(_p495)}, None):
+        _wrong495.append(_n495)
+check("every shell and REPL history holding a token is refused to Read", not _missed495, saw=_missed495)
+check("...and a history with nothing secret stays readable", not _wrong495, saw=_wrong495)
+_p495 = _home495 / ".zsh_history"
+_p495.write_text("export GITHUB_TOKEN=%s\n" % _tok495, encoding="utf-8")
+check("...a cat of it is refused, a count-only grep is not",
+      bool(_vault495.tool_reads("Bash", {"command": "cat %s" % _p495}, None))
+      and not _vault495.tool_reads("Bash", {"command": "grep -c git %s" % _p495}, None))
+# ---- 496_a_symlink_to_an_indexed_file_is_not_mapped_twice.py
+# ------------------ a symlink to a file the map already indexes is not summarised a second time
+# 🐛 [2026-10-10] (R30 acc4, 2026-10-10: VS Code search returns a real file and each in-tree link to it)
+# `alias.py -> src/real.py` put the same module into MAP.md twice, under two names, each with its own
+# summary and function list: the session paid for it twice and read two definitions of one function.
+# A link whose target is a file the walk indexes is skipped. A link out of the repository stays left out,
+# as the walk's escape guard has always done, so the population is both directions.
+import subprocess as _sp496
+import sys as _sys496
+import tempfile as _tf496
+from pathlib import Path as _P496
+
+_d496 = _P496(_tf496.mkdtemp())
+_sp496.run(["git", "init", "-q", str(_d496)], capture_output=True)
+(_d496 / "src").mkdir()
+(_d496 / "src" / "real.py").write_text('"""MARKER496 real module."""\ndef f():\n    pass\n', encoding="utf-8")
+(_d496 / "alias.py").symlink_to("src/real.py")
+_outside496 = _P496(_tf496.mkdtemp()) / "shared.py"
+_outside496.write_text('"""OUTSIDE496 shared helper."""\n', encoding="utf-8")
+(_d496 / "shared.py").symlink_to(_outside496)
+_sp496.run(["git", "-C", str(_d496), "add", "-A"], capture_output=True)
+_sp496.run([_sys496.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_d496, capture_output=True, timeout=120)
+_m496 = (_d496 / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("a link to an indexed file is not summarised a second time",
+      "`alias.py`" not in _m496 and "`src/real.py`" in _m496, saw=_m496[_m496.find("## "):][:400])
+check("...and a link out of the repository is still left out",
+      "OUTSIDE496" not in _m496, saw="an outside file was summarised")
+# ---- 497_a_service_account_key_is_refused_whatever_its_name.py
+# ------------------ a cloud service-account key is refused whatever the file is called
+# 🐛 [2026-10-10] (R39 acc4, 2026-10-10: whole-home scans find service-account JSON in ~/Downloads) Google
+# names a downloaded key after the project and a hash (`demo-123-4f2a9c1b7e.json`), and the guard judged
+# JSON by name only: `credentials.json` was refused, the same key under its download name, or as
+# `key.json`, was read whole, private key included. A JSON file that declares itself a service account
+# and carries a private key is refused; an ordinary JSON file, and one that only names a service
+# account, stay readable.
+import importlib as _il497
+import json as _json497
+import random as _rnd497
+import string as _st497
+import tempfile as _tf497
+from pathlib import Path as _P497
+
+_vault497 = _il497.import_module("vault")
+_r497 = _rnd497.Random(497)
+_pem497 = ("-----BEGIN " + "PRIVATE KEY-----\n" + "".join(_r497.choice(_st497.ascii_letters) for _ in range(64))
+           + "\n-----END " + "PRIVATE KEY-----\n")
+_sa497 = {"type": "service_account", "project_id": "demo-123", "private_key_id": "ab" * 20,
+          "private_key": _pem497, "client_email": "x@demo-123.iam.gserviceaccount.com"}
+_d497 = _P497(_tf497.mkdtemp())
+_missed497 = []
+for _n497 in ("demo-123-4f2a9c1b7e.json", "key.json", "service-account.json", "gcp.json"):
+    (_d497 / _n497).write_text(_json497.dumps(_sa497, indent=2), encoding="utf-8")
+    if not _vault497.tool_reads("Read", {"file_path": str(_d497 / _n497)}, None):
+        _missed497.append(_n497)
+check("a service-account key is refused under any file name", not _missed497, saw=_missed497)
+check("...and to `cat`", bool(_vault497.tool_reads("Bash", {"command": "cat %s" % (_d497 / "key.json")}, None)))
+(_d497 / "package.json").write_text(_json497.dumps({"name": "app", "version": "1.0.0"}), encoding="utf-8")
+(_d497 / "iam.json").write_text(_json497.dumps({"type": "service_account", "client_email": "x@y"}), encoding="utf-8")
+check("...while ordinary JSON, and one that only names a service account, stay readable",
+      not _vault497.tool_reads("Read", {"file_path": str(_d497 / "package.json")}, None)
+      and not _vault497.tool_reads("Read", {"file_path": str(_d497 / "iam.json")}, None))
+# ---- 498_putty_and_age_private_keys_are_refused.py
+# ------------------ a PuTTY .ppk key and an age identity file are refused like other private keys
+# 🐛 [2026-10-10] (R55 acc4, 2026-10-10: PuTTY PPK is text but not PEM; age identities use a Bech32
+# secret prefix outside the PEM family) The redactor already hid both when chamnan printed them, but
+# the read guard judged by name, and neither `id.ppk` nor sops' `age/keys.txt` was on its lists: a Read
+# put an unencrypted PuTTY key or an age identity into the session whole. `.ppk` is always a private
+# key; `age/keys.txt` is refused when it carries one, like a tool's sign-in file.
+import importlib as _il498
+import random as _rnd498
+import tempfile as _tf498
+from pathlib import Path as _P498
+
+_vault498 = _il498.import_module("vault")
+_r498 = _rnd498.Random(498)
+_d498 = _P498(_tf498.mkdtemp())
+(_d498 / "id.ppk").write_text("PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nPrivate-Lines: 1\nAAAA\n",
+                              encoding="utf-8")
+(_d498 / ".config" / "sops" / "age").mkdir(parents=True)
+_age498 = (_d498 / ".config" / "sops" / "age" / "keys.txt")
+_age498.write_text("# created: 2026-10-10\nAGE-SECRET" + "-KEY-1" + "".join(
+    _r498.choice("QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L") for _ in range(58)) + "\n", encoding="utf-8")
+_missed498 = [str(p.relative_to(_d498)) for p in (_d498 / "id.ppk", _age498)
+              if not _vault498.tool_reads("Read", {"file_path": str(p)}, None)]
+check("a PuTTY key and an age identity are refused to Read", not _missed498, saw=_missed498)
+(_d498 / "notes").mkdir()
+(_d498 / "notes" / "keys.txt").write_text("keyboard shortcuts\n", encoding="utf-8")
+check("...while an ordinary keys.txt stays readable",
+      not _vault498.tool_reads("Read", {"file_path": str(_d498 / "notes" / "keys.txt")}, None))
+# ---- 499_a_word_ending_in_markdown_bold_is_prose.py
+# ------------------ a word that ends in Markdown bold after a secret word is prose, not a value
+# 🐛 [2026-10-10] (self-scan) `**A shell history that holds a secret is refused.**` came back as
+# `secret is <REDACTED>`: the plain-word test allowed `.`, `)` and quotes after a word but not `*`, so
+# Markdown bold made an ordinary word read as letters mixed with punctuation. This repository's own
+# CHANGELOG tripped it. The population: each emphasis closer after a plain word; a real value with the
+# same closer still goes.
+import importlib as _il499
+
+_redact499 = _il499.import_module("redact")
+_kept499 = [s for s in ("- **holds a secret is refused.** next", "the password is required**",
+                        "a token is *expired*", "__the api key is missing__")
+            if _redact499.scrub(s) != s]
+check("a plain word closed by Markdown emphasis after a secret word is left alone", not _kept499,
+      saw=[(s, _redact499.scrub(s)) for s in _kept499])
+check("...while a credential-shaped value with the same closer is still redacted",
+      "Xy7kQ9pL2wR" not in _redact499.scrub("the secret is Xy7kQ9pL2wR**"))
 # ---- 49_one_calendar_for_every_day_a_record_is_filed_under.py
 # ------------------------- two calendars in one function, and the percentage compared across them
 # 🐛 [2026-09-10] `chamnan-report`'s scan filed each record's day as `ts[:10]` — the raw timestamp
@@ -54590,6 +54763,326 @@ if _t_loaded49 and hasattr(_t_mod49, "_local_day"):
     check("...and the day-bucketing really does go through the one conversion",
           any("_by_week[_local_day(" in ln for ln in _t_lines49),
           saw="nothing keys a week bucket on _local_day()")
+# ---- 500_a_thai_typo_tie_goes_to_the_typed_length.py
+# ------------------ a tie in characters explained goes to the stretch nearest the typed length
+# 🐛 [2026-10-11] (R63 acc4, 2026-10-10: Thai loanword spelling variants) `closest_stretch` ranked by
+# characters of the typed word explained, then by ratio, and the ratio favours a SHORTER stretch:
+# `คอนฟิค` explains five characters of both `คอนฟิ` and `คอนฟิก`, so the fragment won. The population
+# is every one-letter typo (deletion or substitution) of every stretch of four to nine characters in
+# a set of titles: the stretch nearest the typed length must recover the exact stretch at least as
+# often as the plain ratio would, and the named loanwords must get the whole word.
+import importlib as _il500
+import unicodedata as _ud500
+
+_r500 = _il500.import_module("recall")
+_titles500 = ["รีสตาร์ทเซิร์ฟเวอร์หลังแก้คอนฟิก", "ตั้งค่าซอฟต์แวร์บนเครื่องลูกข่าย"]
+_want500 = {"คอนฟิค": "คอนฟิก", "เซิฟเวอร์": "เซิร์ฟเวอร์", "ซอฟแวร์": "ซอฟต์แวร์", "รีสตาท": "รีสตาร์ท"}
+_got500 = {w: _r500.closest_stretch(w, _titles500) for w in _want500}
+check("each misspelt loanword gets the whole word, not a stretch one letter short",
+      all(_got500[w] == _want500[w] for w in _want500), saw=_got500)
+_exact500 = _n500 = 0
+for _t in _titles500:
+    for _a in range(len(_t) - 4):
+        for _k in range(4, 10):
+            _orig = _t[_a:_a + _k]
+            if (len(_orig) < _k or _ud500.category(_orig[0]).startswith("M")
+                    or (_a + _k < len(_t) and _ud500.category(_t[_a + _k]).startswith("M"))):
+                continue
+            for _i in range(len(_orig)):
+                _typo = _orig[:_i] + _orig[_i + 1:]
+                _p = _r500.closest_stretch(_typo, _titles500)
+                if _p:
+                    _n500 += 1
+                    _exact500 += _p == _orig
+check("...and across every one-letter deletion the exact stretch comes back for most answered typos",
+      _n500 > 300 and _exact500 * 2 > _n500, saw=(_exact500, _n500))
+# ---- 501_firefox_key_database_is_refused.py
+# ------------------ Firefox's key database is refused like its plain-text cookie store
+# 🐛 [2026-10-11] (R61 acc4, 2026-10-10: browser credential stores) Firefox encrypts saved passwords in
+# `logins.json` with the key in `key4.db` (`key3.db` before Firefox 58). With no primary password, the
+# default, the two files together decrypt every saved login, and `cookies.sqlite` beside them was
+# already refused while the key was read whole. Exact names: an app's own `keys.db` stays readable.
+import importlib as _il501
+
+_vault501 = _il501.import_module("vault")
+_prof501 = "/Users/someone/Library/Application Support/Firefox/Profiles/x.default-release/"
+_refused501 = [_prof501 + "key4.db", "/home/someone/.mozilla/firefox/x.default/key3.db"]
+_missed501 = [p for p in _refused501 if not _vault501.tool_reads("Read", {"file_path": p}, None)]
+check("Firefox's key database is refused to Read", not _missed501, saw=_missed501)
+check("...and to sqlite3 through the shell",
+      bool(_vault501.tool_reads("Bash", {"command": "sqlite3 '%s' 'select * from metadata'" % _refused501[0]}, None)))
+_open501 = ["/Users/someone/app/keys.db", "/Users/someone/app/key4.py", "/Users/someone/app/docs/key4.md"]
+_wrong501 = [p for p in _open501 if _vault501.tool_reads("Read", {"file_path": p}, None)]
+check("an app's own key table, a module and a page named after it stay readable", not _wrong501, saw=_wrong501)
+# ---- 502_an_escaped_credential_is_still_redacted.py
+# ------------------ a credential written through HTML or URL escaping is still redacted
+# 🐛 [2026-10-11] (R67 acc4, 2026-10-10: VCR warns a recorded value may appear HTML- or URL-escaped)
+# Every rule anchors on a quote or a separator, and an escaping layer spells both differently:
+# `{&quot;api_key&quot;: &quot;…&quot;}` in a template or snapshot and `api_key%3D…` in a logged
+# redirect URL kept their values. The population is each escape of a quote or separator, in JSON,
+# assignment and query shapes; prose and URLs carrying the same escapes with no secret word must come
+# back unchanged, and every result must survive a second scrub unchanged.
+import importlib as _il502
+import random as _rnd502
+
+_red502 = _il502.import_module("redact")
+_g502 = _rnd502.Random(502)
+_v502 = "".join(_g502.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(32))
+_shapes502 = {
+    "&quot; json": '{&quot;api_key&quot;: &quot;%s&quot;}',
+    "&#34; assignment": "password=&#34;%s&#34;",
+    "&#x22; assignment": "client_secret=&#x22;%s&#x22;",
+    "&apos; assignment": "auth_token=&apos;%s&apos;",
+    "&#39; assignment": "access_token: &#39;%s&#39;",
+    "%3D query": "https://example.test/cb?next=%%2Flogin%%3Fapi_key%%3D%s",
+    "%22 json": "%%7B%%22password%%22%%3A%%20%%22%s%%22%%7D",
+    "%27 assignment": "secret=%%27%s%%27",
+}
+_left502 = {k: o for k, f in _shapes502.items() for o in [_red502.scrub(f % _v502)] if _v502 in o}
+check("a credential behind each quote or separator escape is redacted", not _left502, saw=_left502)
+_idem502 = {k: o for k, f in _shapes502.items() for o in [_red502.scrub(f % _v502)] if _red502.scrub(o) != o}
+check("...and the result survives a second scrub unchanged", not _idem502, saw=_idem502)
+_prose502 = ["Wrap the label in &quot;quotes&quot; on the login page.",
+             "https://example.test/search?q=a%3Db&page=2",
+             "<p title=&quot;Settings&quot;>Change your password here</p>"]
+_changed502 = [p for p in _prose502 if _red502.scrub(p) != p]
+check("prose and URLs with the same escapes and no credential come back unchanged", not _changed502,
+      saw=[(p, _red502.scrub(p)) for p in _changed502])
+# ---- 503_a_word_ending_in_an_html_closing_tag_is_prose.py
+# ------------------ a word ending in an HTML closing tag is prose, not a credential
+# 🐛 [2026-10-11] (R67 acc4, 2026-10-10, found by check 502's prose control) The prose rule asks
+# `_is_a_plain_word` whether the word after a credential name is ordinary text, and a closing tag
+# made it not one: `<p>Change your password here</p>` came back as `password <REDACTED>`. The
+# population is each common closing tag after an ordinary word, in a sentence naming each of the
+# credential words; a credential before the same tag must still be redacted.
+import importlib as _il503
+
+_red503 = _il503.import_module("redact")
+_tags503 = ["p", "label", "span", "div", "a", "li", "td", "button", "h2", "strong"]
+_words503 = ["password", "token", "api key", "secret", "passphrase"]
+_hit503 = []
+for _t in _tags503:
+    for _w in _words503:
+        _s = "<%s>Change your %s here</%s>" % (_t, _w, _t)
+        if _red503.scrub(_s) != _s:
+            _hit503.append((_s, _red503.scrub(_s)))
+check("an ordinary word before a closing tag is left as prose", not _hit503, saw=_hit503[:4])
+_v503 = "q7" + "x9k2m4" * 4
+_kept503 = [t for t in _tags503 if _v503 in _red503.scrub("password %s</%s>" % (_v503, t))]
+check("...and a credential before the same tag is still redacted", not _kept503, saw=_kept503)
+# ---- 504_a_long_run_of_spaces_costs_linear_time.py
+# ------------------ a long run of spaces costs linear time in every rule Regexploit flagged
+# 🐛 [2026-10-11] (R73 acc4, 2026-10-10: Regexploit finds polynomial ReDoS in real Python patterns) Run
+# over chamnan's 508 patterns, Regexploit named seven; six were real on CPython: a run of spaces that
+# the pattern could hand to three different `\s*`/name parts was tried every way, cubic in its length.
+# At 2,000 spaces: an INI header 6 s and a YAML alias 12 s per scrub, a pointer comment 6 s, two
+# mapper symbol rules 22 s and 30 s. Each now gives every space one owner. The population is the
+# seven witnesses through the function that applies each pattern, at 4,000 spaces (each was a minute
+# or more), and the shapes each pattern exists to read must still read the same.
+import importlib as _il504
+import random as _rnd504
+import time as _t504
+
+_red504 = _il504.import_module("redact")
+_ptr504 = _il504.import_module("pointer")
+_map504 = _il504.import_module("mapper")
+_n504 = 4000
+_sp504 = " " * _n504
+_cases504 = {
+    "INI header `[` + spaces": lambda: _red504.scrub("[" + _sp504),
+    "YAML alias `-` + spaces": lambda: _red504.scrub("a: &x 1\nb: *x\n-" + _sp504),
+    "YAML alias `- ` + spaces + `*!`": lambda: _red504.scrub("a: &x 1\nb: *x\n- " + _sp504 + "*!"),
+    "Kubernetes Secret data + spaces": lambda: _red504.scrub("apiVersion: v1\nkind: Secret\ndata:\n" + _sp504 + "x\n"),
+    "pointer comment + spaces": lambda: _ptr504._title("<!-- description:" + _sp504, "f"),
+    "JavaScript member + spaces": lambda: _map504.extract_regex("class A {\n  0():" + _sp504 + "\n}\n", "js"),
+    "Dart line of spaces": lambda: _map504.extract_regex(_sp504 + "\n", "dart"),
+}
+_slow504 = {}
+for _k, _f in _cases504.items():
+    _a = _t504.perf_counter()
+    _f()
+    _d = _t504.perf_counter() - _a
+    if _d > 1.0:
+        _slow504[_k] = round(_d, 2)
+check("every flagged pattern reads %d spaces in under a second" % _n504, not _slow504, saw=_slow504)
+_g504 = _rnd504.Random(504)
+_v504 = "".join(_g504.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(28))
+_reads504 = {
+    "INI secret section": _v504 not in _red504.scrub("[database_credentials]\npassword = %s\n" % _v504),
+    "YAML alias to a secret": _v504 not in _red504.scrub("base: &pw %s\nprod:\n  db_password: *pw\n" % _v504),
+    "Kubernetes Secret data": _v504 not in _red504.scrub(
+        "apiVersion: v1\nkind: Secret\ndata:\n  password: %s\n" % _v504),
+    "pointer comment description": _ptr504._title("<!-- description: Builds the invoices -->\n# T", "f")
+        == "Builds the invoices",
+    "JavaScript methods": [s for s, _ in _map504.extract_regex(
+        "class A {\n  async total(items: Item[]): Promise<number> {\n  }\n  private render(a, b) {\n  }\n}\n",
+        "js")[1]] == ["total(items: Item[])", "render(a, b)"],
+    "Dart functions": [s for s, _ in _map504.extract_regex(
+        "Future<List<int>> loadAll(String path) async {\n}\nvoid main() {\n}\n", "dart")[1]]
+        == ["loadAll(String path)", "main()"],
+}
+check("...and each still reads the shape it exists for", all(_reads504.values()),
+      saw={k: v for k, v in _reads504.items() if not v})
+# ---- 505_a_lower_case_prefix_before_pwd_is_still_a_password.py
+# ------------------ a password named with a lower-case prefix before PWD is redacted
+# 🐛 [2026-10-11] (R91 acc4, 2026-10-10: Azure publish profiles are XML credential containers) An App
+# Service publish profile carries `userPWD="…"`, and the rule for a PWD after a prefix wanted the
+# prefix in capitals (`DBPWD=`), so the password went through. The population is the same name in an
+# XML attribute, an assignment and a JSON member; the shell's own `$PWD` and `OLDPWD` stay readable.
+import importlib as _il505
+import random as _rnd505
+
+_red505 = _il505.import_module("redact")
+_v505 = "".join(_rnd505.Random(505).choice("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+                for _ in range(40))
+_shapes505 = ['<publishProfile publishMethod="MSDeploy" userName="$app" userPWD="%s" />',
+              "dbPWD=%s", '{"adminPWD": "%s"}']
+_left505 = [s for s in _shapes505 if _v505 in _red505.scrub(s % _v505)]
+check("a lower-case prefix before PWD names a password in XML, assignments and JSON", not _left505,
+      saw=_left505)
+_ok505 = ["cd $PWD && make", "export OLDPWD=/home/me/src", "echo \"$PWD\""]
+_changed505 = [s for s in _ok505 if _red505.scrub(s) != s]
+check("...while the shell's working-directory variables stay readable", not _changed505, saw=_changed505)
+# ---- 506_a_private_key_without_its_armour_is_redacted.py
+# ------------------ a private key with its PEM armour stripped is still redacted
+# 🐛 [2026-10-11] (R79 acc4, 2026-10-10: GitGuardian detects base64-only private keys) A key pasted
+# into a CI variable or a JSON field without its BEGIN/END lines had nothing for the PEM rule to find,
+# and under a name no rule reads (`key = '…'`, or bare) it went through. The DER encoding of a private
+# key opens with bytes no public key shares. The population is each family's opening, read off keys
+# generated for the purpose, followed by a random body built here; the public-key openings and the
+# prefix quoted alone in prose must stay.
+import importlib as _il506
+import random as _rnd506
+
+_red506 = _il506.import_module("redact")
+_g506 = _rnd506.Random(506)
+_body506 = "".join(_g506.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+                   for _ in range(400))
+_private506 = {"PKCS#8 RSA 2048": "MIIEvAIBADANBgkqhkiG9w0BAQEFAASC", "PKCS#8 RSA 4096": "MIIJQQIBADANBgkqhkiG9w0BAQEFAASC",
+               "PKCS#1 RSA 2048": "MIIEowIBAAKCAQEA", "PKCS#1 RSA 1024": "MIICXAIBAAKBgQ",
+               "PKCS#8 EC P-256": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg",
+               "SEC1 EC P-256": "MHcCAQEEI", "PKCS#8 Ed25519": "MC4CAQAwBQYDK2VwBCIEI"}
+_left506 = [k for k, p in _private506.items()
+            if _body506[:80] in _red506.scrub("key = '%s%s'" % (p, _body506))]
+check("each private-key family's DER opening is redacted without its armour", not _left506, saw=_left506)
+_public506 = {"RSA public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA", "EC public": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE",
+              "Ed25519 public": "MCowBQYDK2VwAyEA"}
+_hit506 = [k for k, p in _public506.items() if _red506.scrub("pub = '%s%s'" % (p, _body506)) != "pub = '%s%s'" % (p, _body506)]
+check("...while public keys of the same families stay readable", not _hit506, saw=_hit506)
+_prose506 = "An RSA key in PKCS#8 opens with MIIEvAIBADANBgkqhkiG9w0BAQEFAASC in base64."
+check("...and the opening quoted alone in prose stays", _red506.scrub(_prose506) == _prose506,
+      saw=_red506.scrub(_prose506))
+# ---- 507_a_zero_width_space_does_not_hide_a_thai_word.py
+# ------------------ a zero-width space inside a Thai word does not hide it from recall
+# 🐛 [2026-10-11] (R92 acc4, 2026-10-10: a zero-width space is a Thai word-break hint) Thai pasted from
+# the web or a Thai editor carries U+200B between words, NFKC keeps it, and recall matches Thai by
+# substring, so a note holding `ค้น​หา` was not found by `ค้นหา` -- and the miss then suggested the
+# same word back. Each zero-width character is folded away; and because the index stores folded terms,
+# a change to folding must rebuild it, which the fingerprint now covers.
+import importlib as _il507
+import subprocess as _sp507
+import sys as _sys507
+import tempfile as _tf507
+from pathlib import Path as _P507
+
+_rec507 = _il507.import_module("recall")
+_zw507 = ["​", "‌", "‍", "⁠", "﻿"]
+_bad507 = [hex(ord(z)) for z in _zw507 if _rec507.fold("ค้น" + z + "หา") != _rec507.fold("ค้นหา")]
+check("every zero-width character folds away", not _bad507, saw=_bad507)
+_d507 = _P507(_tf507.mkdtemp())
+_sp507.run(["git", "init", "-q", str(_d507)], capture_output=True)
+(_d507 / ".chamnan" / "memory" / "lessons").mkdir(parents=True)
+(_d507 / ".chamnan" / "memory" / "lessons" / "search.md").write_text(
+    "# ตั้งค่าการค้น​หา\n\nวิธีค้น​หาบันทึกที่เก็บไว้\n", encoding="utf-8")
+_run507 = lambda *a: _sp507.run([_sys507.executable, str(ROOT / "bin" / "chamnan-recall"), *a], cwd=_d507,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+_run507("--reindex")
+_out507 = _run507("ค้นหา").stdout
+check("...and a note written with one is found by the word typed without it", "search.md" in _out507,
+      saw=_out507[-300:])
+import hashlib as _h507
+_red507 = _il507.import_module("redact")
+_rec507._SCRUBBER_ID = None
+_alone507 = _h507.sha1(_P507(_red507.__file__).read_bytes()).hexdigest()[:12]
+check("...and the index fingerprint is no longer the redactor's alone, so a folding change rebuilds it",
+      _rec507.scrubber_id() not in (_alone507, "unknown"), saw=(_rec507.scrubber_id(), _alone507))
+# ---- 508_a_tool_token_cache_is_refused.py
+# ------------------ a tool's token cache under hash-named files is refused when it holds a token
+# 🐛 [2026-10-11] (R1 acc4, 2026-10-11: the AWS SSO cache holds access and refresh tokens; R8 acc4,
+# 2026-10-11: kubelogin and the GKE auth plugin cache tokens on disk; R47 acc4, 2026-10-11: the Azure
+# CLI's token cache and Terraform's registry tokens are plain JSON) The caches name their files by
+# a hash, so no (directory, file) pair could name them, and each was read whole while
+# `~/.aws/credentials` beside them was refused. The population is each cache with a token in it; the
+# same files holding no token, and a project's own `cache/` directory, stay readable.
+import importlib as _il508
+import json as _js508
+import random as _rnd508
+import tempfile as _tf508
+from pathlib import Path as _P508
+
+_vault508 = _il508.import_module("vault")
+_g508 = _rnd508.Random(508)
+_t508 = lambda n: "".join(_g508.choice("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") for _ in range(n))
+_h508 = _P508(_tf508.mkdtemp())
+_files508 = {
+    ".aws/sso/cache/3f2a9c.json": {"startUrl": "https://example.awsapps.com/start", "accessToken": _t508(60),
+                                   "refreshToken": _t508(60), "expiresAt": "2026-10-11T00:00:00Z"},
+    ".aws/cli/cache/9b1e44.json": {"Credentials": {"AccessKeyId": "ASIA" + _t508(16).upper(),
+                                                   "SecretAccessKey": _t508(40), "SessionToken": _t508(80)}},
+    ".kube/cache/oidc-login/77ab01": {"id_token": "eyJ" + _t508(30) + "." + _t508(40) + "." + _t508(30),
+                                      "refresh_token": _t508(50)},
+    ".kube/gke_gcloud_auth_plugin_cache": {"access_token": "ya29." + _t508(60)},
+    ".kube/cache/kubelogin/d41d8c.json": {"AccessToken": "eyJ" + _t508(30) + "." + _t508(40) + "." + _t508(30)},
+    ".azure/msal_token_cache.json": {"AccessToken": {"k": {"secret": "eyJ" + _t508(30) + "." + _t508(40) + "." + _t508(30)}}},
+    ".terraform.d/credentials.tfrc.json": {"credentials": {"app.terraform.io": {"token": _t508(14) + ".atlasv1." + _t508(60)}}},
+}
+for _rel, _doc in _files508.items():
+    (_h508 / _rel).parent.mkdir(parents=True, exist_ok=True)
+    (_h508 / _rel).write_text(_js508.dumps(_doc), encoding="utf-8")
+_missed508 = [r for r in _files508 if not _vault508.tool_reads("Read", {"file_path": str(_h508 / r)}, None)]
+check("each tool token cache holding a token is refused", not _missed508, saw=_missed508)
+(_h508 / ".aws/sso/cache/empty.json").write_text('{"region": "us-east-1"}', encoding="utf-8")
+(_h508 / "proj/cache").mkdir(parents=True)
+(_h508 / "proj/cache/build.json").write_text('{"hash": "abc"}', encoding="utf-8")
+_wrong508 = [r for r in (".aws/sso/cache/empty.json", "proj/cache/build.json")
+             if _vault508.tool_reads("Read", {"file_path": str(_h508 / r)}, None)]
+check("...while a cache file with no token and a project's own cache stay readable", not _wrong508,
+      saw=_wrong508)
+# ---- 509_settings_that_keep_a_credential_are_refused.py
+# ------------------ Terraform state and variables and direnv's .envrc are refused when they hold a credential
+# 🐛 [2026-10-11] (R11 acc4, 2026-10-11: HashiCorp says local state holds secrets even when marked
+# sensitive; R7 acc4, 2026-10-11: an `.env*` glob misses direnv's `.envrc`) All were read whole. The
+# population is a state file, its backup, the backend state under `.terraform/`, a variables file and an
+# `.envrc`, each holding a credential; the same names holding only settings stay readable, and a state
+# file past the read cap is refused unread.
+import importlib as _il509
+import json as _js509
+import random as _rnd509
+import tempfile as _tf509
+from pathlib import Path as _P509
+
+_vault509 = _il509.import_module("vault")
+_g509 = _rnd509.Random(509)
+_v509 = "".join(_g509.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(32))
+_d509 = _P509(_tf509.mkdtemp())
+_state509 = _js509.dumps({"resources": [{"instances": [{"attributes": {"password": _v509}}]}]})
+_files509 = {"terraform.tfstate": _state509, "terraform.tfstate.backup": _state509,
+             ".terraform/terraform.tfstate": _js509.dumps({"backend": {"config": {"access_key": _v509}}}),
+             "prod.tfvars": 'db_password = "%s"\n' % _v509, ".envrc": "export API_KEY=%s\n" % _v509}
+for _rel, _txt in _files509.items():
+    (_d509 / _rel).parent.mkdir(parents=True, exist_ok=True)
+    (_d509 / _rel).write_text(_txt, encoding="utf-8")
+_missed509 = [r for r in _files509 if not _vault509.tool_reads("Read", {"file_path": str(_d509 / r)}, None)]
+check("state, backup, backend state, variables and .envrc holding a credential are refused", not _missed509,
+      saw=_missed509)
+_plain509 = _P509(_tf509.mkdtemp())
+(_plain509 / ".envrc").write_text("use nix\nlayout python3\n", encoding="utf-8")
+(_plain509 / "dev.tfvars").write_text('region = "eu-west-1"\ninstance_count = 2\n', encoding="utf-8")
+_wrong509 = [r for r in (".envrc", "dev.tfvars") if _vault509.tool_reads("Read", {"file_path": str(_plain509 / r)}, None)]
+check("...while the same names holding only settings stay readable", not _wrong509, saw=_wrong509)
+(_plain509 / "big.tfstate").write_text('{"version": 4, "pad": "' + "x" * (300 * 1024) + '"}', encoding="utf-8")
+check("...and a state file past the read cap is refused unread",
+      bool(_vault509.tool_reads("Read", {"file_path": str(_plain509 / "big.tfstate")}, None)))
 # ---- 50_every_title_that_becomes_a_filename_goes_through_one_reduction.py
 # ------------------- the correction was written down three times and applied to the sentence never
 # 🐛 [2026-09-10] `mdblock`'s docstrings claimed "Both slug() functions in this codebase" and "all
@@ -54645,6 +55138,243 @@ for _t_f50 in sorted(_t_lib50.rglob("*.py")):
             _t_stale50.append("%s says %r" % (_t_f50.name, _t_phrase50))
 check("...and no docstring states how many of them there are, which is the fact that went stale",
       not _t_stale50, saw="\n".join(_t_stale50) or None)
+# ---- 510_a_refusal_names_variables_only_for_env_files.py
+# ------------------ a refusal speaks of variable names only for a file that holds variables
+# 🐛 [2026-10-11] (R29 claudeaccount3, 2026-10-11: an accurate cause in an error raised agent recovery
+# from 59% to 82%) The generic refusal told the model that a refused `id_rsa`, `cookies.sqlite` or
+# `.git-credentials` had its "variable NAMES" listed in MAP.md, which only a `.env` has. The population
+# is every name the generic refusal answers for; the `.env` family keeps the sentence.
+import importlib as _il510
+
+_vault510 = _il510.import_module("vault")
+_keys510 = ["id_rsa", "id_ed25519", "cookies.sqlite", ".git-credentials", "server.pem", "key4.db", ".netrc"]
+_wrong510 = [n for n in _keys510 if "variable NAMES" in _vault510.refusal(n)]
+check("a key file or credential store is not told its variable names are in MAP.md", not _wrong510,
+      saw=_wrong510)
+_env510 = [".env", ".env.local", ".env.production", "prod.env"]
+_lost510 = [n for n in _env510 if "variable NAMES" not in _vault510.refusal(n)]
+check("...while every .env variant keeps the sentence", not _lost510, saw=_lost510)
+_noalt510 = [n for n in _keys510 if "ssh -i" not in _vault510.refusal(n)]
+check("...and each still says how to hand the file to a program", not _noalt510, saw=_noalt510)
+# ---- 511_compose_config_with_variables_filled_in_is_refused.py
+# ------------------ `docker compose config` with variables filled in is refused like the other bulk dumps
+# 🐛 [2026-10-11] (R31 acc4, 2026-10-11: Docker says `compose config` output must never be stored raw)
+# It prints the merged Compose file with every `${VAR}` filled in from `.env` and the shell, so a
+# refused `.env` came back through it. The population is each spelling of the command; the flags that
+# print no value stay allowed.
+import importlib as _il511
+
+_vault511 = _il511.import_module("vault")
+_dump511 = ["docker compose config", "docker compose -f a.yml config", "docker-compose config",
+            "podman compose config", "podman-compose config", "sudo docker compose config --format json"]
+_missed511 = [c for c in _dump511 if not _vault511.tool_reads("Bash", {"command": c}, None)]
+check("each spelling of compose config with variables filled in is refused", not _missed511, saw=_missed511)
+_ok511 = ["docker compose config --no-interpolate", "docker compose config --services", "docker-compose config -q",
+          "docker compose up -d", "docker compose ps"]
+_wrong511 = [c for c in _ok511 if _vault511.tool_reads("Bash", {"command": c}, None)]
+check("...while the forms that print no value, and other compose commands, stay allowed", not _wrong511,
+      saw=_wrong511)
+# ---- 512_a_staged_secret_warning_says_what_to_do.py
+# ------------------ the staged-secret warning says how to take the secret out, like its binary sibling
+# 🎯 [2026-10-11] (R40 acc4, 2026-10-11: removing a flagged secret took 6.6 attempts against 2.6 to
+# bypass it; an actionable warning moved 8 of 11 to a secure fix against 1 of 22) The warning for a
+# binary file said what to do and the one for ordinary text, the common case, named the file and
+# stopped. Pinned on a real staged commit in a scratch repository.
+import random as _rnd512
+import subprocess as _sp512
+import sys as _sys512
+import tempfile as _tf512
+from pathlib import Path as _P512
+
+_d512 = _P512(_tf512.mkdtemp())
+_sp512.run(["git", "init", "-q", str(_d512)], capture_output=True)
+_v512 = "".join(_rnd512.Random(512).choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(32))
+(_d512 / "app.py").write_text('API_KEY = "%s"\n' % _v512, encoding="utf-8")
+_sp512.run(["git", "-C", str(_d512), "add", "app.py"], capture_output=True)
+_r512 = _sp512.run([_sys512.executable, str(ROOT / "bin" / "chamnan-guard")], cwd=_d512, capture_output=True,
+                   text=True, encoding="utf-8", errors="replace", timeout=120)
+_out512 = _r512.stdout + _r512.stderr
+check("the warning names the file and says how to unstage and move the value",
+      "app.py" in _out512 and "git restore --staged" in _out512 and _v512 not in _out512, saw=_out512[-400:])
+# ---- 513_a_bare_name_typo_gets_a_did_you_mean.py
+# ------------------ a misspelt bare file name, extension left off, still gets a did-you-mean
+# 🐛 [2026-10-11] (R46 acc4, 2026-10-11: edit distance before subsequence scoring recovers misspellings)
+# `chamnan-impact` matched a typo against full paths, then against file names WITH their extension, so
+# `boundry` was compared with `boundary.py` -- a ratio of 0.78 under the 0.8 cutoff -- and got no
+# suggestion. Measured over the names this package's own index holds: of 311 one-letter typos of a
+# bare stem, 61 were answered before and all 311 when stems are compared too. The population here is a
+# fixture repository's modules, indexed fresh, each name with one letter dropped.
+import subprocess as _sp513
+import sys as _sys513
+import tempfile as _tf513
+from pathlib import Path as _P513
+
+_d513 = _P513(_tf513.mkdtemp())
+_sp513.run(["git", "init", "-q", str(_d513)], capture_output=True)
+_mods513 = ["boundary", "catalogs", "scheduler", "workspace", "pointer", "renderer", "timeline", "ledgerbook"]
+(_d513 / "pkg").mkdir()
+(_d513 / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+for _m in _mods513:
+    (_d513 / "pkg" / (_m + ".py")).write_text('"""The %s module."""\n\n\ndef run():\n    return 1\n' % _m,
+                                              encoding="utf-8")
+(_d513 / "main.py").write_text('"""Entry point."""\n' + "".join("from pkg.%s import run as run_%s\n" % (m, m) for m in _mods513),
+                               encoding="utf-8")
+_sp513.run(["git", "-C", str(_d513), "add", "-A"], capture_output=True)
+_sp513.run([_sys513.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_d513, capture_output=True,
+           text=True, encoding="utf-8", errors="replace", timeout=300)
+_missed513 = []
+for _m in _mods513:
+    _typo = _m[:2] + _m[3:]
+    _out = _sp513.run([_sys513.executable, str(ROOT / "bin" / "chamnan-impact"), _typo], cwd=_d513,
+                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+    if "did you mean" not in _out or _m not in _out.split("did you mean", 1)[1]:
+        _missed513.append((_typo, _m))
+check("a bare module name with one letter dropped is answered with that module", not _missed513,
+      saw=_missed513)
+# ---- 514_package_and_shell_files_holding_a_key_are_refused.py
+# ------------------ NuGet and Composer credentials and shell start-up files are refused when they hold a key
+# 🐛 [2026-10-11] (R51 acc4, 2026-10-11: NuGet and Composer keep registry credentials in plain files;
+# R58 acc4, 2026-10-11: 9.5% of public dotfiles repositories leaked API keys, mostly from .zshrc and
+# .bashrc) Each was read whole. The population is each file holding a credential; the same files holding
+# only settings stay readable.
+import importlib as _il514
+import random as _rnd514
+import tempfile as _tf514
+from pathlib import Path as _P514
+
+_vault514 = _il514.import_module("vault")
+_g514 = _rnd514.Random(514)
+_v514 = "".join(_g514.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(32))
+_h514 = _P514(_tf514.mkdtemp())
+_files514 = {
+    ".nuget/NuGet/NuGet.Config": '<configuration><packageSourceCredentials><feed><add key="Username" value="me" />'
+                                 '<add key="ClearTextPassword" value="%s" /></feed></packageSourceCredentials></configuration>' % _v514,
+    ".composer/auth.json": '{"http-basic": {"repo.example.test": {"username": "me", "password": "%s"}}}' % _v514,
+    ".zshrc": 'export PATH="$HOME/bin:$PATH"\nexport OPENAI_API_KEY=sk-%s\n' % _v514,
+    ".bashrc": 'alias ll="ls -l"\nexport GITHUB_TOKEN=%s\n' % _v514,
+    ".config/fish/fish_variables": "SETUVAR --export API_TOKEN:%s\n" % _v514,
+}
+for _rel, _txt in _files514.items():
+    (_h514 / _rel).parent.mkdir(parents=True, exist_ok=True)
+    (_h514 / _rel).write_text(_txt, encoding="utf-8")
+_missed514 = [r for r in _files514 if not _vault514.tool_reads("Read", {"file_path": str(_h514 / r)}, None)]
+check("NuGet, Composer and shell start-up files holding a key are refused", not _missed514, saw=_missed514)
+_p514 = _P514(_tf514.mkdtemp())
+(_p514 / ".zshrc").write_text('export PATH="$HOME/bin:$PATH"\nalias gs="git status"\n', encoding="utf-8")
+(_p514 / "nuget.config").write_text('<configuration><packageSources><add key="nuget" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>', encoding="utf-8")
+_wrong514 = [r for r in (".zshrc", "nuget.config") if _vault514.tool_reads("Read", {"file_path": str(_p514 / r)}, None)]
+check("...while the same files holding only settings stay readable", not _wrong514, saw=_wrong514)
+# ---- 515_front_matter_after_a_bom_or_crlf_is_still_front_matter.py
+# ------------------ front matter after a byte-order mark or with CRLF line ends is still front matter
+# 🐛 [2026-10-11] (R69 acc4, 2026-10-11: a BOM-prefixed SKILL.md was not recognised because the first-line
+# regex expected `^---`) `read_text("utf-8")` keeps a UTF-8 byte-order mark, and an editor on Windows
+# writes CRLF; either one made `md.front_matter` find nothing, so the pointer titled the entry by its
+# heading instead of its `description:`. The population is both readers of front matter, each given
+# the plain, BOM, CRLF and BOM+CRLF spellings of one document.
+import importlib as _il515
+
+_ptr515 = _il515.import_module("pointer")
+_so515 = _il515.import_module("skill_overlap")
+_doc515 = "---\ndescription: Deploy the web app safely\n---\n\n# Heading\n\nBody.\n"
+_forms515 = {"plain": _doc515, "bom": "﻿" + _doc515, "crlf": _doc515.replace("\n", "\r\n"),
+             "bom+crlf": "﻿" + _doc515.replace("\n", "\r\n")}
+_bad515 = {k: _ptr515._title(v, "f") for k, v in _forms515.items()
+           if _ptr515._title(v, "f") != "Deploy the web app safely"}
+check("the pointer reads description: under a BOM or CRLF", not _bad515, saw=_bad515)
+_bad515b = {k: _so515._describe(v) for k, v in _forms515.items()
+            if "Deploy the web app safely" not in (_so515._describe(v) or "")}
+check("...and so does the skill-overlap reader", not _bad515b, saw=_bad515b)
+# ---- 516_vault_tokens_and_more_cli_logins_are_kept_out.py
+# ------------------ HashiCorp Vault tokens and more CLI sign-in files are kept out of the session
+# 🐛 [2026-10-11] (R61 acc4, 2026-10-11: `vault login` caches its bearer token in ~/.vault-token; Doppler
+# and Bitwarden CLIs keep tokens in their config; R67 acc4, 2026-10-11: kubeadm's admin.conf embeds a
+# client key) Vault's `hvs.`/`hvb.`/`hvr.` tokens were not redacted and `~/.vault-token` was read whole,
+# as were the Doppler, Bitwarden and kubeadm files holding a token. The population is each token shape
+# and each file holding one; the same files holding none stay readable.
+import importlib as _il516
+import random as _rnd516
+import tempfile as _tf516
+from pathlib import Path as _P516
+
+_red516 = _il516.import_module("redact")
+_vault516 = _il516.import_module("vault")
+_g516 = _rnd516.Random(516)
+_b516 = "".join(_g516.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789") for _ in range(90))
+_left516 = [p for p in ("hvs.", "hvb.", "hvr.") if _b516[:40] in _red516.scrub("echo " + p + _b516)]
+check("Vault's service, batch and recovery tokens are redacted", not _left516, saw=_left516)
+_h516 = _P516(_tf516.mkdtemp())
+_files516 = {".vault-token": "hvs." + _b516,
+             ".doppler/.doppler.yaml": "scoped:\n  /:\n    token: dp.ct." + _b516[:43] + "\n",
+             "Library/Application Support/Bitwarden CLI/data.json": '{"accessToken": "eyJ%s.%s.%s"}' % (_b516[:20], _b516[20:50], _b516[50:70]),
+             "kubernetes/admin.conf": "users:\n- name: kubernetes-admin\n  user:\n    client-key-data: " + _b516 + "==\n"}
+for _rel, _txt in _files516.items():
+    (_h516 / _rel).parent.mkdir(parents=True, exist_ok=True)
+    (_h516 / _rel).write_text(_txt, encoding="utf-8")
+_missed516 = [r for r in _files516 if not _vault516.tool_reads("Read", {"file_path": str(_h516 / r)}, None)]
+check("~/.vault-token and the Doppler, Bitwarden and kubeadm files holding a token are refused", not _missed516,
+      saw=_missed516)
+_p516 = _P516(_tf516.mkdtemp())
+(_p516 / ".doppler").mkdir()
+(_p516 / ".doppler" / ".doppler.yaml").write_text("scoped:\n  /:\n    enclave.project: web\n", encoding="utf-8")
+check("...while a Doppler config holding no token stays readable",
+      not _vault516.tool_reads("Read", {"file_path": str(_p516 / ".doppler" / ".doppler.yaml")}, None))
+# ---- 517_podman_helm_and_legacy_docker_logins_are_refused.py
+# ------------------ Podman, Helm and legacy Docker login files are refused like Docker's config.json
+# 🐛 [2026-10-11] (R71 acc5, 2026-10-11: Podman and Helm keep Docker's reversible base64 user:password;
+# containers/image still reads `.dockercfg`) `~/.docker/config.json` holding an `auth` was refused while
+# the same JSON in Podman's `containers/auth.json`, Helm's `registry/config.json` and the legacy
+# `.dockercfg` was read whole. The population is each file with an inline `auth`; the same files
+# routing to a credential helper, with no secret in them, stay readable.
+import base64 as _b64517
+import importlib as _il517
+import json as _js517
+import random as _rnd517
+import tempfile as _tf517
+from pathlib import Path as _P517
+
+_vault517 = _il517.import_module("vault")
+_g517 = _rnd517.Random(517)
+_pw517 = "".join(_g517.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(24))
+_doc517 = _js517.dumps({"auths": {"registry.example.test": {"auth": _b64517.b64encode(
+    ("deploy:" + _pw517).encode()).decode()}}})
+_h517 = _P517(_tf517.mkdtemp())
+_rels517 = [".docker/config.json", ".config/containers/auth.json", "run/user/501/containers/auth.json",
+            ".config/helm/registry/config.json", ".dockercfg"]
+for _r in _rels517:
+    (_h517 / _r).parent.mkdir(parents=True, exist_ok=True)
+    (_h517 / _r).write_text(_doc517, encoding="utf-8")
+_missed517 = [r for r in _rels517 if not _vault517.tool_reads("Read", {"file_path": str(_h517 / r)}, None)]
+check("every Docker-format login file holding an inline auth is refused", not _missed517, saw=_missed517)
+_p517 = _P517(_tf517.mkdtemp())
+(_p517 / ".config/containers").mkdir(parents=True)
+(_p517 / ".config/containers/auth.json").write_text('{"credHelpers": {"registry.example.test": "pass"}}',
+                                                    encoding="utf-8")
+check("...while one that only routes to a credential helper stays readable",
+      not _vault517.tool_reads("Read", {"file_path": str(_p517 / ".config/containers/auth.json")}, None))
+# ---- 518_a_saved_terraform_plan_is_refused.py
+# ------------------ a saved Terraform plan is refused: it keeps every planned secret in clear
+# 🐛 [2026-10-11] (R11 acc4, 2026-10-11: HashiCorp says `terraform plan -out` stores configuration,
+# input variables and sensitive values in clear) A saved plan is a zip, so the holds-a-secret gate that
+# guards state and variable files cannot look inside it. The population is the conventional names, to
+# Read and through the shell; `terraform show` on it stays allowed, and so does a page about plans.
+import importlib as _il518
+import tempfile as _tf518
+from pathlib import Path as _P518
+
+_vault518 = _il518.import_module("vault")
+_d518 = _P518(_tf518.mkdtemp())
+for _n in ("tfplan", "prod.tfplan"):
+    (_d518 / _n).write_bytes(b"PK\x03\x04" + b"\x00" * 40)
+_missed518 = [n for n in ("tfplan", "prod.tfplan") if not _vault518.tool_reads("Read", {"file_path": str(_d518 / n)}, None)]
+check("a saved plan is refused to Read under either conventional name", not _missed518, saw=_missed518)
+check("...and to cat through the shell",
+      bool(_vault518.tool_reads("Bash", {"command": "cat %s" % (_d518 / "prod.tfplan")}, _d518)))
+(_d518 / "docs").mkdir()
+(_d518 / "docs" / "tfplan.md").write_text("How we review plans.\n", encoding="utf-8")
+check("...while terraform show and a page about plans stay allowed",
+      not _vault518.tool_reads("Bash", {"command": "terraform show tfplan"}, _d518)
+      and not _vault518.tool_reads("Read", {"file_path": str(_d518 / "docs" / "tfplan.md")}, None))
+check("...and the refusal names terraform show", "terraform show" in _vault518.refusal("tfplan"))
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
