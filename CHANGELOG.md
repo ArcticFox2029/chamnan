@@ -21,6 +21,8 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A saved Terraform plan is refused.** `terraform plan -out` keeps every planned value, secrets
+  included, in clear inside a zip; `tfplan` and `*.tfplan` were read whole. `terraform show` still works.
 - **Podman, Helm and legacy Docker logins are refused when they hold one.** Podman's
   `containers/auth.json`, Helm's `registry/config.json` and the old `.dockercfg` carry the same
   reversible base64 user:password as Docker's `config.json`, which was already refused.

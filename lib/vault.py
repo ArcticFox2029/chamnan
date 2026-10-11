@@ -125,6 +125,12 @@ SETTINGS_FILE_NAMES = frozenset({".envrc", ".zshrc", ".zshenv", ".zprofile", ".z
                                  ".bash_profile", ".bash_login", ".profile", "config.fish", "fish_variables"})
 SETTINGS_FILE_SUFFIXES = (".tfstate", ".tfstate.backup", ".tfvars", ".tfvars.json")
 _STATE_SUFFIXES = (".tfstate", ".tfstate.backup")
+# 🐛 [2026-10-11] (R11 acc4, 2026-10-11: HashiCorp says `terraform plan -out` stores the configuration,
+# input variables and sensitive values in clear) A saved plan is a zip, so no text gate can look inside
+# it, and `unzip -p` or a Read put every planned secret into the session. Always refused, by its
+# conventional names. Check 518.
+SAVED_PLAN_SUFFIXES = (".tfplan",)
+SAVED_PLAN_NAMES = frozenset({"tfplan"})
 _REGISTRY_READ_CAP = 256 * 1024
 # Lower-cased once: the directory names above are written as the tools spell them (`Claude`).
 _REGISTRY_PAIRS = frozenset((d.lower(), n.lower()) for d, n in REGISTRY_CONFIGS_IN)
@@ -245,6 +251,8 @@ def _is_credential(token, root):
         if path.name.lower() in SHELL_HISTORIES and _history_carries_a_secret(path):
             return token
         if _is_settings_file(path) and _settings_carry_a_value(path):
+            return token
+        if path.name.lower() in SAVED_PLAN_NAMES or path.name.lower().endswith(SAVED_PLAN_SUFFIXES):
             return token
         if _is_service_account_key(path):
             return token
@@ -482,6 +490,11 @@ def refusal(name):
                 f"session. The tool that owns it reads it itself -- run that tool (claude, codex, gemini, "
                 f"gh, gcloud, aws, kubectl) rather than opening the file. If you need to know what it holds, "
                 f"ask the user.")
+    _plan = Path(str(name).strip("'\"")).name.lower()
+    if _plan in SAVED_PLAN_NAMES or _plan.endswith(SAVED_PLAN_SUFFIXES):
+        return (f"chamnan: `{shown}` is a saved Terraform plan, which keeps every planned value, secrets "
+                f"included, in clear, so it is not read into the session. `terraform show {mdblock.as_quoted(str(name), 200)}` "
+                f"prints the plan with sensitive values hidden.")
     if _is_settings_file(Path(str(name).strip("'\""))):
         return (f"chamnan: `{shown}` keeps a credential among its settings, so it is not read into the "
                 f"session raw. `chamnan-peek {mdblock.as_quoted(str(name), 200)}` shows the same file with "
