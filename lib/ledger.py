@@ -77,8 +77,13 @@ def _ymd_to_ts(y, m, d):
     `record_recent`'s `t >= cutoff`, so the ledger line claimed a record written this week when the
     newest real one was six months old. That line is injected into every session, and this module's
     own docstring says it exists because "a count that never changes gets tuned out" — it was
-    manufacturing movement instead. A slack of one day is allowed, so a record written in a
-    timezone ahead of this machine is not thrown away.
+    manufacturing movement instead. A slack is allowed, so a record written in a timezone ahead of
+    this machine is not thrown away.
+
+    🐛 [2026-10-11] (self-measured) Found by the release CI at 10:33 UTC: the slack was one day, and
+    a date anchored at noon UTC can be up to 26 hours ahead of now -- in Kiritimati (+14), local
+    "today" begins at 10:00 UTC the day before, so a record stamped today was refused as future
+    from then until noon UTC. Two days covers every offset; a typo'd year is still refused. Check 413.
     """
     import datetime
     try:
@@ -86,7 +91,7 @@ def _ymd_to_ts(y, m, d):
     except (ValueError, TypeError, OverflowError):
         return None
     ts = when.timestamp()
-    return None if ts > time.time() + 86400 else ts
+    return None if ts > time.time() + 2 * 86400 else ts
 
 
 def _milestone_timestamps(root):

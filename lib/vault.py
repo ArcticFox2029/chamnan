@@ -225,7 +225,7 @@ def _registry_carries_a_secret(path):
     return redact.scrub(text) != text
 
 
-# 🐛 [2026-10-07] (R60 benchmark, 2026-10-07) `grep -c '^API_TOKEN=' .env` -- asking whether a
+# 🐛 [2026-10-07] (R60, 2026-10-07) From its benchmark: `grep -c '^API_TOKEN=' .env` -- asking whether a
 # variable is SET -- was refused, measured in a scratch run: a count, a file name or an exit status is
 # all those flags print, never a line of the file. Only the searchers get this; `cat -c` is not a thing.
 _SEARCHERS = frozenset({"grep", "egrep", "fgrep", "rg", "ag"})

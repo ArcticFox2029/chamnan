@@ -1539,7 +1539,7 @@ def _own_host():
         try:
             # Not `os.uname()`: the suite refuses any shipped reference to an API Windows does not
             # have, guarded or not.
-            # 🐛 [2026-10-06] (1.35.0 release CI) And not `platform.node()` on Windows: it runs the
+            # 🐛 [2026-10-06] (self-measured) Found by the 1.35.0 release CI. And not `platform.node()` on Windows: it runs the
             # whole `platform.uname()`, which under Python 3.12+ is a WMI query, and the first call
             # happened inside the lock window below. Sixty concurrent hooks on the Windows 3.13
             # runner lost 5 scratch.jsonl entries to LOCK_TIMEOUT; 3.8, which reads the version

@@ -1733,7 +1733,7 @@ def _is_credential_file_name(name):
         return True
     if name.endswith(".env") and name[:-4].rsplit(".", 1)[-1] not in _ENV_TEMPLATES:
         return True
-    # 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) A Google client-secret TEMPLATE
+    # 🐛 [2026-10-07] (agent) From Alpha's review of 1.35.1. A Google client-secret TEMPLATE
     # (`client_secret_template.json`, `client_secret.example.json`) was refused like the real file,
     # while `kubeconfig.yaml` -- the commonest name a real kubeconfig is saved under -- was read.
     # The template words are the same ones `.env.example` uses. Check 459.
@@ -3027,7 +3027,7 @@ def _close_unterminated_quoted_secrets(text):
         name = text[line_start:opener.start(1)]
         if _names_a_mechanism(name, "") or not _looks_like_a_credential_name(name, ""):
             continue
-        # 🐛 [2026-10-07] (self-scan, 2026-10-07) `grep -c '^API_TOKEN=' .env` lost everything after
+        # 🐛 [2026-10-07] (self-measured) Found by the self-scan. `grep -c '^API_TOKEN=' .env` lost everything after
         # `=` -- the quote there CLOSES a string that opened before the name, and was taken for one
         # opening a value that never ends. When that quote is already open on the line before the
         # name, the name is inside a quoted pattern, not an assignment. Check 466.
@@ -5148,8 +5148,12 @@ def _drop_invisibles_inside_ascii_tokens(text):
     found = {ch for ch in set(text) if ch > "\x7f" and _is_planted_invisible(ch)}
     if not found:
         return text
-    return re.sub("(?<=[A-Za-z0-9_+/=-])[" + "".join(re.escape(ch) for ch in sorted(found))
-                  + "]+(?=[A-Za-z0-9_+/=-])", "", text)
+    # 🐛 [2026-10-11] (self-measured) Found by the release gate: dropped between ANY two token
+    # characters, so `a\u200fb` lost the right-to-left mark a bidi line needs, which the suite pins as
+    # text that must survive. A credential is long; four token characters on each side keep that
+    # case caught (check 485 splits a key ten characters in) and leave short prose alone.
+    return re.sub("(?<=[A-Za-z0-9_+/=-]{4})[" + "".join(re.escape(ch) for ch in sorted(found))
+                  + "]+(?=[A-Za-z0-9_+/=-]{4})", "", text)
 
 
 def for_a_terminal(text):

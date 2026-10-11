@@ -613,7 +613,7 @@ def _edit_will_not_survive(payload):
         return ""
     seen.append(key)
     del seen[:-400]
-    # 🐛 [2026-10-01] (R205 measured) The ignored-file sentence named no file and fired once per
+    # 🐛 [2026-10-01] (R205, 2026-10-01) Measured: the ignored-file sentence named no file and fired once per
     # path, so writing several files into one ignored folder repeated it (19 times in one measured
     # session). One ignored folder is one fact, so it is said once, with the path.
     tail = ""

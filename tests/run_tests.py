@@ -5539,8 +5539,12 @@ try:
     # file there and the walker is right to leave it out. Asserting anyway would be asserting that
     # Windows is POSIX. The check runs where the link actually resolved, and says so where it did
     # not -- a skip that names its reason, rather than a pass that hides one.
+    # 🐛 [2026-10-11] (self-measured) Since the walk maps a linked file once, under its own name
+    # a link to a file the walk already yields is not listed again; what this
+    # pins is that the file it points to is still walked.
     if (_repo / "sub" / "stays.py").is_file():
-        check("...while a symlink staying inside it is kept", "sub/stays.py" in _found)
+        check("...while the file a symlink inside it points to is walked, once",
+              "real.py" in _found and "sub/stays.py" not in _found, saw=sorted(_found))
     else:
         skip("  [SKIP] relative symlink did not resolve on this platform — walker check skipped")
     check("a broken symlink is dropped rather than raising", "broken.py" not in _found)
@@ -13763,8 +13767,11 @@ os.symlink("../shared/util.py", _esc / "app" / "src" / "inside.py")
 # a relative target from the link's own directory, so the file is unreadable there and the walker
 # is right to omit it. Asserted where the link actually resolved.
 if (_esc / "app" / "src" / "inside.py").is_file():
-    check("...while a symlink to a file genuinely inside it is still followed",
-          "inside.py" in {q.name for q in _tree2.files(_esc / "app")})
+    # 🐛 [2026-10-11] (self-measured) A link to a file the walk already yields is mapped once, under
+    # the file's own name; the file behind it must still be walked.
+    _in_walk = {q.name for q in _tree2.files(_esc / "app")}
+    check("...while the file a symlink genuinely inside it points to is still walked",
+          "util.py" in _in_walk and "inside.py" not in _in_walk, saw=sorted(_in_walk))
 else:
     skip("  [SKIP] relative symlink did not resolve — inside-the-repo follow check skipped")
 _rmtree(_esc, ignore_errors=True)
@@ -13845,7 +13852,7 @@ def _fire_start(session_id=None):
     _pl = {"cwd": str(ROOT), "hook_event_name": "SessionStart"}
     if session_id is not None:
         _pl["session_id"] = session_id
-    # 🐛 [2026-10-07] (gate) Fired in write mode on the developer's own workspace, this consumed a
+    # 🐛 [2026-10-07] (self-measured) Found by the gate. Fired in write mode on the developer's own workspace, this consumed a
     # real `repeat_digest.json` on the first firing -- shown once, then deleted -- so the second
     # differed and the check's result depended on whether one happened to exist. Read-only fires
     # the same emission and leaves the workspace as it was.
@@ -14758,7 +14765,7 @@ for _n in (".env", ".env.production", "local.env"):
     check(f"peek prints no env VALUES ({_n})",
           "db.internal.example" not in _out and "ops@example.com" not in _out
           and "zz-env-api-value" not in _out)
-    # 🐛 [2026-10-06] Printing the names was the behaviour until credential files were refused
+    # 🐛 [2026-10-06] (self-measured) Printing the names was the behaviour until credential files were refused
     # unread (check 440): peek now opens nothing, and the environment catalog lists the names.
     check("...because it refuses the file unread, and says so",
           "Refused" in _out and "DB_HOST" not in _out)
@@ -40136,7 +40143,7 @@ finally:
 import re as _re257                                                          # noqa: E402
 import redact as _rd257                                                      # noqa: E402
 
-# 🐛 [2026-10-09] (self-measured, the pool run) `_KV_SEP` became `(?:[?:+]{1,2}=|[:=\uFF1A\uFF1D])` on
+# 🐛 [2026-10-09] (self-measured) From the pool run: `_KV_SEP` became `(?:[?:+]{1,2}=|[:=\uFF1A\uFF1D])` on
 # 2026-10-08 to carry Makefile and shell operators, and a fullmatch on `[...]` then found no class at
 # all: this check passed vacuously in nobody's view and failed only when the pool ran. The
 # single-character class is the last one in the pattern, so it is read from there.
@@ -48525,7 +48532,7 @@ try:
     _old376["entries"] = [dict(e, body={"caf": 1}) if e.get("path", "").endswith("cafe.md") else e
                           for e in _idx376["entries"]]
     _re376 = _rc376.build(_ws376, _old376)
-    _cafe376 = next(e for e in _re376["entries"] if e.get("path", "").endswith("cafe.md"))
+    _cafe376 = next((e for e in _re376["entries"] if e.get("path", "").endswith("cafe.md")), {})
     check("...and an index written before this term shape is rebuilt, not reused",
           "caf" not in _cafe376.get("body", {}) and _re376.get("terms") == _rc376.TERMS_VERSION,
           saw=(sorted(_cafe376.get("body", {}))[:6], _re376.get("terms")))
@@ -49872,7 +49879,7 @@ finally:
     _sh400.rmtree(_d400, ignore_errors=True)
 # ---- 401_a_workspace_without_a_tool_index_records_no_crash.py
 # ------------------ a workspace with no tool index records no hook crash at session start
-# 🐛 [2026-10-02] (R216 follow-up, 2026-10-02) ff39bc2 made the session start count a swallowed
+# 🐛 [2026-10-02] (R216, 2026-10-02) A follow-up: ff39bc2 made the session start count a swallowed
 # exception around reading `.chamnan/tools/index.json`, and a workspace with no tool index -- a fresh
 # one has none -- then logged a FileNotFoundError "crash" on every session start and every
 # `chamnan-context` run, so doctor reported crashes that were not crashes. A missing index is
@@ -51803,7 +51810,7 @@ check("...while a public key, a public JWK and the prose after a cut-off block s
       saw=[_redact438.scrub(_pubjwk438)[:80], _after438[-60:]])
 # ---- 439_a_lock_says_whose_it_is_in_one_write.py
 # ------------------ a lock says whose it is in one write, never after a slow lookup
-# 🐛 [2026-10-06] (1.35.0 release CI) The lock body -- PID, process start time, host -- was built
+# 🐛 [2026-10-06] (self-measured) Found by the 1.35.0 release CI. The lock body -- PID, process start time, host -- was built
 # inside the window between creating the lock with O_EXCL and writing it, and the host came from
 # `platform.node()`, which on Windows under Python 3.12+ is a WMI query. Every hook is a fresh
 # process, so every one paid it with an empty lock on disk; sixty concurrent hooks on the Windows 3.13
@@ -52041,7 +52048,7 @@ check("a kubeconfig token with a random value is scrubbed, and an ordinary `toke
       saw=[_redact440.scrub(_kc440)[-70:], _redact440.scrub(_plain440)])
 # ---- 441_a_workspace_symlinked_outside_is_refused.py
 # ------------------ a `.chamnan` that is a symlink out of the repository is refused, not followed
-# 🐛 [2026-10-06] (owner's decision, R12 #7 acc4, 2026-10-06; R6 a1) A `.chamnan` symlink to a directory
+# 🐛 [2026-10-06] (R12 acc4, 2026-10-06) The owner's decision on #7, and R6 a1. A `.chamnan` symlink to a directory
 # outside the repository used to be warned about and then followed: everything chamnan writes landed
 # outside, and the session start injected whatever the target held. A repository can commit such a
 # link, so the target is not the user's choice. Refused now, both ways: nothing is written through it,
@@ -52599,7 +52606,7 @@ check("peek names a git-lfs pointer as not checked out, whatever its extension",
 check("...while an ordinary small CSV is still read as one", "columns:" in _peek457.peek(_d457 / "real.csv"))
 # ---- 458_every_container_rule_judges_a_name_the_same_way.py
 # ------------------ every container rule judges a secret name the same way as a plain assignment
-# 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) Format-aware rules multiplied -- YAML
+# 🐛 [2026-10-07] (agent) From Alpha's review of 1.35.1. Format-aware rules multiplied -- YAML
 # anchors, TOML/INI sections, JSON value objects, escaped JSON -- and each decides for itself what a
 # secret-named container is. Measured over 30 names in six containers, the anchor rule alone judged
 # the key without its value, so `password_file` holding a credential-shaped value printed through an
@@ -52644,7 +52651,7 @@ check("...and a mechanism value reached through an anchor is still kept",
       "/run/secrets/db" in _redact458.scrub("x: &p /run/secrets/db\nsvc:\n  password_file: *p\n"))
 # ---- 459_the_credential_file_refusal_keeps_its_near_neighbours.py
 # ------------------ refusing credential files by name holds its line against near-neighbour names
-# 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) A name-based refusal drifts wider or
+# 🐛 [2026-10-07] (agent) From Alpha's review of 1.35.1. A name-based refusal drifts wider or
 # narrower one case at a time, so it is held here against a corpus of near neighbours in both
 # directions. Measured when this was written: `client_secret_template.json` and
 # `client_secret.example.json` -- templates, exactly what `.env.example` is to `.env` -- were
@@ -52782,7 +52789,7 @@ check("...while an ordinary aged log is still taken, so the sweep has not simply
 _sh45.rmtree(_t_sweep45, ignore_errors=True)
 # ---- 460_a_comment_in_an_indented_code_block_is_kept.py
 # ------------------ an HTML comment shown as code in an indented code block is kept
-# 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) Hidden comments are stripped because a
+# 🐛 [2026-10-07] (agent) From Alpha's review of 1.35.1. Hidden comments are stripped because a
 # reviewer never sees them. Inside a fenced block or inline code they are visible and were kept;
 # inside an INDENTED code block -- four spaces or a tab after a blank line -- Markdown also shows
 # them literally, and they were stripped, so a documented HTML example lost the comment it was
@@ -52878,7 +52885,7 @@ _off461 = _sp461.run([_sys461.executable, str(_hook461)], input=_pl461, capture_
                      env=_env461, timeout=60).stdout
 check("...and guard_credential_reads: false turns it off", "deny" not in _off461, saw=_off461[:200])
 
-# 🐛 [2026-10-07] (owner: "ก็มันทำงานได้ไหมหละ ถ้าต้องเรียกใช้ข้อมูลในการทำงาน เช่น ssh") Real work that USES a
+# 🐛 [2026-10-07] (owner) "ก็มันทำงานได้ไหมหละ ถ้าต้องเรียกใช้ข้อมูลในการทำงาน เช่น ssh" — real work that USES a
 # secret without printing it must never be refused -- including reading a PUBLIC key or a certificate,
 # which the first version refused.
 _work461 = ["ssh -i ~/.ssh/id_rsa ubuntu@10.0.0.5 'uptime'", "ssh deploy@prod-db",
@@ -52897,7 +52904,7 @@ _let461 = [c for c in _print461 if not _vault461.bash_reads(c, _d461)]
 check("...and printing a private key is still refused", not _let461, saw=_let461)
 # ---- 462_a_local_import_does_not_shadow_the_module_one.py
 # ------------------ a local import inside a function does not shadow the module-level one
-# 🐛 [2026-10-07] (gate, 2026-10-07) Check 457's fix put `import mapper` inside `_peek`, and
+# 🐛 [2026-10-07] (self-measured) Found by the gate of 2026-10-07. Check 457's fix put `import mapper` inside `_peek`, and
 # `mapper` was already imported at the top of peek.py. Python then treats `mapper` as local to the
 # WHOLE function, so every earlier use raised UnboundLocalError: chamnan-peek on any source file
 # fell through to "unrecognised; 100% printable" and a strings dump. The full gate caught it as
@@ -53069,7 +53076,7 @@ _env463 = _vault463.refusal(".env")
 check("the .env refusal says how to use a value without printing it",
       "set -a" in _env463 and "--env-file" in _env463 and "never print" in _env463)
 
-# 🐛 [2026-10-07] (R60 benchmark) An agent asking whether a variable is SET was refused: a count, a
+# 🐛 [2026-10-07] (R60) From its benchmark: an agent asking whether a variable is SET was refused: a count, a
 # file name or an exit status is all these print, never a line of the file.
 _ask463 = ["grep -c '^API_TOKEN=' .env", "grep -q API_TOKEN .env", "grep -l TOKEN .env",
            "rg --count TOKEN .env", "grep -ic token .env"]
@@ -53207,7 +53214,7 @@ if _links466:
 check("...and an ordinary file named config is read as before",
       not _vault466.tool_reads("Read", {"file_path": str(_d466 / "app" / "config")}, _d466))
 
-# 🐛 [2026-10-07] (self-scan) A quote that CLOSES a pattern was taken for one opening a value that
+# 🐛 [2026-10-07] (self-measured) Found by the self-scan. A quote that CLOSES a pattern was taken for one opening a value that
 # never ends, and everything after it was redacted: `grep -c '^API_TOKEN=' .env` lost its file name.
 _grep466 = ["grep -c '^API_TOKEN=' .env -- asking", "grep -q '^SECRET_KEY=' .env && echo set",
             "echo 'API_TOKEN=' >> .env", 'grep "^PASSWORD=" .env']
@@ -53467,7 +53474,7 @@ with _ws470.exclusive(_target470) as _held470b:
 check("...while a crashed holder's lock, unchanged, is still broken and taken", _held470b)
 # ---- 471_a_preview_does_not_consume_the_repeat_digest.py
 # ------------------ a read-only session start (a preview) shows the repeat digest and keeps it
-# 🐛 [2026-10-07] (gate, 2026-10-07) The full gate's "preview and real SessionStart agree
+# 🐛 [2026-10-07] (self-measured) Found by the gate of 2026-10-07. The full gate's "preview and real SessionStart agree
 # byte-for-byte" check failed 251 bytes apart: `chamnan-context --preview` runs the hook read-only,
 # and the hook deleted logs/repeat_digest.json as it showed it -- so the preview consumed the
 # digest and the real session start that followed never showed it.
@@ -53601,7 +53608,7 @@ check("Make assignments are redacted, unspaced-script prose is kept, a literal $
 check("...and each redaction is final on a second scrub",
       all(_red473.scrub(_red473.scrub(s)) == _red473.scrub(s) for s, _w in _cases473))
 
-# 🐛 [2026-10-08] (self-scan) With `:=` a separator, prose describing expansions lost its tail: the
+# 🐛 [2026-10-08] (self-measured) Found by the self-scan. With `:=` a separator, prose describing expansions lost its tail: the
 # bare rule read `DB_PASS:=` inside `${DB_PASS:=<secret>}` as a key. A safe default stays readable.
 _prose473 = ["`${DB_PASS:=<secret>}` were treated as pure indirection",
              "while `${PORT:-8080}` and `${API_KEY:-changeme}` stay readable."]
@@ -53704,7 +53711,7 @@ check("...while a ceiling that was never a default is kept as written",
       _ws475.load_config(_repo475)["output_byte_ceiling"] == 7000)
 # ---- 476_a_value_closing_an_inline_code_span_is_judged_without_its_backtick.py
 # ------------------ a value that closes an inline code span is judged without the backtick
-# 🐛 [2026-10-08] (self-measured: chamnan's own pointer hook quoted a workspace.py comment) Inside
+# 🐛 [2026-10-08] (self-measured) chamnan's own pointer hook quoted a workspace.py comment. Inside
 # Markdown backticks, `{"index_token_budget": true}` and `{"index_token_budget": 5000}` came back
 # with `<REDACTED>` for the boolean and the count: the closing backtick rode on the value, so neither
 # was a code word nor a plain count any more. A credential in the same span is still redacted.
@@ -54020,7 +54027,7 @@ from pathlib import Path as _P483
 
 import redact as _red483
 
-_store483 = _P483("/home/u/.gcm/store/git/https/github.com/me.credential")
+_store483 = _P483("/Users/alice/.gcm/store/git/https/github.com/me.credential")
 check("a GCM plaintext credential file is refused before a read and skipped by the indexer",
       _red483.is_never_opened(_store483) and _red483.is_blocked(_store483))
 _plain483 = ["/repo/docs/credential.md", "/repo/src/credential_store.py", "/repo/credentials.py"]
@@ -54336,7 +54343,7 @@ import importlib as _il490
 from pathlib import Path as _P490
 
 _vault490 = _il490.import_module("vault")
-_home490 = "/Users/someone"
+_home490 = "/Users/alice"
 _refused490 = [
     _home490 + "/.config/gcloud/access_tokens.db",
     _home490 + "/.config/gcloud/credentials.db",
@@ -54470,7 +54477,10 @@ for _ in range(200):
     if not _p:
         continue
     _n492 += 1
-    _s = next(x for x in _titles492 if _p in x)
+    _s = next((x for x in _titles492 if _p in x), None)
+    if _s is None:
+        _split492.append((_w, _p))
+        continue
     _k = _s.index(_p)
     _after = _s[_k + len(_p)] if _k + len(_p) < len(_s) else ""
     if (_p[-1] in "เแโใไ" or (_k and _s[_k - 1] in "เแโใไ") or _p[0] in "ะาำๅ"
@@ -54671,7 +54681,7 @@ check("...while an ordinary keys.txt stays readable",
       not _vault498.tool_reads("Read", {"file_path": str(_d498 / "notes" / "keys.txt")}, None))
 # ---- 499_a_word_ending_in_markdown_bold_is_prose.py
 # ------------------ a word that ends in Markdown bold after a secret word is prose, not a value
-# 🐛 [2026-10-10] (self-scan) `**A shell history that holds a secret is refused.**` came back as
+# 🐛 [2026-10-10] (self-measured) Found by the self-scan. `**A shell history that holds a secret is refused.**` came back as
 # `secret is <REDACTED>`: the plain-word test allowed `.`, `)` and quotes after a word but not `*`, so
 # Markdown bold made an ordinary word read as letters mixed with punctuation. This repository's own
 # CHANGELOG tripped it. The population: each emphasis closer after a plain word; a real value with the
@@ -54805,13 +54815,13 @@ check("...and across every one-letter deletion the exact stretch comes back for 
 import importlib as _il501
 
 _vault501 = _il501.import_module("vault")
-_prof501 = "/Users/someone/Library/Application Support/Firefox/Profiles/x.default-release/"
-_refused501 = [_prof501 + "key4.db", "/home/someone/.mozilla/firefox/x.default/key3.db"]
+_prof501 = "/Users/alice/Library/Application Support/Firefox/Profiles/x.default-release/"
+_refused501 = [_prof501 + "key4.db", "/Users/alice/.mozilla/firefox/x.default/key3.db"]
 _missed501 = [p for p in _refused501 if not _vault501.tool_reads("Read", {"file_path": p}, None)]
 check("Firefox's key database is refused to Read", not _missed501, saw=_missed501)
 check("...and to sqlite3 through the shell",
       bool(_vault501.tool_reads("Bash", {"command": "sqlite3 '%s' 'select * from metadata'" % _refused501[0]}, None)))
-_open501 = ["/Users/someone/app/keys.db", "/Users/someone/app/key4.py", "/Users/someone/app/docs/key4.md"]
+_open501 = ["/Users/alice/app/keys.db", "/Users/alice/app/key4.py", "/Users/alice/app/docs/key4.md"]
 _wrong501 = [p for p in _open501 if _vault501.tool_reads("Read", {"file_path": p}, None)]
 check("an app's own key table, a module and a page named after it stay readable", not _wrong501, saw=_wrong501)
 # ---- 502_an_escaped_credential_is_still_redacted.py
@@ -54940,7 +54950,7 @@ _shapes505 = ['<publishProfile publishMethod="MSDeploy" userName="$app" userPWD=
 _left505 = [s for s in _shapes505 if _v505 in _red505.scrub(s % _v505)]
 check("a lower-case prefix before PWD names a password in XML, assignments and JSON", not _left505,
       saw=_left505)
-_ok505 = ["cd $PWD && make", "export OLDPWD=/home/me/src", "echo \"$PWD\""]
+_ok505 = ["cd $PWD && make", "export OLDPWD=/Users/me/src", "echo \"$PWD\""]
 _changed505 = [s for s in _ok505 if _red505.scrub(s) != s]
 check("...while the shell's working-directory variables stay readable", not _changed505, saw=_changed505)
 # ---- 506_a_private_key_without_its_armour_is_redacted.py
@@ -61256,7 +61266,7 @@ _fl_r = _fl_fire(tool_name="Bash", tool_input={"command": "pytest tests/"},
                  error="Exit code 1\nE   ImportError: no module", duration_ms=4187)
 check("a failed tool call is written down without anybody typing anything",
       len(_fl_rows()) == 1 and _fl_rows()[0]["tool"] == "Bash", saw=_fl_rows())
-# 🐛 [2026-10-07] This asserted the err was EXACTLY "Exit code 1" -- the first line only, which is
+# 🐛 [2026-10-07] (self-measured) This asserted the err was EXACTLY "Exit code 1" -- the first line only, which is
 # why 216 of 265 real rows said nothing else. The exit code still leads; the program's own error
 # line now follows it. Check 464.
 check("...keeping the exit code first and the program's own error line after it",

@@ -516,7 +516,7 @@ def strip_html_comments(text):
     """
     if "<!--" not in text:
         return text
-    # 🐛 [2026-10-07] (Alpha's review of 1.35.1, 2026-10-07) An INDENTED code block -- four spaces or
+    # 🐛 [2026-10-07] (agent) From Alpha's review of 1.35.1. An INDENTED code block -- four spaces or
     # a tab, after a blank line -- is shown literally too, and its comments were stripped. Inside a
     # list the same indent is a continuation paragraph, which hides a comment, so there it takes
     # eight. Check 460.
