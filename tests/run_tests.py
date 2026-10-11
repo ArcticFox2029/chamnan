@@ -53013,8 +53013,9 @@ for _n463, _c463 in _files463.items():
     _p463 = _d463 / _n463
     _p463.parent.mkdir(parents=True, exist_ok=True)
     _p463.write_text(_c463, encoding="utf-8")
+    # `.as_posix()`: unquoted, Git Bash on Windows reads `C:\Users\...` as `C:Users...`, which opens nothing.
     if not (_vault463.tool_reads("Read", {"file_path": str(_p463)}, _d463)
-            and _vault463.tool_reads("Bash", {"command": f"cat {_p463}"}, _d463)):
+            and _vault463.tool_reads("Bash", {"command": f"cat {_p463.as_posix()}"}, _d463)):
         _open463.append(_n463)
     _pk463 = _peek463.peek(_p463)
     if _t463 in _pk463 or _b64463 in _pk463:
@@ -53940,8 +53941,10 @@ _event481 = _json481.dumps({"session_id": "c481", "hook_event_name": "PreToolUse
 _hung481 = []
 _hooks481 = sorted((ROOT / "hooks").glob("chamnan_*.py"))
 for _h481 in _hooks481:
-    _p481 = _sp481.Popen([sys.executable, str(_h481)], stdin=_sp481.PIPE, stdout=_sp481.PIPE,
-                         stderr=_sp481.PIPE, cwd=str(ROOT))
+    # Output goes to DEVNULL, not an undrained PIPE: chamnan_session_start.py prints ~5.7 KB, more
+    # than a Windows pipe buffer (4 KB), so on windows-latest it blocked WRITING and was called hung.
+    _p481 = _sp481.Popen([sys.executable, str(_h481)], stdin=_sp481.PIPE, stdout=_sp481.DEVNULL,
+                         stderr=_sp481.DEVNULL, cwd=str(ROOT))
     _p481.stdin.write(_event481)
     _p481.stdin.flush()                      # and never closed
     try:
@@ -53950,8 +53953,7 @@ for _h481 in _hooks481:
         _hung481.append(_h481.name)
         _p481.kill()
     finally:
-        for _f481 in (_p481.stdin, _p481.stdout, _p481.stderr):
-            _f481.close()
+        _p481.stdin.close()
 check("there are hooks to try, so the next check is not vacuous", len(_hooks481) >= 8, saw=len(_hooks481))
 check("EVERY HOOK GIVEN ITS EVENT ON A PIPE LEFT OPEN EXITS ON ITS OWN", not _hung481, saw=_hung481)
 
@@ -54587,9 +54589,10 @@ check("every shell and REPL history holding a token is refused to Read", not _mi
 check("...and a history with nothing secret stays readable", not _wrong495, saw=_wrong495)
 _p495 = _home495 / ".zsh_history"
 _p495.write_text("export GITHUB_TOKEN=%s\n" % _tok495, encoding="utf-8")
+# `.as_posix()`: unquoted, Git Bash on Windows reads `C:\Users\...` as `C:Users...`, which opens nothing.
 check("...a cat of it is refused, a count-only grep is not",
-      bool(_vault495.tool_reads("Bash", {"command": "cat %s" % _p495}, None))
-      and not _vault495.tool_reads("Bash", {"command": "grep -c git %s" % _p495}, None))
+      bool(_vault495.tool_reads("Bash", {"command": "cat %s" % _p495.as_posix()}, None))
+      and not _vault495.tool_reads("Bash", {"command": "grep -c git %s" % _p495.as_posix()}, None))
 # ---- 496_a_symlink_to_an_indexed_file_is_not_mapped_twice.py
 # ------------------ a symlink to a file the map already indexes is not summarised a second time
 # 🐛 [2026-10-10] (R30 acc4, 2026-10-10: VS Code search returns a real file and each in-tree link to it)
@@ -54645,7 +54648,8 @@ for _n497 in ("demo-123-4f2a9c1b7e.json", "key.json", "service-account.json", "g
     if not _vault497.tool_reads("Read", {"file_path": str(_d497 / _n497)}, None):
         _missed497.append(_n497)
 check("a service-account key is refused under any file name", not _missed497, saw=_missed497)
-check("...and to `cat`", bool(_vault497.tool_reads("Bash", {"command": "cat %s" % (_d497 / "key.json")}, None)))
+# `.as_posix()`: unquoted, Git Bash on Windows reads `C:\Users\...` as `C:Users...`, which opens nothing.
+check("...and to `cat`", bool(_vault497.tool_reads("Bash", {"command": "cat %s" % (_d497 / "key.json").as_posix()}, None)))
 (_d497 / "package.json").write_text(_json497.dumps({"name": "app", "version": "1.0.0"}), encoding="utf-8")
 (_d497 / "iam.json").write_text(_json497.dumps({"type": "service_account", "client_email": "x@y"}), encoding="utf-8")
 check("...while ordinary JSON, and one that only names a service account, stay readable",
@@ -55377,14 +55381,62 @@ for _n in ("tfplan", "prod.tfplan"):
     (_d518 / _n).write_bytes(b"PK\x03\x04" + b"\x00" * 40)
 _missed518 = [n for n in ("tfplan", "prod.tfplan") if not _vault518.tool_reads("Read", {"file_path": str(_d518 / n)}, None)]
 check("a saved plan is refused to Read under either conventional name", not _missed518, saw=_missed518)
+# `.as_posix()`: unquoted, Git Bash on Windows reads `C:\Users\...` as `C:Users...`, which opens nothing.
 check("...and to cat through the shell",
-      bool(_vault518.tool_reads("Bash", {"command": "cat %s" % (_d518 / "prod.tfplan")}, _d518)))
+      bool(_vault518.tool_reads("Bash", {"command": "cat %s" % (_d518 / "prod.tfplan").as_posix()}, _d518)))
 (_d518 / "docs").mkdir()
 (_d518 / "docs" / "tfplan.md").write_text("How we review plans.\n", encoding="utf-8")
 check("...while terraform show and a page about plans stay allowed",
       not _vault518.tool_reads("Bash", {"command": "terraform show tfplan"}, _d518)
       and not _vault518.tool_reads("Read", {"file_path": str(_d518 / "docs" / "tfplan.md")}, None))
 check("...and the refusal names terraform show", "terraform show" in _vault518.refusal("tfplan"))
+# ---- 519_a_yaml_block_with_crlf_line_ends_is_still_redacted.py
+# ------------------ a YAML block scalar written with CRLF line ends is redacted like an LF one
+# 🐛 [2026-10-11] (self-measured) The opener of `YAML_BLOCK_SECRET` and its gate ended `[ \t]*\n`,
+# so `api_token: >-\r\n  <value>\r\n` -- the same file saved on Windows, or checked out with
+# core.autocrlf=true -- left the value in the clear, in 1.35.1 as well. Found when check 482 failed
+# on windows-latest only: the commit guard scrubbed a staged blob that kept its CRLF. Fixture
+# values are built here.
+import random as _r519
+import shutil as _sh519
+import string as _s519
+import subprocess as _sp519
+import tempfile as _tf519
+from pathlib import Path as _P519
+
+import redact as _red519
+
+_g519 = _r519.Random(519)
+_v519 = "Zq8" + "".join(_g519.choice(_s519.ascii_letters + _s519.digits) for _ in range(23))
+_blocks519 = ["api_token: >-\n  %s\nother: 1\n" % _v519,
+              "password: |\n  %s\n" % _v519,
+              "secret: |2\n    %s\n" % _v519,
+              "client_secret: >+\n  %s\n  %s\nnext: 2\n" % (_v519, _v519)]
+_leak519 = [b.split("\n")[0] for b in _blocks519 if _v519 in _red519.scrub(b.replace("\n", "\r\n"))]
+check("a secret-named YAML block scalar with CRLF line ends is redacted", not _leak519, saw=_leak519)
+_lf519 = [b.split("\n")[0] for b in _blocks519 if _v519 in _red519.scrub(b)]
+check("...as it is with LF line ends", not _lf519, saw=_lf519)
+_plain519 = "description: >-\r\n  a plain folded paragraph\r\nother: 1\r\n"
+check("...while a block under an ordinary key stays as written",
+      _red519.scrub(_plain519) == _plain519, saw=_red519.scrub(_plain519))
+
+_d519 = _P519(_tf519.mkdtemp())
+_git519 = lambda *a: _sp519.run(["git", "-C", str(_d519), *a], capture_output=True, text=True, encoding="utf-8", errors="replace")
+_git519("init", "-q")
+_git519("config", "user.email", "t@t")
+_git519("config", "user.name", "t")
+_git519("config", "core.autocrlf", "false")
+(_d519 / "block.yml").write_bytes(b"api_token: >-\r\n  placeholder\r\nother: 1\r\n")
+_git519("add", "-A")
+_git519("commit", "-qm", "base")
+(_d519 / "block.yml").write_bytes(("api_token: >-\r\n  %s\r\nother: 1\r\n" % _v519).encode())
+_git519("add", "-A")
+_out519 = _sp519.run([sys.executable, str(ROOT / "bin" / "chamnan-guard")], cwd=str(_d519),
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("...and the commit guard names a staged CRLF value whose key sits on an unchanged line",
+      "block.yml" in _out519.stderr and _v519 not in _out519.stderr + _out519.stdout,
+      saw=_out519.stderr[-300:])
+_sh519.rmtree(_d519, ignore_errors=True)
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration

@@ -1461,9 +1461,12 @@ ROCKET_SECRET = _lazy(lambda: re.compile(
 # first line is itself indented. `password: |2` carried its value out in the clear while
 # `password: |` did not. Both the gate and the rule spell this header, and both had to learn it --
 # a gate that skips is as silent as a rule that misses. (R3.3 multiline structured scalars.)
-_YAML_BLOCK_OPENER = _lazy(lambda: re.compile(r":\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n"))
+# 🐛 [2026-10-11] (self-measured) Both ended `[ \t]*\n`, so the same block saved with CRLF line
+# ends -- a Windows editor, or a checkout under core.autocrlf=true -- carried its value out in the
+# clear; the commit guard scrubs the staged blob, which keeps its CRLF. Check 519.
+_YAML_BLOCK_OPENER = _lazy(lambda: re.compile(r":\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\r?\n"))
 YAML_BLOCK_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"\s*:\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I))
+    r"((?:" + SECRET_WORDS + r")" + _KEY_RUN + r"\s*:\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\r?\n)((?:[ \t]+\S.*\n?)+)", re.I))
 # Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
 # `.pgpass`'s colon-delimited final field. `_netrc` — the Windows spelling — and `.pgpass` are in
 # neither refusal list, so peek opens both.
