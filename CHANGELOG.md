@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Podman, Helm and legacy Docker logins are refused when they hold one.** Podman's
+  `containers/auth.json`, Helm's `registry/config.json` and the old `.dockercfg` carry the same
+  reversible base64 user:password as Docker's `config.json`, which was already refused.
 - **A file name typed without its extension gets a did-you-mean.** `chamnan-impact boundry` compared the
   typo with `boundary.py` and found nothing; names are now compared without the extension too.
 - **NuGet, Composer and shell start-up files are refused when they hold a key.** A `NuGet.Config` with
@@ -33,7 +36,7 @@ already reports the last released number while running newer code.
 - **Front matter after a byte-order mark or with Windows line ends is read.** A skill or note saved
   with a BOM or CRLF lost its `description:` and was titled by its first heading instead.
 - **A tool's token cache is refused when it holds a token.** The AWS CLI's SSO and assumed-role
-  caches, kubelogin's OIDC cache and the GKE auth plugin's cache name their files by a hash, so the
+  caches, kubelogin's OIDC and AKS caches and the GKE auth plugin's cache name their files by a hash, so the
   guard never recognised them and read the access and refresh tokens into the session while
   `~/.aws/credentials` beside them was refused.
 - **Terraform state and variables, and direnv's `.envrc`, are refused when they hold a credential.**

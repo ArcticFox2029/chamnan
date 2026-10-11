@@ -52,7 +52,11 @@ OPENSSL_PUBLIC = frozenset({"x509", "s_client", "verify", "crl", "version", "cip
 REGISTRY_CONFIGS = frozenset({".npmrc", ".pypirc", "pip.conf", "pip.ini", ".yarnrc", ".yarnrc.yml",
                               # 🐛 [2026-10-11] (R51 acc4, 2026-10-11: NuGet keeps ClearTextPassword
                               # off Windows) A NuGet.Config, global or per project. Check 514.
-                              "nuget.config"})
+                              "nuget.config",
+                              # 🐛 [2026-10-11] (R71 acc5, 2026-10-11: containers/image still reads the
+                              # legacy file) Docker's pre-1.7 login file, the same base64 user:password.
+                              # Check 517.
+                              ".dockercfg"})
 # The same idea for files whose name only means a registry config inside one directory.
 REGISTRY_CONFIGS_IN = frozenset({(".docker", "config.json"), (".m2", "settings.xml"),
                                  ("pypoetry", "auth.toml"), (".bundle", "config"),
@@ -60,7 +64,11 @@ REGISTRY_CONFIGS_IN = frozenset({(".docker", "config.json"), (".m2", "settings.x
                                  ("Claude", "claude_desktop_config.json"),
                                  # 🐛 [2026-10-11] (R51 acc4, 2026-10-11: Composer's auth.json holds
                                  # http-basic, bearer and GitHub tokens in plain JSON) Check 514.
-                                 (".composer", "auth.json"), ("composer", "auth.json")})
+                                 (".composer", "auth.json"), ("composer", "auth.json"),
+                                 # 🐛 [2026-10-11] (R71 acc5, 2026-10-11: Podman and Helm keep the same
+                                 # reversible base64 login as Docker) Podman's `containers/auth.json`
+                                 # and Helm's `registry/config.json`. Check 517.
+                                 ("containers", "auth.json"), ("registry", "config.json")})
 # 🐛 [2026-10-08] (R59 acc1, 2026-10-08: 24,008 secrets in MCP config files on public GitHub) An MCP
 # server config keeps the server's API key in its `env` block beside the command that starts it, the
 # same mix as a registry config, and `cat .mcp.json` brought the key into the session. Check 477.
@@ -98,7 +106,10 @@ TOOL_LOGINS_IN = frozenset({(".claude", ".credentials.json"), (".codex", "auth.j
 # AWS CLI's SSO and assumed-role caches and kubelogin's OIDC cache were read whole while
 # `~/.aws/credentials` beside them was refused. Matched by the trailing directories instead, and
 # refused like the files above only when the file really holds a token. Check 508.
-TOOL_LOGIN_CACHES = ((".aws", "sso", "cache"), (".aws", "cli", "cache"), (".kube", "cache", "oidc-login"))
+TOOL_LOGIN_CACHES = ((".aws", "sso", "cache"), (".aws", "cli", "cache"), (".kube", "cache", "oidc-login"),
+                     # AKS's kubelogin keeps device-code and browser sign-ins here (R8 acc4, 2026-10-11,
+                     # finding #6, which the first screening's extract had dropped). Check 508.
+                     (".kube", "cache", "kubelogin"))
 TOOL_LOGIN_NAMES = frozenset({"gke_gcloud_auth_plugin_cache"})
 # 🐛 [2026-10-11] (R11 acc4, 2026-10-11: HashiCorp says local state holds secrets even when they are
 # marked sensitive; R7 acc4, 2026-10-11: an `.env*` glob misses direnv's `.envrc`) Settings files that
