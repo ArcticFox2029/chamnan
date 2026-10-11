@@ -3056,8 +3056,10 @@ _KUBERNETES_SECRET_KIND = _lazy(lambda: re.compile(
     r"^kind[ \t]*:[ \t]*(['\"]?)Secret\1[ \t]*(?:#.*)?$"))
 _KUBERNETES_SECRET_FIELD = _lazy(lambda: re.compile(
     r"^(?:" + "|".join(_KUBERNETES_SECRET_VALUE_FIELDS) + r")[ \t]*:[ \t]*(?:#.*)?$"))
+# 🐛 [2026-10-11] (R73 acc4, 2026-10-10) An unquoted key could start and end on a space, so the indent,
+# the key and the gap before `:` all competed for one run of spaces: cubic. Check 504.
 _YAML_MAPPING_VALUE = _lazy(lambda: re.compile(
-    r"^([ \t]+(?:['\"][^'\"\n]+['\"]|[^:#\n][^:\n]*?)[ \t]*:[ \t]*)(.*?)(\r?\n?)$"))
+    r"^([ \t]+(?:['\"][^'\"\n]+['\"]|[^:#\s](?:[^:\n]*?[^:\s])?)[ \t]*:[ \t]*)(.*?)(\r?\n?)$"))
 
 
 def _redacted_yaml_scalar(value):
@@ -4736,7 +4738,10 @@ def _redact_api_client_auth(text):
 # replaced and the value at the anchor printed. An anchor whose alias sits under a secret-named key
 # has its scalar redacted where it is defined. A key naming a mechanism (`password_file`) does not
 # count. Check 446.
-_YAML_ALIAS_VALUE = _lazy(lambda: re.compile(r"^(\s*)(?:-\s+)?([^\s:#][^:#]*?)?\s*:?\s*\*([A-Za-z0-9_.-]+)\s*$"))
+# 🐛 [2026-10-11] (R73 acc4, 2026-10-10) The same three-owner whitespace as `_INI_HEADER`: `- ` and
+# 2,000 spaces in a document holding `&` and `*` cost 12 s. The key ends on a non-space, the space after
+# `-` is taken whole, and the gap before `*` has one owner when no `:` splits it. Check 504.
+_YAML_ALIAS_VALUE = _lazy(lambda: re.compile(r"^(\s*)(?:-\s+(?=\S))?([^\s:#](?:[^:#]*?[^\s:#])?)?\s*(?::\s*)?\*([A-Za-z0-9_.-]+)\s*$"))
 _YAML_KEY_LINE = _lazy(lambda: re.compile(r"^(\s*)([^\s:#-][^:#]*?)\s*:\s*$"))
 _YAML_ANCHOR_SCALAR = _lazy(lambda: re.compile(r"(&([A-Za-z0-9_.-]+)\s+)(['\"]?)([^\s'\"#{}\[\]][^'\"#\n]*?)\3(\s*(?:#.*)?)$"))
 
@@ -4789,7 +4794,11 @@ def _redact_yaml_anchor_targets(text):
 # printed in full, as did a password in a TOML multi-line string. Under a header that names a secret
 # (SECRET_WORDS, plus a bare `token`/`tokens`; never `keys`, which is keybindings), a value that
 # reads like a credential is redacted unless its key names a mechanism. Check 448.
-_INI_HEADER = _lazy(lambda: re.compile(r"^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:[#;].*)?$"))
+# 🐛 [2026-10-11] (R73 acc4, 2026-10-10: Regexploit finds polynomial ReDoS in real Python patterns)
+# Three whitespace runs could each take the same spaces -- `\s*`, a name that may hold spaces, `\s*` --
+# so `[` followed by 2,000 spaces and no `]` cost 6 s per scrub, cubic in the run. The name now starts
+# and ends on a non-space, which leaves each space exactly one owner. Check 504.
+_INI_HEADER = _lazy(lambda: re.compile(r"^\s*\[\[?\s*([^\[\]\s](?:[^\[\]]*?[^\[\]\s])?)\s*\]\]?\s*(?:[#;].*)?$"))
 _INI_ASSIGN = _lazy(lambda: re.compile(
     r"^(\s*([A-Za-z0-9_.\-\"']+)\s*[=:]\s*)(['\"]?)([^'\"\s#;][^'\"#;]*?)\3(\s*(?:[#;].*)?)$"))
 _MULTILINE_OPEN = _lazy(lambda: re.compile(r"^\s*([A-Za-z0-9_.\-\"']+)\s*=\s*(\"\"\"|''')\s*$"))

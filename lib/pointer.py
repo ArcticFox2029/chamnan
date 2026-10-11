@@ -65,7 +65,10 @@ _FRONT_NAME = re.compile(r"^description:\s*(.+?)\s*$", re.M)  # applied to front
 # See mdblock.HEADING_SPACE — `[ \t]` misses the space a CJK keyboard types.
 _HEADING = re.compile(r"^#{1,3}" + mdblock.HEADING_SPACE + r"+(.+?)\s*$", re.M)
 # An HTML-comment description, which is how the skills in this workspace carry theirs.
-_COMMENT_DESC = re.compile(r"<!--\s*description:\s*(.+?)\s*-->", re.S)
+# 🐛 [2026-10-11] (R73 acc4, 2026-10-10) `(.+?)` could start and end on whitespace, so an unclosed
+# `<!-- description:` followed by 2,000 spaces cost 6 s; the text now starts and ends on a non-space.
+# Check 504.
+_COMMENT_DESC = re.compile(r"<!--\s*description:\s*(\S(?:.*?\S)?)\s*-->", re.S)
 
 
 _BOUNDARY_CACHE = {}

@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A long run of spaces no longer stalls a scan.** Six patterns could hand the same spaces to
+  several parts of themselves and tried every split, so the cost grew with the cube of the run: a
+  line of 2,000 spaces after `[` or `-` took 6 to 12 seconds to redact, an unclosed
+  `<!-- description:` 6 seconds to read, and two symbol rules 22 and 30 seconds to map. Each space
+  now has one owner, and the same input takes milliseconds.
 - **Firefox's key database is refused.** Saved passwords in `logins.json` are encrypted with the key in
   `key4.db`, and with no primary password set the two files together decrypt every one. The key was
   read like any other file; it is now refused alongside `cookies.sqlite` beside it.

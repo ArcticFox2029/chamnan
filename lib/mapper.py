@@ -1393,7 +1393,7 @@ REGEX_RULES = {
         ("func", r"^(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^()]*)\)\s*(?::[^=]*?)?=>"),
         ("func", r"^\s{2,}(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+)*"
                  r"(?:async\s+)?(?!if|for|while|switch|catch|return|constructor\b)"
-                 r"(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\], |]+\s*)?\{"),
+                 r"(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\],|](?:[\w<>\[\], |]*[\w<>\[\],|])?\s*)?\{"),
         ("class", r"^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)"),
         # `.ts` shares this rule set, and TypeScript's declarations are mostly neither functions
         # nor classes. A real 4,133-line `.d.ts` declaring 91 exported interfaces and type aliases
@@ -1505,7 +1505,11 @@ REGEX_RULES = {
         ("class", r"^\s*(?:public\s+)?(?:final\s+)?(?:class|struct|enum|protocol|extension)\s+(\w+)"),
     ],
     "dart": [
-        ("func", r"^\s*(?:[\w<>,\?\[\] ]+\s+)?(\w+)\s*\(([^)]*)\)\s*(?:async\s*)?\{"),
+        # 🐛 [2026-10-11] (R73 acc4, 2026-10-10) This return type, and the return annotation of the
+        # JavaScript member rule, could start or end on a space, so the whitespace around them had
+        # several owners: a line of 2,000 spaces cost 30 s here and `  0():` before them 22 s there.
+        # Both start and end on a non-space now. Check 504.
+        ("func", r"^\s*(?:[\w<>,\?\[\]](?:[\w<>,\?\[\] ]*[\w<>,\?\[\]])?\s+)?(\w+)\s*\(([^)]*)\)\s*(?:async\s*)?\{"),
         ("class", r"^\s*(?:abstract\s+)?(?:class|mixin|enum|extension)\s+(\w+)"),
     ],
     "lua": [("func", r"^\s*(?:local\s+)?function\s+([\w.:]+)\s*\(([^)]*)\)")],
