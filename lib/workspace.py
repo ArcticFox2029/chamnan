@@ -1909,7 +1909,7 @@ _NOT_A_PIPE = object()
 def _read_one_json_event_nt(fd, _json):
     """Windows: the same read, by polling the pipe, so no read is left pending; `_NOT_A_PIPE` otherwise.
 
-    🐛 [2026-10-11] (self-measured, windows-latest) The thread below leaves a synchronous ReadFile
+    🐛 [2026-10-11] (self-measured) On windows-latest, the thread below leaves a synchronous ReadFile
     pending on stdin when the host keeps the pipe open. On Windows every later child that inherits
     stdin then hangs -- `git --version` included, measured with faulthandler on the runner --
     because I/O on one synchronous pipe is serialised behind that read. chamnan_session_start.py
