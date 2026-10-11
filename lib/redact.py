@@ -112,8 +112,12 @@ PLACEHOLDER = "<REDACTED>"
 # 🐛 [2026-10-10] (self-scan) `*` and `_` added too: Markdown emphasis ending a word (`a secret is
 # refused.**`, `__the api key is missing__`) is still one word, and the prose rule redacted it -- in this
 # repository's own CHANGELOG. Check 499.
+# 🐛 [2026-10-11] (R67 acc4, 2026-10-10, found by its escaped-credential check) An HTML closing tag
+# ending a word (`Change your password here</p>`, `password below</label>`) is still one word; the
+# prose rule took `here</p>` as the value. Check 503.
 _PLAIN_WORD = _lazy(lambda: re.compile(
-    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]}\u2026\"'`*_]*$"))
+    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]}\u2026\"'`*_]*"
+    "(?:</[A-Za-z][A-Za-z0-9]{0,15}>[.,;:!?)\\]}\u2026\"'`*_]*)*$"))
 
 
 def _is_a_default_credential(value):
@@ -1514,7 +1518,12 @@ BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".ne
                  # 🐛 [2026-10-09] (R147 acc5, 2026-10-09) gcloud's token cache beside its refused
                  # `credentials.db`, Firefox's plain-text session cookies, and a Netscape cookie jar
                  # curl logs in with. Whole names, so `cookies.md` is still a page. Check 490.
-                 "access_tokens.db", "cookies.sqlite", "cookies.txt")
+                 "access_tokens.db", "cookies.sqlite", "cookies.txt",
+                 # 🐛 [2026-10-11] (R61 acc4, 2026-10-10: browser credential stores) Firefox's NSS key
+                 # database. Saved passwords in `logins.json` are encrypted with it and, with no primary
+                 # password set (the default), anyone holding both files can decrypt every one; refusing
+                 # the key leaves `logins.json` ciphertext. Check 501.
+                 "key4.db", "key3.db")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
 # database at all -- it indexes source, and a .sqlite is not source. peek is asked for one file by
@@ -3369,6 +3378,34 @@ def _unmask_split_credentials(text):
     return "".join(out)
 
 
+# 🐛 [2026-10-11] (R67 acc4, 2026-10-10: VCR warns a recorded value may appear HTML- or URL-escaped)
+# A credential written through an escaping layer kept its value: `{&quot;api_key&quot;: &quot;…&quot;}`
+# in an HTML template or snapshot, and `api_key%3D…` in a logged redirect URL, were left whole, because
+# every rule anchors on a quote or separator that the escape had spelled differently. Only the quote
+# and separator escapes are undone, only on a line naming a secret word, and `scrub` keeps the result
+# only when it redacts more -- the same bargain as the two disguises above. Check 502.
+_ESCAPED_QUOTE_OR_SEPARATOR = _lazy(lambda: re.compile(
+    r"&(?:quot|apos|#0*3[49]|#x0*2[27]);|%(?:22|27|3[AaDd])"))
+_UNESCAPE = {"&quot;": '"', "&apos;": "'", "%22": '"', "%27": "'", "%3a": ":", "%3d": "="}
+
+
+def _unmask_escaped_credentials(text):
+    """`text` with the quote and separator escapes undone on each line that names a secret word."""
+    if ("&" not in text and "%" not in text) or not _ESCAPED_QUOTE_OR_SEPARATOR.search(text):
+        return text
+    lines = text.split("\n")
+    changed = False
+    for i, line in enumerate(lines):
+        if not _ESCAPED_QUOTE_OR_SEPARATOR.search(line):
+            continue
+        plain = _ESCAPED_QUOTE_OR_SEPARATOR.sub(
+            lambda m: _UNESCAPE.get(m.group(0).lower())
+            or ('"' if m.group(0).lstrip("&#xX0").startswith(("34", "22")) else "'"), line)
+        if plain != line and _SECRET_WORD_ANYWHERE.search(plain):
+            lines[i], changed = plain, True
+    return "\n".join(lines) if changed else text
+
+
 def _unmask_invisible_secret_words(text):
     """`text` with ONLY the credential words an invisible codepoint is splitting rewritten whole.
 
@@ -3551,7 +3588,7 @@ def scrub(text, windowed=True, *, _unmask=True):
         # which goes last because it is the only one that rewrites text outside a credential name.
         _src, _best = text, None
         for _undo in (_unmask_disguised_secret_words, _unmask_invisible_secret_words,
-                      _unmask_split_credentials):
+                      _unmask_escaped_credentials, _unmask_split_credentials):
             _cand = _undo(_src)
             if _cand is _src or _cand == _src:
                 continue

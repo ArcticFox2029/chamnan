@@ -21,6 +21,14 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **Firefox's key database is refused.** Saved passwords in `logins.json` are encrypted with the key in
+  `key4.db`, and with no primary password set the two files together decrypt every one. The key was
+  read like any other file; it is now refused alongside `cookies.sqlite` beside it.
+- **A credential written through HTML or URL escaping is redacted.** `{&quot;api_key&quot;: &quot;…&quot;}`
+  in a template or snapshot, and `api_key%3D…` inside a logged redirect URL, kept their values because
+  the quote or separator was spelled as an escape.
+- **A word before an HTML closing tag stays readable.** `<p>Change your password here</p>` lost the word
+  `here` as if it were the password.
 - **A misspelt Thai word is answered with the whole word.** When two stretches of a title explained the
   typo equally, `chamnan-recall` offered the shorter one, so `คอนฟิค` got `คอนฟิ` rather than `คอนฟิก`.
   The stretch closest in length to what was typed now wins.
