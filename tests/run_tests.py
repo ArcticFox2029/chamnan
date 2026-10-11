@@ -53942,7 +53942,10 @@ _hung481 = []
 _hooks481 = sorted((ROOT / "hooks").glob("chamnan_*.py"))
 for _h481 in _hooks481:
     # Output goes to DEVNULL, not an undrained PIPE: chamnan_session_start.py prints ~5.7 KB, more
-    # than a Windows pipe buffer (4 KB), so on windows-latest it blocked WRITING and was called hung.
+    # than a Windows pipe buffer (4 KB), and a hook blocked writing would read here as one blocked
+    # reading. 🐛 [2026-10-11] (self-measured, windows-latest) The hang this check then still caught
+    # on Windows was real: a child process inheriting stdin hung behind the reader's pending read
+    # (see `workspace._read_one_json_event_nt`).
     _p481 = _sp481.Popen([sys.executable, str(_h481)], stdin=_sp481.PIPE, stdout=_sp481.DEVNULL,
                          stderr=_sp481.DEVNULL, cwd=str(ROOT))
     _p481.stdin.write(_event481)

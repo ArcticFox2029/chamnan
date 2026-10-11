@@ -1892,8 +1892,71 @@ def read_hook_payload(stream=None):
 HOOK_STDIN_IDLE_SECONDS = 5.0
 
 
+def _parse_at_eof(buf, _json):
+    # End of file: the old behaviour exactly, including raising on a malformed event.
+    return _json.loads(buf.decode("utf-8", "replace") or "{}") if buf.strip() else {}
+
+
+def _could_end_json(buf):
+    # Only a buffer that could end a JSON object is worth parsing; a large event arrives in many
+    # chunks and re-parsing each prefix would be quadratic.
+    return buf.rstrip().endswith((b"}", b"]"))
+
+
+_NOT_A_PIPE = object()
+
+
+def _read_one_json_event_nt(fd, _json):
+    """Windows: the same read, by polling the pipe, so no read is left pending; `_NOT_A_PIPE` otherwise.
+
+    🐛 [2026-10-11] (self-measured, windows-latest) The thread below leaves a synchronous ReadFile
+    pending on stdin when the host keeps the pipe open. On Windows every later child that inherits
+    stdin then hangs -- `git --version` included, measured with faulthandler on the runner --
+    because I/O on one synchronous pipe is serialised behind that read. chamnan_session_start.py
+    runs git through `coedit`, so it held the session for as long as the pipe stayed open while
+    every other hook exited. PeekNamedPipe asks how much is waiting without reading, so the
+    `os.read` that follows never blocks and nothing is pending when the hook moves on. Check 481.
+    """
+    try:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+        handle = msvcrt.get_osfhandle(fd)
+        peek = ctypes.WinDLL("kernel32", use_last_error=True).PeekNamedPipe
+        peek.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p,
+                         ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+        peek.restype = wintypes.BOOL
+    except (ImportError, OSError, AttributeError, ValueError):
+        return _NOT_A_PIPE
+    avail, buf, quiet_since, first = wintypes.DWORD(), b"", time.monotonic(), True
+    while True:
+        if not peek(handle, None, 0, None, ctypes.byref(avail), None):
+            # 109 is ERROR_BROKEN_PIPE, the writer's end of file. Anything else on the first ask
+            # means stdin is not a pipe (a file, NUL), which a plain read handles without hanging.
+            if first and ctypes.get_last_error() != 109:
+                return _NOT_A_PIPE
+            return _parse_at_eof(buf, _json)
+        first = False
+        if avail.value:
+            buf += os.read(fd, min(avail.value, 65536))
+            quiet_since = time.monotonic()
+            if _could_end_json(buf):
+                try:
+                    return _json.loads(buf.decode("utf-8", "replace"))
+                except ValueError:
+                    pass
+        elif time.monotonic() - quiet_since > HOOK_STDIN_IDLE_SECONDS:
+            return {}
+        else:
+            time.sleep(0.01)
+
+
 def _read_one_json_event(fd, _json):
     """The first complete JSON value read from `fd`, without waiting for end of file."""
+    if os.name == "nt":
+        got = _read_one_json_event_nt(fd, _json)
+        if got is not _NOT_A_PIPE:
+            return got
     import queue
     import threading
     chunks = queue.Queue()
@@ -1916,12 +1979,9 @@ def _read_one_json_event(fd, _json):
         except queue.Empty:
             return {}
         if not data:
-            # End of file: the old behaviour exactly, including raising on a malformed event.
-            return _json.loads(buf.decode("utf-8", "replace") or "{}") if buf.strip() else {}
+            return _parse_at_eof(buf, _json)
         buf += data
-        # Only a buffer that could end a JSON object is worth parsing; a large event arrives in
-        # many chunks and re-parsing each prefix would be quadratic.
-        if buf.rstrip().endswith((b"}", b"]")):
+        if _could_end_json(buf):
             try:
                 return _json.loads(buf.decode("utf-8", "replace"))
             except ValueError:
