@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1351), and every one of these is on the
+[README](README.md#whats-new-in-1360), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -21,6 +21,22 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+## What's new in 1.36.0
+
+_A minor release about what reaches the session: the agent's own reads and commands now meet the same guard chamnan's commands always had, the redactor recognises secrets in the forms text actually carries them, and a long run of whitespace can no longer stall a scan._
+
+### Fixed and improved
+
+- **On Windows, a session start no longer hangs when the host leaves stdin open.** Every hook
+  already stopped reading once its event parsed, but the read it left pending made any program it
+  started afterwards hang behind it — `git` included — so the session-start hook held the session
+  while every other hook exited. The event is now read without leaving a read pending.
+- **A YAML block value in a file with Windows line ends is redacted.** `api_token: >-` or
+  `password: |` with the value on the next line was redacted only when the lines ended in LF; the
+  same file saved with CRLF, or checked out under `core.autocrlf=true`, printed the value, and the
+  commit guard passed it. This was also true in 1.35.1.
+- **A record written today reads "today" in every time zone at every hour.** In zones beyond +12 a
+  date stamped today was taken for a future date for two hours each day and left out.
 - **A saved Terraform plan is refused.** `terraform plan -out` keeps every planned value, secrets
   included, in clear inside a zip; `tfplan` and `*.tfplan` were read whole. `terraform show` still works.
 - **Podman, Helm and legacy Docker logins are refused when they hold one.** Podman's
@@ -55,7 +71,8 @@ already reports the last released number while running newer code.
   before `PWD` kept its value, and the shell's `OLDPWD`, a path, is no longer mistaken for one.
 - **A Thai word with a zero-width space in it is found by recall.** Text pasted from the web often
   carries U+200B between Thai words, and a search for the word typed without it found nothing, then
-  suggested the same word back. The index rebuilds by itself after the upgrade.
+  suggested the same word back. After the upgrade `chamnan-recall` reports its index as behind;
+  `chamnan-recall --reindex` rebuilds it.
 - **A refused key file is no longer told its variables are listed in the map.** That sentence is for
   `.env` files; a key or a credential store now gets the advice that fits it.
 - **The staged-secret warning says what to do.** It named the file and line and stopped; it now says
