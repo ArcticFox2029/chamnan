@@ -55502,6 +55502,55 @@ check("...while every duration form still parses to the same length", not _wrong
 check("...and an empty or unit-less string is still no duration",
       _sch521.parse_when("", _now521) is None and _sch521.parse_when("   ", _now521) is None
       and _sch521.parse_when("5", _now521) is None)
+# ---- 522_the_dashboard_compares_sessions_before_the_plugin_with_since.py
+# ------------------ the dashboard's opening panel compares real sessions before the plugin with those since
+# 🎯 [owner, 2026-10-12] "ต้องรับจาก การใช้งานจริง เทียบ ว่าระหว่างมีกับไม่มี" -- the panel priced only what a
+# local model read, so a repository that never used one showed 0 saved and two identical bars
+# (rancher, 2026-10). It now splits the person's own days at the first day the plugin's logs show
+# it running there, and compares weighted tokens per request on each side.
+import importlib.util as _iu522
+import json as _js522
+import tempfile as _tf522
+from pathlib import Path as _P522
+
+_spec522 = _iu522.spec_from_file_location("_bs522", ROOT / "statistic" / "build_statistic.py")
+_bs522 = _iu522.module_from_spec(_spec522)
+_spec522.loader.exec_module(_bs522)
+
+_logs522 = _P522(_tf522.mkdtemp()) / "logs"
+_logs522.mkdir()
+(_logs522 / "commands.jsonl").write_text(
+    _js522.dumps({"at": "2026-08-31T09:22:41+07:00", "kind": "command"}) + "\n"
+    + _js522.dumps({"at": "2026-09-02T10:00:00+07:00", "kind": "command"}) + "\n", encoding="utf-8")
+(_logs522 / "block_shape.jsonl").write_text(_js522.dumps({"t": "2026-09-08T08:26:07"}) + "\n",
+                                             encoding="utf-8")
+_bs522.LOGS = _logs522
+check("the plugin's first day here is the earliest record in any of its logs",
+      _bs522.plugin_since() == "2026-08-31", saw=_bs522.plugin_since())
+
+_days522 = [{"day": "2026-08-20", "requests": 10, "t_read": 1000, "t_write": 100, "t_new": 1, "t_out": 50},
+            {"day": "2026-08-30", "requests": 5, "t_read": 400, "t_write": 40, "t_new": 1, "t_out": 20},
+            {"day": "2026-08-31", "requests": 8, "t_read": 700, "t_write": 60, "t_new": 1, "t_out": 30},
+            {"day": "2026-09-05", "requests": 0, "t_read": 0, "t_write": 0, "t_new": 0, "t_out": 0}]
+_c522 = _bs522.compare(_days522)
+check("...days before it are the sessions without the plugin, that day and after are with it",
+      _c522["since"] == "2026-08-31"
+      and _c522["without"].get("requests") == 15 and _c522["without"].get("t_read") == 1400
+      and _c522["without"].get("days") == 2
+      and _c522["with"].get("requests") == 8 and _c522["with"].get("days") == 1,
+      saw=_c522)
+_empty522 = _P522(_tf522.mkdtemp()) / "logs"
+_empty522.mkdir()
+_bs522.LOGS = _empty522
+_n522 = _bs522.compare(_days522)
+check("...and a repository whose logs are empty has nothing before to compare with, so all of it is with",
+      _n522["since"] is None and not _n522["without"].get("requests") and _n522["with"].get("requests") == 23,
+      saw=_n522)
+
+_page522 = (ROOT / "statistic" / "report" / "index.html").read_text(encoding="utf-8")
+_hero522 = _page522[_page522.index("const H = S.hero"):_page522.index("/* ---- what kind of tokens")]
+check("the opening panel is drawn from the comparison, not from what a local model read",
+      "S.compare" in _hero522 and "local_chars" not in _hero522, saw=_hero522[:200])
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
