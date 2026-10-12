@@ -46,7 +46,7 @@ const perReq = (side) => {
 const withPer = perReq("with");
 const withoutPer = perReq("without");
 const withPlugin = weighted(row, R);
-const hasBoth = withPer !== null && withoutPer !== null;
+const hasBoth = withPer !== null && withoutPer !== null && C.enough !== false;
 const without = hasBoth ? Math.round((row.requests || 0) * withoutPer) : withPlugin;
 const savedTok = without - withPlugin;
 const saved = pct(Math.abs(savedTok), without || 1);
@@ -58,7 +58,8 @@ M.append(hero(
     label: hasBoth
       ? (savedTok >= 0 ? T("tokens saved by having the plugin", "โทเค็นที่ประหยัดได้เพราะมีปลั๊กอิน")
                        : T("tokens more than before the plugin", "โทเค็นที่ใช้มากกว่าก่อนมีปลั๊กอิน"))
-      : T("no session before the plugin to compare with", "ยังไม่มี session ก่อนมีปลั๊กอินให้เทียบ"),
+      : (W.requests ? T("too little before the plugin to compare", "ช่วงก่อนมีปลั๊กอินมีข้อมูลน้อยเกินจะเทียบ")
+                    : T("no session before the plugin to compare with", "ยังไม่มี session ก่อนมีปลั๊กอินให้เทียบ")),
     sub: hasBoth ? T(`${saved.toFixed(2)}% of what ${row[key] || "—"} would have weighed without it`,
                      `คิดเป็น ${saved.toFixed(2)}% ของที่ ${row[key] || "—"} จะใช้ถ้าไม่มีปลั๊กอิน`) : "" },
   hasBoth ? [
@@ -79,11 +80,18 @@ M.append(hero(
       + "the model, is in the numbers too.",
       "ทั้งสองช่วงคือ session จริงของ repo นี้ ถ่วงน้ำหนักแบบเดียวกัน (cached read 0.1 เท่า, cache "
       + "write 1.25 เท่า, output 5 เท่า) · สิ่งอื่นที่เปลี่ยนระหว่างสองช่วง เช่น งานหรือโมเดล ก็อยู่ในตัวเลขด้วย"),
+  ] : (W.requests ? [
+    T(`Before the plugin there are only ${n(W.requests)} requests over ${n(W.days)} day(s), and with it `
+      + `${n(Wi.requests || 0)} over ${n(Wi.days || 0)}; a comparison needs at least `
+      + `${n((C.min || {}).requests)} requests over ${n((C.min || {}).days)} days on each side.`,
+      `ช่วงก่อนมีปลั๊กอินมีแค่ ${n(W.requests)} requests ใน ${n(W.days)} วัน และช่วงที่มีปลั๊กอิน `
+      + `${n(Wi.requests || 0)} requests ใน ${n(Wi.days || 0)} วัน · การเทียบต้องมีอย่างน้อย `
+      + `${n((C.min || {}).requests)} requests ใน ${n((C.min || {}).days)} วัน ทั้งสองฝั่ง`),
   ] : [
     T(`Every recorded session in this repository ran with the plugin (since ${C.since || "—"}), so there `
       + "is no before to measure against.",
       `ทุก session ที่บันทึกไว้ของ repo นี้มีปลั๊กอินอยู่แล้ว (ตั้งแต่ ${C.since || "—"}) จึงไม่มีช่วงก่อนให้เทียบ`),
-  ],
+  ]),
   [
     { label: T("with the plugin", "เมื่อมีปลั๊กอิน"), value: withPlugin, colour: PAL[2],
       text: n(withPlugin) },

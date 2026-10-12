@@ -1330,7 +1330,19 @@ def compare(days, since=None):
                 sums.update({k: int(row.get(k) or 0) for k in keys})
                 n += 1
         out[side] = dict(sums, days=n)
+    # 🐛 [2026-10-12] (self-measured) On the owner's Network repository the side before the plugin
+    # was one day of 10 requests, and the panel printed "398% more" from it. A comparison is shown
+    # only when each side has at least COMPARE_MIN_REQUESTS requests over COMPARE_MIN_DAYS days;
+    # otherwise the page says how little there is. The floor is low on purpose: the cost of a
+    # wrong headline is a reader trusting it, and the smallest real side seen here was 2,296.
+    out["min"] = {"requests": COMPARE_MIN_REQUESTS, "days": COMPARE_MIN_DAYS}
+    out["enough"] = all(out[s].get("requests", 0) >= COMPARE_MIN_REQUESTS
+                        and out[s].get("days", 0) >= COMPARE_MIN_DAYS for s in ("without", "with"))
     return out
+
+
+COMPARE_MIN_REQUESTS = 100
+COMPARE_MIN_DAYS = 3
 
 
 # ---------------------------------------------------------------- writing

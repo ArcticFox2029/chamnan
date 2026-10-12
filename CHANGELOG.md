@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard shows a before-and-since comparison only when both sides have enough to compare.**
+  One repository had a single day of 10 requests from before the plugin, and the panel printed
+  "398% more" from it. Each side now needs at least 100 requests over 3 days; below that the panel
+  says how much there is. The README's dashboard pictures are recaptured from the new pages.
+
 ## What's new in 1.36.1
 
 _A patch on top of 1.36.0: two fixes found by testing it against other tools in its space, and a dashboard that answers its first question with real usage._

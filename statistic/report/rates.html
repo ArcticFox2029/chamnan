@@ -31,7 +31,7 @@ function recompute() {
   const R = rates();
   const C = S.compare || {};
   const per = (x) => (x && x.requests) ? weighted(x, R) / x.requests : null;
-  const withoutPer = per(C.without);
+  const withoutPer = C.enough === false ? null : per(C.without);
   const withPlugin = weighted(row, R);
   const without = withoutPer === null ? withPlugin : Math.round((row.requests || 0) * withoutPer);
   const avoided = without - withPlugin;

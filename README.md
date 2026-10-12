@@ -621,17 +621,17 @@ file each one reads. It rebuilds itself at the end of every session, into your r
 
 **The pictures below come from the repository chamnan is built in, not from a typical one.** The
 same files there are read again and again, and most of its tokens go into research rounds — reading
-outside work to find ideas and things worth fixing in chamnan. That is why its headline is small:
-0.42% in the month shown. Yours will be different, in either direction, and the page shows your
-own figure rather than this one.
+outside work to find ideas and things worth fixing in chamnan. In the month shown its sessions used
+11.9% fewer weighted tokens per request than before the plugin arrived. Yours will be different, in
+either direction, and the page shows your own figure rather than this one.
 
 <img src="docs/dashboard/1-impact-hero.png" alt="The impact page: tokens saved by having the plugin, what kind of token each one was, what the repository puts in front of a session, and what the plugin did that would not have happened otherwise." width="100%">
 
-The headline counts what a local model read instead of the session — where your own tooling runs
-one and records it; the plugin does not call a model itself — weighted the way a cache write is
-weighted. How much of that the session would otherwise have read itself is not something the
-plugin can know, so it is a setting, not a finding: page 4 is where you set it, and the headline
-follows.
+The headline compares your own sessions: the days before the plugin first ran in the repository
+against the days since, each as weighted tokens per request, with the chosen month priced at both
+rates. It is real usage rather than a model of it, so it also carries whatever else changed between
+the two periods, such as the work or the model, and the page says so beside it. A repository with
+too little history from before the plugin shows no figure, and says how much there is.
 
 | | |
 |---|---|
