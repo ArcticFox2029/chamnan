@@ -21,6 +21,9 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **A schedule time followed by a long run of spaces is answered at once.** `chamnan-schedule`
+  given a duration with 100 spaces before a stray character took over a second, and 200 took more
+  than 20; it now takes milliseconds at 5,000.
 - **A macOS in-place `sed` edit is no longer refused for what its script says.** In
   `sed -i '' 's/…/…/' notes.md` the empty backup suffix was taken for the script, and the script for
   a file; one ending in something like `.env/` was refused as a read of `.env`.

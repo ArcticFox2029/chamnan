@@ -47,7 +47,11 @@ BUFFER_SECONDS = 120
 # package starts is bounded, and a check asserts the population rather than each call site.
 JOB_TIMEOUT = 6 * 60 * 60
 
-_DURATION = re.compile(r"\A\s*(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?\s*\Z",
+# 🐛 [2026-10-12] (self-measured) Five `\s*` could all claim one run of spaces whenever the unit groups
+# between them were absent, so 100 spaces before a stray character took 1.2 s and 200 took more
+# than 20. Each run has one owner now -- the leading `\s*`, or the trailing one inside the unit it
+# follows -- and every group starts with a digit, so nothing else can take a space. Check 521.
+_DURATION = re.compile(r"\A\s*(?:(\d+)\s*d\s*)?(?:(\d+)\s*h\s*)?(?:(\d+)\s*m\s*)?(?:(\d+)\s*s\s*)?\Z",
                        re.I)
 _CLOCK = re.compile(r"\A\s*(\d{1,2})[:.](\d{2})\s*(am|pm)?\s*\Z", re.I)
 
