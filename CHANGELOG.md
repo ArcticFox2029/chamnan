@@ -21,6 +21,11 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+- **The dashboard compares your own sessions before the plugin with those since.** Its opening
+  panel priced only what a local model read, so a repository that never used one showed 0 saved
+  and two identical bars. It now splits this repository's days at the first day the plugin's logs
+  show it running, compares weighted tokens per request on each side, and prices the chosen
+  month at both rates. Page 4 shows the same comparison.
 - **A schedule time followed by a long run of spaces is answered at once.** `chamnan-schedule`
   given a duration with 100 spaces before a stray character took over a second, and 200 took more
   than 20; it now takes milliseconds at 5,000.

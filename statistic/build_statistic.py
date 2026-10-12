@@ -1281,6 +1281,58 @@ def security():
     return {"families": fams, "blind": blind, "total": len(pats), "measured": _recall()}
 
 
+# ---------------------------------------------------------------- with the plugin, and before it
+
+def plugin_since():
+    """The first day this workspace's logs show the plugin at work, or None.
+
+    The earliest record in any of its logs. Every log here is written by the plugin's own hooks
+    and commands, so a day before the first record is a day the plugin was not running in this
+    repository. Logs are appended in time order, so each file's first readable record is its
+    earliest.
+    """
+    first = []
+    for path in sorted(LOGS.glob("*.jsonl")) if LOGS.is_dir() else []:
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict) and day_of(rec):
+                        first.append(day_of(rec))
+                        break
+        except OSError:
+            continue
+    return min(first) if first else None
+
+
+def compare(days, since=None):
+    """Real usage before the plugin arrived and since, from the transcripts' own usage blocks.
+
+    🎯 [owner, 2026-10-12] *"ต้องรับจาก การใช้งานจริง เทียบ ว่าระหว่างมีกับไม่มี"* — the opening
+    panel counted only what a local model read, so a repository that never used one showed 0
+    saved and two identical bars. The comparison it asked for is the person's own sessions: the
+    days before the plugin ran here against the days since, each reduced to tokens per request
+    so a busy week and a quiet one weigh the same. Same person, same repository, measured.
+    What it cannot separate is everything else that changed between the two periods — the work,
+    the model, the host — and the panel says so.
+    """
+    since = since or plugin_since()
+    keys = ("requests", "t_read", "t_write", "t_new", "t_out")
+    out = {"since": since}
+    for side, pick in (("without", lambda d: since and d < since), ("with", lambda d: not since or d >= since)):
+        sums = collections.Counter()
+        n = 0
+        for row in days:
+            if pick(row.get("day") or "") and row.get("requests"):
+                sums.update({k: int(row.get(k) or 0) for k in keys})
+                n += 1
+        out[side] = dict(sums, days=n)
+    return out
+
+
 # ---------------------------------------------------------------- writing
 
 def build():
@@ -1289,7 +1341,8 @@ def build():
         "repo": ROOT.name,
         "hero": hero(),
         "impact": impact(),
-        "series": series(),
+        "series": (_series := series()),
+        "compare": compare(_series.get("days") or []),
         "token_kinds": token_kinds(),
         "context_parts": context_parts(),
         "by_hour": by_hour(),

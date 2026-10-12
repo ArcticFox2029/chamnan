@@ -33,52 +33,57 @@ const key = P.grain === "day" ? "day" : "month";
 const H = S.hero || {};
 const R = rates();
 const cpt = H.chars_per_token || 3.8;
-const CF = counterfactual();
-/* 🔴 Not every character a local model read would have been read without the plugin. `CF` is the
-   share that really would have been — the owner's own estimate, shipped at a quarter, tunable on
-   page 4, and stated on the panel rather than buried in this file. */
-const readTok = Math.round((row.local_chars || 0) / cpt);
-const avoidedTok = Math.round(readTok * CF);
+/* 🎯 [owner, 2026-10-12] "ต้องรับจาก การใช้งานจริง เทียบ ว่าระหว่างมีกับไม่มี" — this panel counted only
+   what a local model read, so a repository that never used one read 0 saved with two identical
+   bars. It now compares the person's own sessions in this repository: the days before the plugin
+   first ran here against the days since, each as weighted tokens per request so a busy week and a
+   quiet one weigh the same. The chosen period is then priced at both rates. */
+const C = S.compare || {};
+const perReq = (side) => {
+  const x = C[side] || {};
+  return x.requests ? weighted(x, R) / x.requests : null;
+};
+const withPer = perReq("with");
+const withoutPer = perReq("without");
 const withPlugin = weighted(row, R);
-const rawTotal = RATE_KEYS.reduce((a, k) => a + (row[k] || 0), 0);
-const avoidedWeight = avoidedTok * (H.avoided_weight ?? R.t_write);
-const without = withPlugin + avoidedWeight;
-const saved = pct(avoidedWeight, without || 1);
-/* 🐛 [2026-09-23, owner] Both bars printed "4.1B" and were drawn the same length, so the chart
-   read as broken. Printing the counts in full fixed the collision and replaced it with two
-   ten-digit numbers nobody can diff by eye — "ปรับบริบท ให้อัตราหลอดมีความต่างของ % การใช้งาน
-   ไม่วัดที่จำนวน".
-
-   A share (100% / 99.98%) was tried next and the owner's answer was that the real figure is
-   clearer. 🔴 The label was never the problem — the
-   TRACK was, and `hero()` now zooms its baseline when the gap is too small to draw, and says so
-   on the panel. So the label is the real number again. */
+const hasBoth = withPer !== null && withoutPer !== null;
+const without = hasBoth ? Math.round((row.requests || 0) * withoutPer) : withPlugin;
+const savedTok = without - withPlugin;
+const saved = pct(Math.abs(savedTok), without || 1);
+const change = hasBoth ? pct(withoutPer - withPer, withoutPer) : 0;
+const fewer = change >= 0;
+const W = C.without || {}, Wi = C.with || {};
 M.append(hero(
-  { value: short(avoidedWeight),
-    label: T("tokens saved by having the plugin",
-             "โทเค็นที่ประหยัดได้เพราะมีปลั๊กอิน"),
-    sub: T(`${saved.toFixed(2)}% of everything ${row[key] || "—"} carried`,
-           `คิดเป็น ${saved.toFixed(2)}% ของทั้งช่วง ${row[key] || "—"}`) },
-  [
-    T(`In ${row[key] || "—"}, a local model read ${n(row.local_chars || 0)} characters instead `
-      + `of the session — about ${n(readTok)} tokens.`,
-      `ใน ${row[key] || "—"} โมเดลในเครื่องอ่านแทน session ไป ${n(row.local_chars || 0)} ตัวอักษร ≈ ${n(readTok)} โทเค็น`),
-    /* 🎯 [2026-09-25] (owner) A sentence here said that only 25% of what the local model read
-       would really have been read without the plugin. How much a person would have read differs
-       from one person to the next, so the page does not state a share as fact. The value is still
-       applied, and page 4 is where it is set. */
-    T(`Weighted the way a cache write is weighted, that is ${n(avoidedWeight)} tokens saved.`,
-      `ถ่วงน้ำหนักแบบ cache write แล้ว เท่ากับประหยัดได้ ${n(avoidedWeight)} โทเค็น`),
-    /* 🐛 [2026-09-24, owner] the bars are WEIGHTED
-       totals and nothing on the page said so, while the panels below printed raw and lifetime
-       counts. This sentence is the bridge from one to the other. */
-    T(`The bars are weighted: ${row[key] || "—"} carried ${n(rawTotal)} tokens, and weighting each `
-      + `kind (a cached read 0.1x, a cache write 1.25x, output 5x) makes that ${n(withPlugin)}.`,
-      `แท่งด้านล่างคิดแบบถ่วงน้ำหนัก · ${row[key] || "—"} ใช้ไปจริง ${n(rawTotal)} โทเค็น `
-      + `ถ่วงตามชนิด (cached read 0.1 เท่า, cache write 1.25 เท่า, output 5 เท่า) ได้ ${n(withPlugin)}`),
+  { value: hasBoth ? (savedTok < 0 ? "−" : "") + short(Math.abs(savedTok)) : "—",
+    label: hasBoth
+      ? (savedTok >= 0 ? T("tokens saved by having the plugin", "โทเค็นที่ประหยัดได้เพราะมีปลั๊กอิน")
+                       : T("tokens more than before the plugin", "โทเค็นที่ใช้มากกว่าก่อนมีปลั๊กอิน"))
+      : T("no session before the plugin to compare with", "ยังไม่มี session ก่อนมีปลั๊กอินให้เทียบ"),
+    sub: hasBoth ? T(`${saved.toFixed(2)}% of what ${row[key] || "—"} would have weighed without it`,
+                     `คิดเป็น ${saved.toFixed(2)}% ของที่ ${row[key] || "—"} จะใช้ถ้าไม่มีปลั๊กอิน`) : "" },
+  hasBoth ? [
+    T(`Before the plugin (before ${C.since}): ${n(Math.round(withoutPer))} weighted tokens per request, `
+      + `${n(W.requests)} requests over ${n(W.days)} days.`,
+      `ก่อนมีปลั๊กอิน (ก่อน ${C.since}): เฉลี่ย ${n(Math.round(withoutPer))} โทเค็นต่อ request `
+      + `จาก ${n(W.requests)} requests ใน ${n(W.days)} วัน`),
+    T(`With it: ${n(Math.round(withPer))} per request, ${n(Wi.requests)} requests over ${n(Wi.days)} days — `
+      + `${Math.abs(change).toFixed(1)}% ${fewer ? "fewer" : "more"}.`,
+      `เมื่อมีปลั๊กอิน: ${n(Math.round(withPer))} ต่อ request จาก ${n(Wi.requests)} requests ใน ${n(Wi.days)} วัน `
+      + `— ${fewer ? "น้อยลง" : "มากขึ้น"} ${Math.abs(change).toFixed(1)}%`),
+    T(`${row[key] || "—"} made ${n(row.requests || 0)} requests: ${n(withPlugin)} weighted tokens, `
+      + `against ${n(without)} at the rate from before the plugin.`,
+      `${row[key] || "—"} มี ${n(row.requests || 0)} requests ใช้ไป ${n(withPlugin)} โทเค็น (ถ่วงน้ำหนัก) `
+      + `เทียบกับ ${n(without)} ถ้าใช้อัตราช่วงก่อนมีปลั๊กอิน`),
+    T("Both are this repository's own sessions, weighted the same way (a cached read 0.1x, a cache "
+      + "write 1.25x, output 5x); what else changed between the two periods, such as the work or "
+      + "the model, is in the numbers too.",
+      "ทั้งสองช่วงคือ session จริงของ repo นี้ ถ่วงน้ำหนักแบบเดียวกัน (cached read 0.1 เท่า, cache "
+      + "write 1.25 เท่า, output 5 เท่า) · สิ่งอื่นที่เปลี่ยนระหว่างสองช่วง เช่น งานหรือโมเดล ก็อยู่ในตัวเลขด้วย"),
+  ] : [
+    T(`Every recorded session in this repository ran with the plugin (since ${C.since || "—"}), so there `
+      + "is no before to measure against.",
+      `ทุก session ที่บันทึกไว้ของ repo นี้มีปลั๊กอินอยู่แล้ว (ตั้งแต่ ${C.since || "—"}) จึงไม่มีช่วงก่อนให้เทียบ`),
   ],
-  /* 🎯 [owner, 2026-09-23] the
-     row the page is about goes first, and the baseline sits under it to be measured against. */
   [
     { label: T("with the plugin", "เมื่อมีปลั๊กอิน"), value: withPlugin, colour: PAL[2],
       text: n(withPlugin) },
@@ -125,9 +130,6 @@ M.append(panel(`what kind of tokens ${row[key] || "—"} carried, and what each 
        on an assumption the page never named. */
     el("p", { class: "src", style: "margin:8px 0 0" },
       T(H.rates_note || "", H.rates_note_th || "")),
-    el("p", { class: "src", style: "margin:6px 0 0" },
-      `${(CF * 100).toFixed(0)}% · `
-      + T(H.counterfactual_note || "", H.counterfactual_note_th || "")),
   ]));
 
 /* ---- what the repository itself puts in front of every session */

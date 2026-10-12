@@ -26,12 +26,15 @@ const preview = el("div", { class: "grid2" });
 const fields = {};
 
 function recompute() {
-  const R = rates(), CF = counterfactual();
-  const cpt = H.chars_per_token || 3.8;
-  const readTok = Math.round((row.local_chars || 0) / cpt);
-  const avoided = Math.round(readTok * CF) * (H.avoided_weight ?? R.t_write);
+  /* 🎯 [owner, 2026-10-12] The same comparison page 1 draws: this repository's sessions before the
+     plugin first ran here, priced per request, against the chosen period as it was. */
+  const R = rates();
+  const C = S.compare || {};
+  const per = (x) => (x && x.requests) ? weighted(x, R) / x.requests : null;
+  const withoutPer = per(C.without);
   const withPlugin = weighted(row, R);
-  const without = withPlugin + avoided;
+  const without = withoutPer === null ? withPlugin : Math.round((row.requests || 0) * withoutPer);
+  const avoided = without - withPlugin;
   preview.textContent = "";
   preview.append(
     stat(`${pct(avoided, without || 1).toFixed(2)}%`,
@@ -72,23 +75,6 @@ M.append(panel("what a token is weighted at", "ถ่วงน้ำหนัก
       T("multiples of one ordinary input token. Set them to the ratios of the model you actually "
         + "run — the shipped numbers are a middle value, not a claim about your bill.",
         "เป็นตัวคูณเทียบกับ input ธรรมดา 1 โทเค็น · ตั้งให้ตรงกับโมเดลที่คุณใช้จริงได้เลย ค่าที่มาให้เป็นค่ากลาง ไม่ใช่บิลของคุณ")),
-  ], { wide: true }));
-
-M.append(panel("how much of it would have been read anyway",
-  "ถ้าไม่มีปลั๊กอิน จะมีการอ่านจริงกี่ %",
-  "hero.counterfactual",
-  [
-    el("p", { class: "src", style: "margin:0 0 14px" },
-      T(H.counterfactual_note || "", H.counterfactual_note_th || "")),
-    numberRow("share that would really have been read", "สัดส่วนที่จะถูกอ่านจริง",
-      counterfactual(), 0.05, 1, (v) => setCounterfactual(v)),
-    el("p", { class: "note" },
-      T("1.00 means every character a local model read would have been read anyway — the most "
-        + "generous reading of the plugin. 0.00 means none of it would, and the plugin saved "
-        + "nothing at all. The shipped 0.25 is a starting value, not a measurement: set the one "
-        + "that matches how you work.",
-        "1.00 = ทุกตัวอักษรจะถูกอ่านอยู่ดี (เข้าข้างปลั๊กอินที่สุด) · 0.00 = ไม่มีอะไรถูกอ่านเลย ปลั๊กอินไม่ได้ช่วยอะไร · "
-        + "0.25 เป็นค่าเริ่มต้น ไม่ใช่ค่าที่วัดได้ · ตั้งให้ตรงกับการใช้งานของคุณ")),
   ], { wide: true }));
 
 M.append(panel("what that does to the headline", "ผลต่อตัวเลขหน้าแรก",
