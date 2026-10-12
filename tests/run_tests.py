@@ -55445,6 +55445,63 @@ check("...and the commit guard names a staged CRLF value whose key sits on an un
       "block.yml" in _out519.stderr and _v519 not in _out519.stderr + _out519.stdout,
       saw=_out519.stderr[-300:])
 _sh519.rmtree(_d519, ignore_errors=True)
+# ---- 520_a_bsd_sed_backup_suffix_is_not_the_program.py
+# ------------------ `sed -i ''` (BSD/macOS) keeps its script as the program, not as a file to refuse
+# 🐛 [2026-10-12] (self-measured) The guard's own release session hit it: `sed -i '' 's/a \.env/b/' x.md`
+# was refused as a read of `.env`. BSD sed takes the backup suffix as the next word, and the empty
+# one is how every macOS in-place edit is written; `_file_args` took that `''` for the program, so
+# the real script was judged as a file, and a script whose last segment looked like `.env` was a
+# credential. A file argument that really is one is still refused.
+import importlib as _il520
+
+_vault520 = _il520.import_module("vault")
+_ok520 = ["sed -i '' 's/or < file on a real \\.env/or < file on a .env/' posts/x.md",
+          "sed -i '' -e 's/id_rsa/key/' notes.md",
+          "sed -i '' 's/a/b/' notes.md"]
+_wrong520 = [c for c in _ok520 if _vault520.bash_reads(c)]
+check("a BSD `sed -i ''` edit whose script names a credential file is not refused", not _wrong520,
+      saw=_wrong520)
+_still520 = ["sed -i '' 's/a/b/' .env", "sed -n p .env", "sed 's/a/b/' .env"]
+_missed520 = [c for c in _still520 if not _vault520.bash_reads(c)]
+check("...while sed given a real credential file as its file is still refused", not _missed520,
+      saw=_missed520)
+# ---- 521_a_duration_with_long_whitespace_does_not_hang.py
+# ------------------ a schedule duration followed by a long run of whitespace is answered at once
+# 🐛 [2026-10-12] (self-measured) Found by the four-plugin comparison's Python ReDoS probe:
+# `schedule._DURATION` had five `\s*` that could all claim the same run of spaces when the unit
+# groups between them were absent, so `parse_when(" " * 100 + "!")` took 1.2 s and 200 spaces took
+# more than 20 s. Each run now has one owner: the leading `\s*`, or the trailing one inside the unit
+# group it follows. Timed in a child process so a hang fails the check instead of the suite.
+import subprocess as _sp521
+
+_src521 = (
+    "import sys, time\n"
+    "sys.path.insert(0, %r)\n"
+    "import schedule\n"
+    "worst = 0.0\n"
+    "for text in (' ' * 5000 + '!', '5d' + ' ' * 5000 + 'x', '1d ' + '\\t' * 5000 + '?'):\n"
+    "    t = time.perf_counter(); schedule.parse_when(text); worst = max(worst, time.perf_counter() - t)\n"
+    "print(worst)\n") % str(ROOT / "lib")
+try:
+    _r521 = _sp521.run([sys.executable, "-c", _src521], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+    _worst521 = float(_r521.stdout.strip() or "inf")
+except _sp521.TimeoutExpired:
+    _worst521 = float("inf")
+check("a duration followed by 5,000 spaces or tabs is parsed in well under a second",
+      _worst521 < 0.5, saw=_worst521)
+
+import schedule as _sch521
+from datetime import datetime as _dt521, timezone as _tz521
+_now521 = _dt521(2026, 10, 12, 12, 0, tzinfo=_tz521.utc)
+_cases521 = {"5d": 5 * 86400, "3h": 3 * 3600, "1d 2h": 93600, "  2h 30m ": 9000, "1d2h3m4s": 93784,
+             "45s": 45, "10 m": 600}
+_wrong521 = {t: (_sch521.parse_when(t, _now521) - _now521).total_seconds() if _sch521.parse_when(t, _now521) else None
+             for t in _cases521}
+_wrong521 = {t: v for t, v in _wrong521.items() if v != _cases521[t]}
+check("...while every duration form still parses to the same length", not _wrong521, saw=_wrong521)
+check("...and an empty or unit-less string is still no duration",
+      _sch521.parse_when("", _now521) is None and _sch521.parse_when("   ", _now521) is None
+      and _sch521.parse_when("5", _now521) is None)
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
