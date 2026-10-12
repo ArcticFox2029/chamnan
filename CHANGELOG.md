@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1360), and every one of these is on the
+[README](README.md#whats-new-in-1361), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -20,6 +20,12 @@ already reports the last released number while running newer code.
 ---
 
 ## Unreleased
+
+## What's new in 1.36.1
+
+_A patch on top of 1.36.0: two fixes found by testing it against other tools in its space, and a dashboard that answers its first question with real usage._
+
+### Fixed and improved
 
 - **The dashboard compares your own sessions before the plugin with those since.** Its opening
   panel priced only what a local model read, so a repository that never used one showed 0 saved

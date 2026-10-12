@@ -122,7 +122,7 @@ fails when it and the code disagree.</sub>
 **Start here** — [Features, by what you are trying to do](#features-by-what-you-are-trying-to-do) ·
 [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.36.0](#whats-new-in-1360) ·
+[What's new in 1.36.1](#whats-new-in-1361) ·
 [The dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
@@ -645,28 +645,22 @@ follows.
 No money and no model names appear on any page, because the plugin does not know which model you
 run and a price printed against the wrong one is worse than no price at all.
 
-## What's new in 1.36.0
+## What's new in 1.36.1
 
-_A minor release — the full list is in [CHANGELOG.md](CHANGELOG.md)._
+_A patch on top of 1.36.0 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
 
-**The agent's own reads now meet the guard.** chamnan's commands always refused a `.env`, a key or a
-kubeconfig; the agent's Read tool, a shell `cat`, `grep` or `< file`, and PowerShell did not. They
-are refused now, before they run, with the way to use the file without printing it.
+**The dashboard compares your own sessions before the plugin with those since.** The opening panel
+splits a repository's days at the first day the plugin's logs show it running, compares weighted
+tokens per request on each side, and prices the chosen month at both rates. It used to price only
+what a local model read, so a repository that never used one showed nothing saved.
 
-**More of the places a credential lives are recognised.** Command histories, agent tools' sign-in
-files, MCP and package-registry configs, cloud and Kubernetes token caches, Terraform state and saved
-plans, shell start-up files and direnv's `.envrc` are refused when they really hold a secret, and
-files that hold only settings stay readable. Commands that print every secret at once —
-`printenv` with no name, `git credential fill`, `docker compose config` — are refused with the
-narrower command that still works.
+**Two fixes found by testing 1.36.0 against other tools in its space.** A macOS in-place edit,
+`sed -i '' 's/…/…/' file`, whose script named a credential file was refused as a read of it; it
+runs now, and a credential file given to `sed` as its file is still refused. A `chamnan-schedule`
+duration with a long run of spaces took seconds to parse; it takes milliseconds.
 
-**The redactor reads secrets in the forms text carries them** — escaped in HTML or a URL, split by
-an invisible character, repeated away from their name, in a SQL dump, a cookie string, a private key
-with its armour stripped, and a value named on another line, in files with Windows line ends too.
-
-**Smaller things:** a long run of whitespace no longer stalls a scan, a hook no longer waits on an
-input pipe the host left open, recall finds a note by what it says and handles Thai typos and
-zero-width spaces, and `.geminiignore` and `.claudeignore` keep a file out of the map.
+The 1.36.0 release — the agent's own reads meeting the guard, and the redactor reading secrets in
+the forms text carries them — is described in [CHANGELOG.md](CHANGELOG.md).
 
 ## Bootstrap does not rewrite your code
 
