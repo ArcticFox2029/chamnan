@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1362), and every one of these is on the
+[README](README.md#whats-new-in-1363), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -20,6 +20,22 @@ already reports the last released number while running newer code.
 ---
 
 ## Unreleased
+
+## What's new in 1.36.3
+
+_A patch on top of 1.36.2: a conversation left open overnight now asks to hand off at its first message._
+
+### Fixed and improved
+
+- **The first message after a night, in a window left open, asks whether to hand off and clear.**
+  1.36.2 handed off a conversation resumed after a night, but a window left open overnight starts
+  nothing: the next morning's message goes straight in, no session-start hook fires, and every
+  request from then on re-sends the whole conversation. That was 5 of 31 measured nights in one
+  repository. A new `UserPromptSubmit` hook applies the same rule (a new date and eight hours or
+  more since the last reply), writes the handoff, and tells the session to ask in one line whether
+  to hand off and `/clear` before it starts on the message. "No" carries on and is not asked
+  again. Outside a chamnan workspace it still asks and writes nothing. It is silent within a
+  sitting, for `claude -p` dispatches, and after a resume that was already handed off.
 
 ## What's new in 1.36.2
 
