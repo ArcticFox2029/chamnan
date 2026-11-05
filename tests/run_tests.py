@@ -55660,6 +55660,40 @@ check("writing a new handoff releases it for the next conversation",
       not _taken523.exists() and "fix the ingress" in _ho523.pending(_repo523, _OTHER523))
 check("chamnan-open's own handoffs still say chamnan-open wrote them",
       _ho523.BY_OPEN in _ho523.handoff_text("x", _tr523, None, "why"))
+
+# A launcher that pins one conversation id (the owner's clink and VS Code wrapper) sets the old
+# transcript aside and CREATES the same id again. That startup is a new conversation with the old
+# id, and it must take the note; a compaction of the old conversation under that id must not.
+_ho523.write_handoff(_repo523, _OLD523, _tr523, None, "pinned id set aside", by=_ho523.BY_HOOK)
+check("a compaction of the conversation the note came from still does not take it",
+      _TITLE523 not in _fire523("compact", _OLD523) and not _taken523.exists())
+_s523b = _section523(_fire523("startup", _OLD523))
+check("A PINNED ID CREATED AGAIN STARTS FROM THE HANDOFF, THOUGH THE ID IS THE SAME",
+      "fix the ingress" in _s523b and _taken523.read_text(encoding="utf-8").strip() == _OLD523)
+check("...and keeps it across its own compaction", _section523(_fire523("compact", _OLD523)) == _s523b)
+# ---- 524_a_guard_refusal_is_not_counted_as_a_hook_crash.py
+# ------------------ a guard refusal is not counted as a hook crash
+# 🐛 [2026-11-05] (dogfood, owner: "เช็คการใช้งานที่ผ่านมา ทุก folder") `chamnan_skill_pointer` runs the
+# bulk-read module and indexes its output for `additionalContext`. A refusal carries
+# `permissionDecision` instead, so every refusal raised a KeyError that `record_swallowed` counted
+# in logs/hook_errors.jsonl: 11 of the 25 "crashes" recorded in Lumin-App and rancher over a month.
+import importlib.util as _iu524, tempfile as _tf524                                # noqa: E402
+_spec524 = _iu524.spec_from_file_location("_sp524", ROOT / "hooks" / "chamnan_skill_pointer.py")
+_sp524 = _iu524.module_from_spec(_spec524)
+_spec524.loader.exec_module(_sp524)
+_n524 = []
+_orig524 = _sp524.ws.record_swallowed
+_sp524.ws.record_swallowed = lambda: _n524.append(1)
+try:
+    _d524 = _tf524.mkdtemp(prefix="chamnan-refusal-")
+    _said524 = _sp524._long_read_notice({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                         "tool_input": {"command": "env"}, "cwd": _d524,
+                                         "session_id": "s524"})
+finally:
+    _sp524.ws.record_swallowed = _orig524
+check("a refusal passed through the skill pointer adds no notice of its own", _said524 == "",
+      saw=_said524)
+check("A REFUSAL IS NOT RECORDED AS A HOOK CRASH", not _n524, saw=len(_n524))
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
