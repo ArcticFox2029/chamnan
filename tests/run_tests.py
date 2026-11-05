@@ -55673,7 +55673,7 @@ check("A PINNED ID CREATED AGAIN STARTS FROM THE HANDOFF, THOUGH THE ID IS THE S
 check("...and keeps it across its own compaction", _section523(_fire523("compact", _OLD523)) == _s523b)
 # ---- 524_a_guard_refusal_is_not_counted_as_a_hook_crash.py
 # ------------------ a guard refusal is not counted as a hook crash
-# 🐛 [2026-11-05] (dogfood, owner: "เช็คการใช้งานที่ผ่านมา ทุก folder") `chamnan_skill_pointer` runs the
+# 🐛 [2026-11-05] (self-measured) Found checking a month of use, which the owner asked for. `chamnan_skill_pointer` runs the
 # bulk-read module and indexes its output for `additionalContext`. A refusal carries
 # `permissionDecision` instead, so every refusal raised a KeyError that `record_swallowed` counted
 # in logs/hook_errors.jsonl: 11 of the 25 "crashes" recorded in Lumin-App and rancher over a month.
