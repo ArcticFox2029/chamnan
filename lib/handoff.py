@@ -123,18 +123,30 @@ def decide(last_at, now=None, gap_seconds=LONG_GAP_SECONDS):
     return RESUME, f"last response {hours:.1f}h ago"
 
 
-def last_response_at(transcript):
+def last_reply_at(transcript):
+    """When the newest ASSISTANT entry in a transcript was written, or None.
+
+    `last_response_at` takes any entry, which is right before a session starts and wrong once a
+    person has typed: by the time a prompt hook runs, their new message may already be the newest
+    line, and the gap would read as zero. A wider tail, because one long tool result can push the
+    last reply further back than 256 KB; past that the answer is None, which says nothing.
+    """
+    return last_response_at(transcript, kind="assistant", tail=_TAIL_BYTES * 4)
+
+
+def last_response_at(transcript, kind=None, tail=_TAIL_BYTES):
     """When the newest entry in a transcript was written, or None.
 
     Reads the tail only. Every line is JSON with a `timestamp`, and the newest usable one wins --
     the last line can be a partial write, and an entry without a timestamp is not an error.
+    `kind` keeps only entries of that `type`.
     """
     try:
         path = Path(transcript)
         size = path.stat().st_size
         with path.open("rb") as fh:
-            if size > _TAIL_BYTES:
-                fh.seek(size - _TAIL_BYTES)
+            if size > tail:
+                fh.seek(size - tail)
                 fh.readline()                 # drop the partial line the seek landed inside
             tail = fh.read().decode("utf-8", errors="replace")
     except (OSError, ValueError):
@@ -147,9 +159,12 @@ def last_response_at(transcript):
         if not line.startswith("{"):
             continue
         try:
-            stamp = json.loads(line).get("timestamp")
+            entry = json.loads(line)
         except (ValueError, RecursionError):
             continue
+        if not isinstance(entry, dict) or (kind and entry.get("type") != kind):
+            continue
+        stamp = entry.get("timestamp")
         if not stamp:
             continue
         try:
@@ -392,6 +407,8 @@ def write_handoff(repo, session_id, transcript, last_at, why, by=None):
 BY_OPEN = "Written by `chamnan-open` when it started a new conversation instead of resuming"
 BY_HOOK = ("Written by chamnan's session-start hook when a conversation was resumed after a night "
            "instead of being started fresh")
+BY_PROMPT = ("Written by chamnan when the first message after a night arrived in a conversation "
+             "that had been left open")
 TAKEN_NAME = "handoff.taken"
 _FROM = re.compile(r"previous session: `([^`\s]+)`")
 
