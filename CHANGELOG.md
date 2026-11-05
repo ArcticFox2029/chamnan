@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1361), and every one of these is on the
+[README](README.md#whats-new-in-1362), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -21,6 +21,30 @@ already reports the last released number while running newer code.
 
 ## Unreleased
 
+## What's new in 1.36.2
+
+_A patch on top of 1.36.1: the handoff between sittings now works however a session is opened, not only from `chamnan-open`._
+
+### Fixed and improved
+
+- **A conversation resumed after a night hands off in any editor.** The handoff — a short note of
+  what the person last asked, read by the next conversation instead of re-sending the whole old
+  one — was written only by `chamnan-open`, a terminal launcher. A repository whose sessions all
+  open from an editor never ran it: one conversation there was resumed across 45 nights, 43 of
+  them carrying the whole context forward at 450-800k tokens re-read per request. Now the
+  session-start hook applies the same rule on a resume (a new date and eight hours or more since
+  the last response), writes `.chamnan/logs/handoff.md` itself, and the session tells the person to
+  start a new conversation. The next new conversation, however it is opened, receives the handoff
+  in its opening block: once, to one session, never to a `claude -p` dispatch, and never back to
+  the conversation it was written from. Nothing ends or switches a conversation on its own; that
+  one step stays with the person.
+- **A launcher that pins one conversation id gets the handoff too.** Such a launcher sets the old
+  transcript aside and creates the same id again; that new conversation carried the note's own id
+  and was refused it. A session the host reports as just started now takes it.
+- **A guard refusal is no longer recorded as a hook crash.** The skill pointer read every refusal
+  from the bulk-read guard as a malformed answer and logged it to `logs/hook_errors.jsonl`, where
+  `chamnan-doctor` reports crashes: 11 of 25 recorded in two repositories over a month were the
+  guard working as intended.
 - **The dashboard shows a before-and-since comparison only when both sides have enough to compare.**
   One repository had a single day of 10 requests from before the plugin, and the panel printed
   "398% more" from it. Each side now needs at least 100 requests over 3 days; below that the panel

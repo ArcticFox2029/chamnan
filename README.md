@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **4,874 of 4,874** <!-- live: map_claim_check -->; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **4,881 of 4,881** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
@@ -122,7 +122,7 @@ fails when it and the code disagree.</sub>
 **Start here** — [Features, by what you are trying to do](#features-by-what-you-are-trying-to-do) ·
 [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.36.1](#whats-new-in-1361) ·
+[What's new in 1.36.2](#whats-new-in-1362) ·
 [The dashboard](#the-dashboard-what-it-actually-cost-on-your-own-numbers) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
@@ -645,22 +645,23 @@ too little history from before the plugin shows no figure, and says how much the
 No money and no model names appear on any page, because the plugin does not know which model you
 run and a price printed against the wrong one is worse than no price at all.
 
-## What's new in 1.36.1
+## What's new in 1.36.2
 
-_A patch on top of 1.36.0 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
+_A patch on top of 1.36.1 — the full list is in [CHANGELOG.md](CHANGELOG.md)._
 
-**The dashboard compares your own sessions before the plugin with those since.** The opening panel
-splits a repository's days at the first day the plugin's logs show it running, compares weighted
-tokens per request on each side, and prices the chosen month at both rates. It used to price only
-what a local model read, so a repository that never used one showed nothing saved.
+**A conversation resumed after a night hands off in any editor.** The handoff — a short note of
+what you last asked, read by the next conversation instead of re-sending the whole old one — was
+written only by `chamnan-open`, a terminal launcher, so a repository whose sessions all open from
+an editor never got one. The session-start hook now applies the same rule on a resume (a new date
+and eight hours or more since the last response), writes the handoff itself, and the session asks
+you to start a new conversation. The next new conversation receives the handoff in its opening
+block, however it is opened.
 
-**Two fixes found by testing 1.36.0 against other tools in its space.** A macOS in-place edit,
-`sed -i '' 's/…/…/' file`, whose script named a credential file was refused as a read of it; it
-runs now, and a credential file given to `sed` as its file is still refused. A `chamnan-schedule`
-duration with a long run of spaces took seconds to parse; it takes milliseconds.
+**The dashboard compares sessions before the plugin with those since only when both sides have
+enough to compare** — at least 100 requests over 3 days each; below that it says how much there is.
 
-The 1.36.0 release — the agent's own reads meeting the guard, and the redactor reading secrets in
-the forms text carries them — is described in [CHANGELOG.md](CHANGELOG.md).
+1.36.1 — the before-and-since dashboard, and two fixes found by testing against other tools in its
+space — and every earlier release are described in [CHANGELOG.md](CHANGELOG.md).
 
 ## Bootstrap does not rewrite your code
 
@@ -1266,7 +1267,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **4,874 of 4,874** <!-- live: map_claim_check --> rather than asserted.
+claims about the tree are checked at **4,881 of 4,881** <!-- live: map_claim_check --> rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1527,7 +1528,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **4,874 of 4,874** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
+searched for, and its claims about the tree check out at **4,881 of 4,881** <!-- live: map_claim_check --> (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.
