@@ -24,6 +24,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import handoff  # noqa: E402
+import redact  # noqa: E402
+# Every byte a hook emits passes the redactor; see `redact.emit_prescrubbed` and the same line in
+# the other hooks. The text below is also scrubbed and filtered for a terminal before the dump,
+# because `json.dumps` escapes a smuggled code point the filter would otherwise have to see.
+print = redact.emit_prescrubbed  # noqa: A001
 import workspace as ws  # noqa: E402
 
 # Constant: the same words every time they appear, nothing from the clock.
@@ -79,10 +84,11 @@ def main():
         return 0
     said = notice(payload)
     if said:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
-                                                 "additionalContext": said}}))
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": redact.for_a_terminal(redact.scrub(said))}}))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(ws.never_fail(main))
