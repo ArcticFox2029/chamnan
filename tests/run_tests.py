@@ -55694,6 +55694,98 @@ finally:
 check("a refusal passed through the skill pointer adds no notice of its own", _said524 == "",
       saw=_said524)
 check("A REFUSAL IS NOT RECORDED AS A HOOK CRASH", not _n524, saw=len(_n524))
+# ---- 525_the_first_prompt_after_a_night_in_an_open_window_asks_to_hand_off.py
+# ------------------ the first prompt after a night in an open window asks to hand off
+# 🎯 [2026-11-05] (owner) "ถ้ากรณีเปิดทิ้งไว้ prompt แรก ที่โดนสั่ง ไม่ว่า claude folder ไหน มันควรเด้งถาม" --
+# a window left open overnight fires no SessionStart, so the session-start handoff never ran
+# (5 of 31 measured nights on the owner's work repository). `chamnan_prompt_gap.py` catches the
+# first prompt after the gap: it writes the handoff and tells the model to ask whether to hand off
+# and /clear before starting. Silent within a sitting, for print-mode dispatches, and after a
+# resume the session-start hook already handed off.
+import json as _js525, os as _os525, subprocess as _sp525, sys as _sys525           # noqa: E402
+import tempfile as _tf525, pathlib as _pl525, time as _ti525                          # noqa: E402
+from datetime import datetime as _dt525, timedelta as _td525                         # noqa: E402
+import handoff as _ho525                                                             # noqa: E402
+
+_HOOK525 = str(ROOT / "hooks" / "chamnan_prompt_gap.py")
+_SID525 = "0pg00000-0000-0000-0000-000000000525"
+_SAID525 = "sat idle overnight"
+
+
+def _world525(reply_hours_ago, workspace=True):
+    d = _pl525.Path(_tf525.mkdtemp(prefix="chamnan-prompt-gap-"))
+    _sp525.run(["git", "init", "-q", str(d)], capture_output=True)
+    if workspace:
+        (d / ".chamnan").mkdir()
+    old = (_dt525.now().astimezone() - _td525(hours=reply_hours_ago)).isoformat()
+    now = _dt525.now().astimezone().isoformat()
+    t = d / "t.jsonl"
+    t.write_text("\n".join(_js525.dumps(r) for r in [
+        {"type": "user", "timestamp": old, "message": {"role": "user", "content": "rotate the vault token"}},
+        {"type": "assistant", "timestamp": old, "message": {"role": "assistant", "content": "done"}},
+        # The new prompt may already be on disk when the hook runs; it must not count as a reply.
+        {"type": "user", "timestamp": now, "message": {"role": "user", "content": "good morning"}},
+    ]) + "\n", encoding="utf-8")
+    return d, t
+
+
+def _fire525(d, t, entry="claude-vscode"):
+    env = {k: v for k, v in _os525.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CHAMNAN_READ_ONLY")}
+    env["CLAUDE_CODE_ENTRYPOINT"] = entry
+    p = {"hook_event_name": "UserPromptSubmit", "cwd": str(d), "session_id": _SID525,
+         "transcript_path": str(t), "prompt": "good morning"}
+    return _sp525.run([_sys525.executable, _HOOK525], input=_js525.dumps(p), capture_output=True,
+                      text=True, encoding="utf-8", errors="replace", cwd=str(d), env=env).stdout
+
+
+_d525, _t525 = _world525(30)
+_o525 = _fire525(_d525, _t525)
+_note525 = _d525 / ".chamnan" / "logs" / _ho525.HANDOFF_NAME
+try:
+    _env525 = _js525.loads(_o525)
+except ValueError:
+    _env525 = {}
+_ctx525 = (_env525.get("hookSpecificOutput") or {}).get("additionalContext", "")
+check("THE FIRST PROMPT AFTER A NIGHT IN AN OPEN WINDOW ASKS TO HAND OFF AND CLEAR",
+      _SAID525 in _ctx525 and "/clear" in _ctx525, saw=_o525[:400])
+check("...through the UserPromptSubmit envelope, one object on stdout",
+      (_env525.get("hookSpecificOutput") or {}).get("hookEventName") == "UserPromptSubmit"
+      and len([ln for ln in _o525.splitlines() if ln.strip()]) == 1)
+check("...and the handoff is already written, saying who wrote it",
+      _note525.is_file() and _ho525.BY_PROMPT in _note525.read_text(encoding="utf-8")
+      and "rotate the vault token" in _note525.read_text(encoding="utf-8"))
+check("the new prompt already on disk is not taken for the last reply",
+      _ho525.last_reply_at(_t525) is not None
+      and (_dt525.now().astimezone() - _ho525.last_reply_at(_t525)).total_seconds() > 20 * 3600)
+check("...while the any-entry reader keeps its meaning for the session-start path",
+      (_dt525.now().astimezone() - _ho525.last_response_at(_t525)).total_seconds() < 600)
+
+_d525b, _t525b = _world525(1)
+check("one sitting, an hour later, is silent", _fire525(_d525b, _t525b).strip() == ""
+      and not (_d525b / ".chamnan" / "logs" / _ho525.HANDOFF_NAME).exists())
+_d525c, _t525c = _world525(30)
+check("a print-mode dispatch is silent and writes nothing",
+      _fire525(_d525c, _t525c, entry="sdk-cli").strip() == ""
+      and not (_d525c / ".chamnan" / "logs" / _ho525.HANDOFF_NAME).exists())
+
+# A resume after the same gap was handed off at session start: the note names this session and is
+# newer than the last reply, so the prompt says nothing a second time.
+_d525d, _t525d = _world525(30)
+_ho525.write_handoff(_d525d, _SID525, _t525d, None, "resumed after a night", by=_ho525.BY_HOOK)
+check("after a resume the session start already handed off, the prompt stays silent",
+      _fire525(_d525d, _t525d).strip() == "")
+
+# Any folder: outside a chamnan workspace it still asks, and creates no workspace to do it.
+_d525e, _t525e = _world525(30, workspace=False)
+_o525e = _fire525(_d525e, _t525e)
+check("outside a workspace it still asks", _SAID525 in _o525e and "/clear" in _o525e, saw=_o525e[:300])
+check("...without creating a workspace or naming a handoff that does not exist",
+      not (_d525e / ".chamnan").exists() and "handoff.md" not in _o525e)
+
+_hj525 = _js525.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+check("the hook is registered for UserPromptSubmit",
+      any("chamnan_prompt_gap.py" in h.get("command", "")
+          for g in _hj525.get("UserPromptSubmit", []) for h in g.get("hooks", [])))
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
