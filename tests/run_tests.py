@@ -55551,6 +55551,115 @@ _page522 = (ROOT / "statistic" / "report" / "index.html").read_text(encoding="ut
 _hero522 = _page522[_page522.index("const H = S.hero"):_page522.index("/* ---- what kind of tokens")]
 check("the opening panel is drawn from the comparison, not from what a local model read",
       "S.compare" in _hero522 and "local_chars" not in _hero522, saw=_hero522[:200])
+
+# 🐛 [2026-10-12] (self-measured) The owner's Network repository had one day of 10 requests before the
+# plugin, and the panel printed "398% more" from it. Too little on either side is not a comparison.
+_bs522.LOGS = _logs522
+_thin522 = _bs522.compare([{"day": "2026-08-30", "requests": 10, "t_read": 100, "t_write": 1, "t_new": 1, "t_out": 1},
+                           {"day": "2026-09-02", "requests": 900, "t_read": 9000, "t_write": 9, "t_new": 9, "t_out": 9},
+                           {"day": "2026-09-03", "requests": 900, "t_read": 9000, "t_write": 9, "t_new": 9, "t_out": 9},
+                           {"day": "2026-09-04", "requests": 900, "t_read": 9000, "t_write": 9, "t_new": 9, "t_out": 9}])
+check("...and a side with fewer than the minimum requests or days is not enough to compare",
+      _thin522["enough"] is False and _thin522["min"]["requests"] >= 100, saw=_thin522)
+check("...which both pages honour before drawing a figure",
+      "C.enough" in _hero522 and "C.enough" in (ROOT / "statistic" / "report" / "rates.html").read_text(encoding="utf-8"))
+# ---- 523_a_stale_resume_in_any_editor_hands_off_to_the_next_conversation.py
+# ------------------ a stale resume in any editor hands off to the next conversation
+# 🐛 [owner, 2026-11-05] "chamnan ใน folder rancher กิน token เยอะมาหลายวัน และ ก็ ไม่ยอม handoff" --
+# the handoff was written only by `chamnan-open`, a terminal launcher, and every rancher session is
+# opened from VS Code (52,131 of 52,131 transcript rows). One conversation was resumed across 45
+# nights at 450-800k tokens re-read per request. Now the session-start hook writes the handoff on a
+# resume that crosses a night, and the next NEW conversation, however it is opened, gets it in its
+# block: once, to one session, never to a print-mode dispatch, never back to the one it came from.
+import json as _js523, os as _os523, subprocess as _sp523, sys as _sys523         # noqa: E402
+import tempfile as _tf523, pathlib as _pl523                                        # noqa: E402
+from datetime import datetime as _dt523, timedelta as _td523                       # noqa: E402
+import handoff as _ho523                                                           # noqa: E402
+
+_HOOK523 = str(ROOT / "hooks" / "chamnan_session_start.py")
+_OLD523, _NEW523, _OTHER523 = ("0ld00000-0000-0000-0000-000000000001",
+                               "0ew00000-0000-0000-0000-000000000002",
+                               "0th00000-0000-0000-0000-000000000003")
+_TITLE523 = "### Where the last session stopped — the conversation before this one"
+_SAID523 = "was resumed after a night"
+
+_repo523 = _pl523.Path(_tf523.mkdtemp(prefix="chamnan-stale-resume-"))
+_sp523.run(["git", "init", "-q", str(_repo523)], capture_output=True)
+(_repo523 / ".chamnan").mkdir()
+(_repo523 / ".chamnan" / "STATE.md").write_text("## Open\n\n- nothing\n", encoding="utf-8")
+_tr523 = _repo523 / "old.jsonl"
+_t523 = (_dt523.now().astimezone() - _td523(hours=30)).isoformat()
+_tr523.write_text("\n".join(_js523.dumps(r) for r in [
+    {"type": "user", "timestamp": _t523, "message": {"role": "user", "content": "fix the ingress"}},
+    {"type": "assistant", "timestamp": _t523, "message": {"role": "assistant", "content": "ok"}},
+    {"type": "user", "timestamp": _t523, "message": {"role": "user", "content": "then the vault"}},
+]) + "\n", encoding="utf-8")
+_note523 = _repo523 / ".chamnan" / "logs" / _ho523.HANDOFF_NAME
+_taken523 = _repo523 / ".chamnan" / "logs" / _ho523.TAKEN_NAME
+
+
+def _fire523(source, sid, gap=None, entry="claude-vscode"):
+    p = {"cwd": str(_repo523), "hook_event_name": "SessionStart", "source": source, "session_id": sid,
+         "transcript_path": str(_tr523)}
+    if gap is not None:
+        p.update(seconds_since_last_response=gap, prompt_cache_likely_expired=True)
+    env = {k: v for k, v in _os523.environ.items()
+           if k not in ("CLAUDE_PROJECT_DIR", "CHAMNAN_READ_ONLY")}
+    env["CLAUDE_CODE_ENTRYPOINT"] = entry
+    return _sp523.run([_sys523.executable, _HOOK523], input=_js523.dumps(p), capture_output=True,
+                      text=True, encoding="utf-8", errors="replace", cwd=str(_repo523), env=env).stdout
+
+
+def _section523(out):
+    if _TITLE523 not in out:
+        return ""
+    rest = out.split(_TITLE523, 1)[1]
+    return rest.split("\n### ", 1)[0]
+
+
+# A resume two hours later is one sitting: nothing is written, nothing is said.
+_o523 = _fire523("resume", _OLD523, gap=2 * 3600)
+check("a resume two hours later writes no handoff", not _note523.exists())
+check("...and says nothing about one", _SAID523 not in _o523, saw=_o523[-600:])
+
+# Thirty hours and a new date: the hook writes it and says so.
+_o523 = _fire523("resume", _OLD523, gap=30 * 3600)
+_txt523 = _note523.read_text(encoding="utf-8") if _note523.exists() else ""
+check("A RESUME ACROSS A NIGHT WRITES THE HANDOFF ITSELF, NO LAUNCHER NEEDED", _note523.is_file())
+check("...says who wrote it, the hook rather than chamnan-open",
+      _ho523.BY_HOOK in _txt523 and _ho523.BY_OPEN not in _txt523, saw=_txt523[:300])
+check("...carries what the person typed and the conversation it came from",
+      "fix the ingress" in _txt523 and "then the vault" in _txt523 and _OLD523 in _txt523)
+check("...and the resumed session is told to hand off", _SAID523 in _o523, saw=_o523[-800:])
+check("...in text with no clock in it, so two firings stay byte-identical",
+      _fire523("resume", _OLD523, gap=31 * 3600).count(_SAID523) == 1 and _o523.count(_SAID523) == 1)
+
+# The next new conversation receives it; a dispatched print-mode run does not take it first.
+_o523 = _fire523("startup", _OTHER523, entry="sdk-cli")
+check("a print-mode dispatch does not receive the handoff", _TITLE523 not in _o523)
+check("...and does not take it from the person", not _taken523.exists())
+_o523 = _fire523("startup", _NEW523)
+_s523 = _section523(_o523)
+check("THE NEXT NEW CONVERSATION STARTS FROM THE HANDOFF IN ITS BLOCK",
+      "fix the ingress" in _s523 and "then the vault" in _s523, saw=_o523[-1500:])
+check("...and is recorded as the one that took it",
+      _taken523.is_file() and _taken523.read_text(encoding="utf-8").strip() == _NEW523)
+check("a second new conversation does not get it again", _TITLE523 not in _fire523("startup", _OTHER523))
+check("the taker's own compaction gets the same section back, byte for byte",
+      _section523(_fire523("compact", _NEW523)) == _s523 and _s523 != "")
+check("the conversation it was written from never gets it back",
+      _ho523.pending(_repo523, _OLD523) == "" and _TITLE523 not in _fire523("compact", _OLD523))
+check("a resume never receives a handoff as if it were new",
+      _TITLE523 not in _fire523("resume", _OTHER523, gap=60))
+
+# A newer handoff is a new note: the old taker no longer owns it.
+_ho523.write_handoff(_repo523, _OLD523, _tr523, None, "test", by=_ho523.BY_HOOK)
+check("with nobody holding it yet, the conversation it came from still cannot take it",
+      _ho523.pending(_repo523, _OLD523) == "" and not _taken523.exists())
+check("writing a new handoff releases it for the next conversation",
+      not _taken523.exists() and "fix the ingress" in _ho523.pending(_repo523, _OTHER523))
+check("chamnan-open's own handoffs still say chamnan-open wrote them",
+      _ho523.BY_OPEN in _ho523.handoff_text("x", _tr523, None, "why"))
 # ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
 # ------------------------------- an alias documented as writing a file it does not write
 # 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
