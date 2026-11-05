@@ -396,7 +396,7 @@ TAKEN_NAME = "handoff.taken"
 _FROM = re.compile(r"previous session: `([^`\s]+)`")
 
 
-def pending(repo, session_id):
+def pending(repo, session_id, fresh_start=False):
     """The handoff a NEW conversation should start from, or "". Never raises.
 
     Given to exactly one conversation: the first one that is not the conversation it was written
@@ -404,6 +404,10 @@ def pending(repo, session_id):
     a compaction, a /clear — receive the same text again, byte for byte, while every other session
     receives nothing. The conversation it was written FROM never gets it back: that one already
     holds everything the note summarises.
+
+    `fresh_start` is a session the host reports as just STARTED. That one may carry the same id
+    the note names: a launcher that pins one conversation id sets the old transcript aside and
+    creates the id again, so the id matches while the conversation holds nothing at all.
     """
     if not session_id:
         return ""
@@ -413,13 +417,13 @@ def pending(repo, session_id):
         if not note.is_file() or not ws.inside(note, repo):
             return ""
         text = note.read_text(encoding="utf-8", errors="replace")
-        m = _FROM.search(text)
-        if m and m.group(1) == session_id:
-            return ""
         taken = logs / TAKEN_NAME
         if taken.is_file():
             owner = taken.read_text(encoding="utf-8", errors="replace").strip()
             return text if owner == session_id else ""
+        m = _FROM.search(text)
+        if m and m.group(1) == session_id and not fresh_start:
+            return ""
         if not ws.read_only():
             ws.atomic_write_text(taken, session_id + "\n")
         return text

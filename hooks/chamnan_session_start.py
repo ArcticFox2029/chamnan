@@ -2533,7 +2533,8 @@ def main():
             try:
                 import handoff as _ho
                 _note = "" if os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk") \
-                    else redact.scrub(_ho.pending(root, payload.get("session_id")))
+                    else redact.scrub(_ho.pending(root, payload.get("session_id"),
+                                                  fresh_start=payload.get("source") == "startup"))
             except Exception:      # noqa: BLE001
                 ws.record_swallowed()
                 _note = ""

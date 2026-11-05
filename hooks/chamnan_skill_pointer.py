@@ -560,10 +560,15 @@ def _long_read_notice(payload):
     if not out:
         return ""
     try:
-        return _json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        said = _json.loads(out)["hookSpecificOutput"]
     except Exception:
         ws.record_swallowed()
         return ""
+    # 🐛 [2026-11-05] (dogfood) A refusal carries `permissionDecision` and no `additionalContext`,
+    # and indexing it raised a KeyError that was counted as a hook crash: 11 of the 25 crashes
+    # recorded in two repositories over a month were the guard working. The refusal itself is
+    # delivered by the bulk-read hook's own registration, so there is nothing to add here.
+    return said.get("additionalContext") or "" if isinstance(said, dict) else ""
 
 
 def _edit_will_not_survive(payload):
