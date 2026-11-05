@@ -56,6 +56,7 @@ only record of what happened. `housekeeping.py` has never touched session transc
 """
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -312,7 +313,7 @@ def last_user_messages(transcript, limit=HANDOFF_MESSAGES):
     return list(reversed(found))
 
 
-def handoff_text(session_id, transcript, last_at, why, changed=None):
+def handoff_text(session_id, transcript, last_at, why, changed=None, by=None):
     """The note a fresh session reads first. Every quoted message passes the redactor.
 
     `changed` is [(at, path)] for files committed after `last_at` — work the old conversation never
@@ -322,8 +323,7 @@ def handoff_text(session_id, transcript, last_at, why, changed=None):
     """
     import redact
     lines = ["# Handoff from the previous session", "",
-             "Written by `chamnan-open` when it started a new conversation instead of resuming: "
-             + why + ".", "",
+             (by or BY_OPEN) + ": " + why + ".", "",
              "- previous session: `%s` — kept, not deleted; `claude --resume %s` reopens it"
              % (session_id, session_id)]
     if last_at is not None:
@@ -349,8 +349,12 @@ def handoff_text(session_id, transcript, last_at, why, changed=None):
     return "\n".join(lines) + "\n"
 
 
-def write_handoff(repo, session_id, transcript, last_at, why):
-    """Write the handoff into `repo`'s workspace logs; its path, or None when it could not be."""
+def write_handoff(repo, session_id, transcript, last_at, why, by=None):
+    """Write the handoff into `repo`'s workspace logs; its path, or None when it could not be.
+
+    A new handoff is a new note, so whichever session took the previous one no longer owns it:
+    the marker `pending()` writes is removed with the write, never before it.
+    """
     import workspace as ws
     dest = ws.workspace(repo) / "logs" / HANDOFF_NAME
     try:
@@ -365,5 +369,59 @@ def write_handoff(repo, session_id, transcript, last_at, why):
             changed = coedit._git_edits(repo, time.time(), last_at.timestamp())
         except Exception:          # noqa: BLE001 — a handoff without this line is still a handoff
             changed = []
-    ok = ws.atomic_write_text(dest, handoff_text(session_id, transcript, last_at, why, changed))
+    ok = ws.atomic_write_text(dest, handoff_text(session_id, transcript, last_at, why, changed, by))
+    if ok:
+        try:
+            (dest.parent / TAKEN_NAME).unlink()
+        except OSError:
+            pass
     return dest if ok else None
+
+
+# 🐛 [2026-11-05] (owner) The handoff existed on ONE path: `chamnan-open`, a terminal launcher.
+# Every session in the owner's work repository is opened from VS Code — 52,131 of 52,131 transcript
+# rows — so in three months it never ran once. One conversation was resumed across 45 nights,
+# 43 of them carrying the whole context forward, at 450-800k tokens re-read per request; the
+# session-start hook saw each stale resume and could only print advice, which was read 12 times
+# and acted on none. The owner's design covers every way a session starts, so the hook now writes
+# the handoff itself on a stale resume, and the next new conversation — however it is opened —
+# receives it in its startup block instead of depending on a launcher passing a prompt.
+#
+# Nothing here ends or switches a conversation; no hook can. What it removes is everything except
+# that one click: the note is already written, and the new session is already handed it.
+BY_OPEN = "Written by `chamnan-open` when it started a new conversation instead of resuming"
+BY_HOOK = ("Written by chamnan's session-start hook when a conversation was resumed after a night "
+           "instead of being started fresh")
+TAKEN_NAME = "handoff.taken"
+_FROM = re.compile(r"previous session: `([^`\s]+)`")
+
+
+def pending(repo, session_id):
+    """The handoff a NEW conversation should start from, or "". Never raises.
+
+    Given to exactly one conversation: the first one that is not the conversation it was written
+    from takes it, and its id goes in `handoff.taken` so that later firings of that same session —
+    a compaction, a /clear — receive the same text again, byte for byte, while every other session
+    receives nothing. The conversation it was written FROM never gets it back: that one already
+    holds everything the note summarises.
+    """
+    if not session_id:
+        return ""
+    try:
+        logs = ws.workspace(repo) / "logs"
+        note = logs / HANDOFF_NAME
+        if not note.is_file() or not ws.inside(note, repo):
+            return ""
+        text = note.read_text(encoding="utf-8", errors="replace")
+        m = _FROM.search(text)
+        if m and m.group(1) == session_id:
+            return ""
+        taken = logs / TAKEN_NAME
+        if taken.is_file():
+            owner = taken.read_text(encoding="utf-8", errors="replace").strip()
+            return text if owner == session_id else ""
+        if not ws.read_only():
+            ws.atomic_write_text(taken, session_id + "\n")
+        return text
+    except Exception:          # noqa: BLE001 — a missing handoff must never cost the block
+        return ""

@@ -358,7 +358,47 @@ def _fences_recorded_for(transcript_path, limit=40):
         return []
 
 
-def why_this_session(payload):
+# Constant on purpose, like everything else this block says about the moment: the line appears in
+# every firing of a stale-resumed session, and a clock or a count in it would re-cache the block.
+HANDOFF_WRITTEN = ("_**This conversation was resumed after a night** — a new date and eight hours "
+                   "or more since its last response — so chamnan has written its handoff to "
+                   "`.chamnan/logs/handoff.md`. Tell the user so before anything else, and ask them "
+                   "to start a new conversation (VS Code: New chat; a terminal: `claude` or "
+                   "`chamnan-open`): it starts from that handoff in its opening block, at a "
+                   "fraction of what resuming this one costs. The earlier conversation is kept._")
+
+
+def stale_resume_handoff(payload, root):
+    """Write the handoff when this firing is a resume across a night; the line saying so, or "".
+
+    🐛 [2026-11-05] (owner) Until now the handoff was written only by `chamnan-open`, which a
+    session opened from an editor never runs — see `lib/handoff.py` where `BY_HOOK` is defined.
+    The rule is the same one `chamnan-open` applies (`handoff.decide`: a new date AND eight
+    hours), measured from what the host reports as the time since the last response. Never
+    raises, and writes nothing in a read-only workspace.
+    """
+    if not isinstance(payload, dict) or payload.get("source") != "resume":
+        return ""
+    gap, sid, transcript = (payload.get("seconds_since_last_response"), payload.get("session_id"),
+                            payload.get("transcript_path"))
+    if not isinstance(gap, (int, float)) or gap <= 0 or not sid or not transcript:
+        return ""
+    try:
+        import handoff as _ho
+        from datetime import datetime as _dt, timedelta as _td
+        now = _dt.now().astimezone()
+        last_at = now - _td(seconds=float(gap))
+        verdict, why = _ho.decide(last_at, now)
+        if verdict != _ho.FRESH or ws.read_only():
+            return ""
+        return HANDOFF_WRITTEN if _ho.write_handoff(root, sid, transcript, last_at, why,
+                                                    by=_ho.BY_HOOK) else ""
+    except Exception:          # noqa: BLE001 — a handoff is never worth losing the block for
+        ws.record_swallowed()
+        return ""
+
+
+def why_this_session(payload, handoff_line=""):
     """One line naming WHY this block is being injected, when the reason changes what it is for.
 
     SessionStart carries a `source` -- "startup", "resume", "clear", "compact" or "fork" -- and
@@ -414,6 +454,11 @@ def why_this_session(payload):
         # is NOT printed, only the verdict, which cannot change between two firings a second apart.
         advice = ""
         gap = payload.get("seconds_since_last_response")
+        if handoff_line:
+            # The handoff is already written; saying "chamnan-open picks between the two" as well
+            # would point at a launcher this session was evidently not opened with.
+            return (f"_Resumed after the prompt cache expired, so the whole conversation is "
+                    f"re-sent{cost}._\n{handoff_line}")
         if isinstance(gap, (int, float)) and gap > 0:
             try:
                 import handoff as _ho
@@ -1571,6 +1616,7 @@ def main():
     # What still gets said is what CHANGED since the block was injected. A stale index is the one
     # thing a resumed session cannot know from the block above it, because the block was right when
     # it was written.
+    _handoff_line = stale_resume_handoff(payload, root)
     if payload.get("source") == "resume" and cfg.get("resume_pointer", True) \
             and block_is_still_in_context(payload):
         # "not resent", not "still current". The block IS still above; whether it is still true is
@@ -1619,6 +1665,8 @@ def main():
         _resume_persistence = ledger.persistence_reminder(root)
         if _resume_persistence:
             _lines.append(redact.scrub(_resume_persistence))
+        if _handoff_line:
+            _lines.append(_handoff_line)
         # 🐛 [2026-09-09] This branch returned without telling blocklog it had run, so every figure
         # derived from `block_shape.jsonl` — here and in `chamnan-report` — counted full
         # reinjections only. How much of an ordinary day takes the cheap path was not a question
@@ -2476,6 +2524,25 @@ def main():
                     open_threads + "\n\n_`chamnan-timeline show <name>` for one thread's history; "
                                    "`chamnan-timeline for <path>` for what has happened to one file._", ".chamnan/threads/"))
 
+        if cfg.get("resume", True) and payload.get("source") not in ("resume", "fork"):
+            # The note a stale resume left for whichever conversation comes next — written by this
+            # hook or by `chamnan-open` — handed to the first new session and only to it.
+            # `handoff.pending` keeps it byte-identical across that session's later firings.
+            # A print-mode run (`claude -p`, entry point `sdk-*`) is a dispatched job, not the
+            # person coming back: it must not take the note meant for their next conversation.
+            try:
+                import handoff as _ho
+                _note = "" if os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk") \
+                    else redact.scrub(_ho.pending(root, payload.get("session_id")))
+            except Exception:      # noqa: BLE001
+                ws.record_swallowed()
+                _note = ""
+            if _note:
+                out.append(store_section(root,
+                    "Where the last session stopped — the conversation before this one", _note,
+                    ".chamnan/logs/handoff.md",
+                    brief=session_brief(_note, ".chamnan/logs/handoff.md")))
+
         if cfg.get("resume", True):
             # Only the newest record, and only the part of it that is unfinished. "Done" is history and
             # the file list is recoverable from git; what the next session cannot work out for itself is
@@ -3021,7 +3088,11 @@ def main():
         # Prepended rather than appended: it explains what the reader is about to be handed, and the
         # one source that gets a line is the one where the reader's own memory is the less reliable of
         # the two. Costs nothing on an ordinary startup, which emits no line at all.
-        why = why_this_session(payload)
+        why = why_this_session(payload, _handoff_line)
+        if _handoff_line and _handoff_line not in why:
+            # A resume the host did not mark as cache-expired still crossed a night by the rule;
+            # the line is said either way.
+            why = (why + "\n" if why else "") + _handoff_line
         header = "## chamnan\n" + (why + "\n" if why else "")
 
         sources = {e["title"]: e.get("source", "") for e in LEDGER}
